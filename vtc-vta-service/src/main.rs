@@ -2,6 +2,7 @@ mod config;
 mod error;
 mod routes;
 mod server;
+mod store;
 
 use config::{AppConfig, LogFormat};
 use tracing_subscriber::EnvFilter;
@@ -12,7 +13,9 @@ async fn main() {
 
     init_tracing(&config);
 
-    if let Err(e) = server::run(&config).await {
+    let store = store::Store::open(&config.store).expect("failed to open store");
+
+    if let Err(e) = server::run(&config, store).await {
         tracing::error!("server error: {e}");
         std::process::exit(1);
     }

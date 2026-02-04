@@ -9,7 +9,7 @@ version = "0.1.0"
 edition = "2024"
 publish = false
 authors = ["Glenn Gore <glenn@affinidi.com>"]
-rust-version = "1.90.0"
+rust-version = "1.91.0"
 readme = "README.md"
 license = "Apache-2.0"
 repository = "https://github.com/FirstPersonNetwork/vtc-vta-rs"
@@ -28,6 +28,12 @@ serde = { version = "1", features = ["derive"] }
 
 # Error handling
 thiserror = "2"
+
+# Embedded key-value store
+fjall = "3"
+
+# Serialization (JSON)
+serde_json = "1"
 
 # Logging / tracing
 tracing = "0.1"

@@ -8,6 +8,8 @@ pub struct AppConfig {
     pub server: ServerConfig,
     #[serde(default)]
     pub log: LogConfig,
+    #[serde(default)]
+    pub store: StoreConfig,
 }
 
 #[derive(Debug, Deserialize)]
@@ -24,6 +26,12 @@ pub struct LogConfig {
     pub level: String,
     #[serde(default)]
     pub format: LogFormat,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct StoreConfig {
+    #[serde(default = "default_data_dir")]
+    pub data_dir: PathBuf,
 }
 
 #[derive(Debug, Default, Deserialize, Clone, PartialEq)]
@@ -46,6 +54,10 @@ fn default_log_level() -> String {
     "info".to_string()
 }
 
+fn default_data_dir() -> PathBuf {
+    PathBuf::from("data/vta")
+}
+
 impl Default for ServerConfig {
     fn default() -> Self {
         Self {
@@ -64,6 +76,14 @@ impl Default for LogConfig {
     }
 }
 
+impl Default for StoreConfig {
+    fn default() -> Self {
+        Self {
+            data_dir: default_data_dir(),
+        }
+    }
+}
+
 impl AppConfig {
     pub fn load() -> Result<Self, AppError> {
         let path = std::env::var("VTA_CONFIG_PATH")
@@ -78,6 +98,7 @@ impl AppConfig {
             AppConfig {
                 server: ServerConfig::default(),
                 log: LogConfig::default(),
+                store: StoreConfig::default(),
             }
         };
 
@@ -103,6 +124,9 @@ impl AppConfig {
                     )));
                 }
             };
+        }
+        if let Ok(data_dir) = std::env::var("VTA_STORE_DATA_DIR") {
+            config.store.data_dir = PathBuf::from(data_dir);
         }
 
         Ok(config)

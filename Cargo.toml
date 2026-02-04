@@ -19,3 +19,16 @@ repository = "https://github.com/FirstPersonNetwork/vtc-vta-rs"
 # Decentralized Trust Graph Credentials
 # NOTE: When this is published, switch from git to crates.io
 dtg-credentials = { version = "0.1", git = "https://github.com/FirstPersonNetwork/dtg-credentials-rs" }
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+
+# Error handling
+thiserror = "2"
+
+# Logging / tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }

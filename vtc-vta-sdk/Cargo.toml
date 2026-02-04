@@ -1,0 +1,15 @@
+[package]
+name = "vtc-vta-sdk"
+description = "SDK for Verified Trust Agents operating in Verified Trust Communities"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+readme = "README.md"
+license.workspace = true
+repository.workspace = true
+
+[features]
+
+[dependencies]

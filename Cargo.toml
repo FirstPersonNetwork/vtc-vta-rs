@@ -1,0 +1,21 @@
+
+[workspace]
+members = ["vtc-vta-sdk", "vtc-vta-service"]
+resolver = "3"
+
+[workspace.package]
+description = "Verified Trust Communities - Verified Trust Agent SDK and Services"
+version = "0.1.0"
+edition = "2024"
+publish = false
+authors = ["Glenn Gore <glenn@affinidi.com>"]
+rust-version = "1.90.0"
+readme = "README.md"
+license = "Apache-2.0"
+repository = "https://github.com/FirstPersonNetwork/vtc-vta-rs"
+
+[workspace.dependencies]
+
+# Decentralized Trust Graph Credentials
+# NOTE: When this is published, switch from git to crates.io
+dtg-credentials = { version = "0.1", git = "https://github.com/FirstPersonNetwork/dtg-credentials-rs" }

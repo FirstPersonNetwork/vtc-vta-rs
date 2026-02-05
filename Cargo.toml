@@ -16,6 +16,9 @@ repository = "https://github.com/FirstPersonNetwork/vtc-vta-rs"
 
 [workspace.dependencies]
 
+# Affinidi Trust Development Kit
+affinidi-tdk = "0.4"
+
 # Affinidi Trusted Messaging
 affinidi-messaging-sdk = "0.14"
 

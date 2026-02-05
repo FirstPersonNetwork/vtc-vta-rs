@@ -18,6 +18,15 @@ pub enum AppError {
 
     #[error("internal error: {0}")]
     Internal(String),
+
+    #[error("key derivation error: {0}")]
+    KeyDerivation(String),
+
+    #[error("not found: {0}")]
+    NotFound(String),
+
+    #[error("conflict: {0}")]
+    Conflict(String),
 }
 
 impl IntoResponse for AppError {
@@ -28,8 +37,12 @@ impl IntoResponse for AppError {
             AppError::Store(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Serialization(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::KeyDerivation(_) => StatusCode::BAD_REQUEST,
+            AppError::NotFound(_) => StatusCode::NOT_FOUND,
+            AppError::Conflict(_) => StatusCode::CONFLICT,
         };
 
-        (status, self.to_string()).into_response()
+        let body = serde_json::json!({ "error": self.to_string() });
+        (status, axum::Json(body)).into_response()
     }
 }

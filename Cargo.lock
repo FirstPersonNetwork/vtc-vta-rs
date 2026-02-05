@@ -5648,7 +5648,6 @@ dependencies = [
 name = "vtc-vta-service"
 version = "0.1.0"
 dependencies = [
- "affinidi-messaging-sdk",
  "affinidi-tdk",
  "axum",
  "chrono",

@@ -1,4 +1,6 @@
 # vta_did = "did:webvh:example.com:vta"
+# community_name = "My Community"
+# community_description = "A description of the community"
 
 [server]
 host = "0.0.0.0"

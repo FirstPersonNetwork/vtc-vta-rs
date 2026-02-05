@@ -1,10 +1,12 @@
 use crate::error::AppError;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct AppConfig {
     pub vta_did: Option<String>,
+    pub community_name: Option<String>,
+    pub community_description: Option<String>,
     #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
@@ -12,15 +14,17 @@ pub struct AppConfig {
     #[serde(default)]
     pub store: StoreConfig,
     pub messaging: Option<MessagingConfig>,
+    #[serde(skip)]
+    pub config_path: PathBuf,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct MessagingConfig {
     pub mediator_url: String,
     pub mediator_did: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ServerConfig {
     #[serde(default = "default_host")]
     pub host: String,
@@ -28,7 +32,7 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct LogConfig {
     #[serde(default = "default_log_level")]
     pub level: String,
@@ -36,13 +40,13 @@ pub struct LogConfig {
     pub format: LogFormat,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct StoreConfig {
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
 }
 
-#[derive(Debug, Default, Deserialize, Clone, PartialEq)]
+#[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum LogFormat {
     #[default]
@@ -105,12 +109,17 @@ impl AppConfig {
         } else {
             AppConfig {
                 vta_did: None,
+                community_name: None,
+                community_description: None,
                 server: ServerConfig::default(),
                 log: LogConfig::default(),
                 store: StoreConfig::default(),
                 messaging: None,
+                config_path: PathBuf::new(),
             }
         };
+
+        config.config_path = path.clone();
 
         // Apply env var overrides
         if let Ok(vta_did) = std::env::var("VTA_DID") {
@@ -171,5 +180,12 @@ impl AppConfig {
         }
 
         Ok(config)
+    }
+
+    pub fn save(&self) -> Result<(), AppError> {
+        let contents = toml::to_string_pretty(self)
+            .map_err(|e| AppError::Config(format!("failed to serialize config: {e}")))?;
+        std::fs::write(&self.config_path, contents).map_err(AppError::Io)?;
+        Ok(())
     }
 }

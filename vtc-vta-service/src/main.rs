@@ -18,7 +18,7 @@ async fn main() {
 
     let store = store::Store::open(&config.store).expect("failed to open store");
 
-    if let Err(e) = server::run(&config, store).await {
+    if let Err(e) = server::run(config, store).await {
         tracing::error!("server error: {e}");
         std::process::exit(1);
     }

@@ -1,10 +1,8 @@
 use crate::error::AppError;
-use crate::store::KeyspaceHandle;
+use crate::keys::seed_store::SeedStore;
 use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-
-const MASTER_SEED_KEY: &str = "master_seed";
 
 /// Derive an Ed25519 key pair from a seed and BIP32 derivation path.
 ///
@@ -57,33 +55,30 @@ pub fn multibase_encode(bytes: &[u8]) -> String {
 
 /// Load an existing master seed from the store, or generate/derive a new one.
 ///
-/// - If `mnemonic` is provided, derives a 32-byte seed via SHA-256 and stores it.
+/// - If `mnemonic` is provided, validates it as a BIP-39 phrase and derives a
+///   64-byte seed via PBKDF2 (with an empty passphrase), then stores it.
 /// - If no mnemonic and a seed already exists, returns the existing seed.
 /// - If no mnemonic and no seed exists, generates 32 random bytes and stores them.
 pub async fn load_or_generate_seed(
-    secrets: &KeyspaceHandle,
+    seed_store: &dyn SeedStore,
     mnemonic: Option<&str>,
 ) -> Result<Vec<u8>, AppError> {
     if let Some(phrase) = mnemonic {
-        let seed = sha256_seed(phrase.as_bytes());
-        secrets.insert_raw(MASTER_SEED_KEY, seed.to_vec()).await?;
+        let m = bip39::Mnemonic::parse(phrase)
+            .map_err(|e| AppError::KeyDerivation(format!("invalid BIP-39 mnemonic: {e}")))?;
+        let seed = m.to_seed("");
+        seed_store.set(&seed).await?;
         return Ok(seed.to_vec());
     }
 
-    if let Some(existing) = secrets.get_raw(MASTER_SEED_KEY).await? {
+    if let Some(existing) = seed_store.get().await? {
         return Ok(existing);
     }
 
     let mut seed = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut seed);
-    secrets.insert_raw(MASTER_SEED_KEY, seed.to_vec()).await?;
+    seed_store.set(&seed).await?;
     Ok(seed.to_vec())
-}
-
-fn sha256_seed(input: &[u8]) -> [u8; 32] {
-    let mut hasher = Sha256::new();
-    hasher.update(input);
-    hasher.finalize().into()
 }
 
 #[cfg(test)]
@@ -151,9 +146,18 @@ mod tests {
     }
 
     #[test]
-    fn test_sha256_seed_deterministic() {
-        let s1 = sha256_seed(b"test mnemonic phrase");
-        let s2 = sha256_seed(b"test mnemonic phrase");
-        assert_eq!(s1, s2);
+    fn test_bip39_seed_deterministic() {
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let m1 = bip39::Mnemonic::parse(phrase).unwrap();
+        let m2 = bip39::Mnemonic::parse(phrase).unwrap();
+        assert_eq!(m1.to_seed(""), m2.to_seed(""));
+        // BIP-39 produces a 64-byte seed
+        assert_eq!(m1.to_seed("").len(), 64);
+    }
+
+    #[test]
+    fn test_bip39_invalid_mnemonic() {
+        let result = bip39::Mnemonic::parse("not a valid mnemonic");
+        assert!(result.is_err());
     }
 }

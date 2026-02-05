@@ -5,7 +5,10 @@ mod routes;
 mod server;
 mod store;
 
+use std::sync::Arc;
+
 use config::{AppConfig, LogFormat};
+use keys::seed_store::KeyringSeedStore;
 use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
@@ -17,8 +20,9 @@ async fn main() {
     init_tracing(&config);
 
     let store = store::Store::open(&config.store).expect("failed to open store");
+    let seed_store = Arc::new(KeyringSeedStore::new("vtc-vta", "master_seed"));
 
-    if let Err(e) = server::run(config, store).await {
+    if let Err(e) = server::run(config, store, seed_store).await {
         tracing::error!("server error: {e}");
         std::process::exit(1);
     }

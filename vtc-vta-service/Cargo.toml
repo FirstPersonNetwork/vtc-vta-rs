@@ -25,7 +25,10 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+bip39 = "2"
 ed25519-dalek-bip32 = { workspace = true }
+hex = "0.4"
+keyring = "3"
 uuid = { workspace = true }
 chrono = { workspace = true }
 did-webvh = { workspace = true }

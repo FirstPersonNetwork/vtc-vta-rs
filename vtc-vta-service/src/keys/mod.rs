@@ -1,4 +1,5 @@
 pub mod derivation;
+pub mod seed_store;
 
 pub use vtc_vta_sdk::keys::{KeyRecord, KeyStatus, KeyType};
 

@@ -22,6 +22,9 @@ pub enum AppError {
     #[error("key derivation error: {0}")]
     KeyDerivation(String),
 
+    #[error("keyring error: {0}")]
+    Keyring(String),
+
     #[error("not found: {0}")]
     NotFound(String),
 
@@ -38,6 +41,7 @@ impl IntoResponse for AppError {
             AppError::Serialization(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::KeyDerivation(_) => StatusCode::BAD_REQUEST,
+            AppError::Keyring(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Conflict(_) => StatusCode::CONFLICT,
         };

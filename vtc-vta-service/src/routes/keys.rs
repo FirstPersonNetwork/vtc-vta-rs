@@ -53,10 +53,9 @@ pub async fn create_key(
     State(state): State<AppState>,
     Json(req): Json<CreateKeyRequest>,
 ) -> Result<(StatusCode, Json<CreateKeyResponse>), AppError> {
-    let secrets = state.store.keyspace("secrets")?;
     let keys = state.store.keyspace("keys")?;
 
-    let seed = load_or_generate_seed(&secrets, req.mnemonic.as_deref()).await?;
+    let seed = load_or_generate_seed(&*state.seed_store, req.mnemonic.as_deref()).await?;
 
     let (_, public_bytes) = match req.key_type {
         KeyType::Ed25519 => derive_ed25519(&seed, &req.derivation_path)?,

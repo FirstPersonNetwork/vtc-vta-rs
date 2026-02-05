@@ -9,7 +9,7 @@ use crate::error::AppError;
 use crate::keys::derivation::{
     derive_ed25519, derive_x25519, load_or_generate_seed, multibase_encode,
 };
-use crate::keys::{KeyRecord, KeyStatus, KeyType};
+use crate::keys::{self, KeyRecord, KeyStatus, KeyType};
 use crate::server::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -78,7 +78,7 @@ pub async fn create_key(
         updated_at: now,
     };
 
-    keys.insert(KeyRecord::store_key(&key_id), &record).await?;
+    keys.insert(keys::store_key(&key_id), &record).await?;
 
     let response = CreateKeyResponse {
         key_id,
@@ -100,7 +100,7 @@ pub async fn get_key(
     let keys = state.store.keyspace("keys")?;
 
     let record: KeyRecord = keys
-        .get(KeyRecord::store_key(&key_id))
+        .get(keys::store_key(&key_id))
         .await?
         .ok_or_else(|| AppError::NotFound(format!("key {key_id} not found")))?;
 
@@ -112,7 +112,7 @@ pub async fn invalidate_key(
     Path(key_id): Path<String>,
 ) -> Result<Json<InvalidateKeyResponse>, AppError> {
     let keys = state.store.keyspace("keys")?;
-    let store_key = KeyRecord::store_key(&key_id);
+    let store_key = keys::store_key(&key_id);
 
     let mut record: KeyRecord = keys
         .get(store_key.clone())
@@ -143,14 +143,14 @@ pub async fn rename_key(
     Json(req): Json<RenameKeyRequest>,
 ) -> Result<Json<RenameKeyResponse>, AppError> {
     let keys = state.store.keyspace("keys")?;
-    let old_store_key = KeyRecord::store_key(&key_id);
+    let old_store_key = keys::store_key(&key_id);
 
     let mut record: KeyRecord = keys
         .get(old_store_key.clone())
         .await?
         .ok_or_else(|| AppError::NotFound(format!("key {key_id} not found")))?;
 
-    let new_store_key = KeyRecord::store_key(&req.key_id);
+    let new_store_key = keys::store_key(&req.key_id);
 
     if keys
         .get::<KeyRecord>(new_store_key.clone())

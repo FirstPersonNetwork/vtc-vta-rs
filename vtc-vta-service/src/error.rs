@@ -1,3 +1,4 @@
+use affinidi_tdk::secrets_resolver::errors::SecretsResolverError;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 
@@ -30,6 +31,9 @@ pub enum AppError {
 
     #[error("conflict: {0}")]
     Conflict(String),
+
+    #[error("secrets error: {0}")]
+    Secrets(#[from] SecretsResolverError),
 }
 
 impl IntoResponse for AppError {
@@ -44,6 +48,7 @@ impl IntoResponse for AppError {
             AppError::Keyring(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Conflict(_) => StatusCode::CONFLICT,
+            AppError::Secrets(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 
         let body = serde_json::json!({ "error": self.to_string() });

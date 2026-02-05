@@ -6,9 +6,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::error::AppError;
-use crate::keys::derivation::{
-    derive_ed25519, derive_x25519, load_or_generate_seed, multibase_encode,
-};
+use crate::keys::derivation::{Bip32Extension, load_or_generate_seed};
 use crate::keys::{self, KeyRecord, KeyStatus, KeyType};
 use crate::server::AppState;
 
@@ -55,16 +53,16 @@ pub async fn create_key(
 ) -> Result<(StatusCode, Json<CreateKeyResponse>), AppError> {
     let keys = state.store.keyspace("keys")?;
 
-    let seed = load_or_generate_seed(&*state.seed_store, req.mnemonic.as_deref()).await?;
+    let bip32 = load_or_generate_seed(&*state.seed_store, req.mnemonic.as_deref()).await?;
 
-    let (_, public_bytes) = match req.key_type {
-        KeyType::Ed25519 => derive_ed25519(&seed, &req.derivation_path)?,
-        KeyType::X25519 => derive_x25519(&seed, &req.derivation_path)?,
+    let secret = match req.key_type {
+        KeyType::Ed25519 => bip32.derive_ed25519(&req.derivation_path)?,
+        KeyType::X25519 => bip32.derive_x25519(&req.derivation_path)?,
     };
 
     let now = Utc::now();
     let key_id = Uuid::new_v4().to_string();
-    let public_key = multibase_encode(&public_bytes);
+    let public_key = secret.get_public_keymultibase()?;
 
     let record = KeyRecord {
         key_id: key_id.clone(),

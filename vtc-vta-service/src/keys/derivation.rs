@@ -1,56 +1,50 @@
 use crate::error::AppError;
 use crate::keys::seed_store::SeedStore;
+use affinidi_tdk::{
+    affinidi_crypto::ed25519::ed25519_private_to_x25519, secrets_resolver::secrets::Secret,
+};
 use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
 use rand::RngCore;
-use sha2::{Digest, Sha256};
 
-/// Derive an Ed25519 key pair from a seed and BIP32 derivation path.
-///
-/// Returns `(private_key_bytes, public_key_bytes)`.
-pub fn derive_ed25519(seed: &[u8], path: &str) -> Result<([u8; 32], [u8; 32]), AppError> {
-    let derivation_path: DerivationPath = path
-        .parse()
-        .map_err(|e| AppError::KeyDerivation(format!("invalid derivation path: {e}")))?;
-
-    let master = ExtendedSigningKey::from_seed(seed)
-        .map_err(|e| AppError::KeyDerivation(format!("failed to create master key: {e}")))?;
-
-    let derived = master
-        .derive(&derivation_path)
-        .map_err(|e| AppError::KeyDerivation(format!("derivation failed: {e}")))?;
-
-    let signing_key = derived.signing_key;
-    let verifying_key = signing_key.verifying_key();
-
-    Ok((signing_key.to_bytes(), verifying_key.to_bytes()))
+pub trait Bip32Extension {
+    /// Derive an Ed25519 key pair from a seed and BIP32 derivation path.
+    ///
+    /// Returns `Secret`.
+    fn derive_ed25519(&self, path: &str) -> Result<Secret, AppError>;
+    /// Derive an X25519 key pair from a seed and BIP32 derivation path.
+    ///
+    /// Returns `Secret`.
+    fn derive_x25519(&self, path: &str) -> Result<Secret, AppError>;
 }
 
-/// Derive an X25519 key pair by first deriving Ed25519, then converting.
-///
-/// Returns `(private_key_bytes, public_key_bytes)`.
-pub fn derive_x25519(seed: &[u8], path: &str) -> Result<([u8; 32], [u8; 32]), AppError> {
-    let (ed_private, _) = derive_ed25519(seed, path)?;
+impl Bip32Extension for ExtendedSigningKey {
+    fn derive_ed25519(&self, path: &str) -> Result<Secret, AppError> {
+        let derivation_path: DerivationPath = path
+            .parse()
+            .map_err(|e| AppError::KeyDerivation(format!("invalid derivation path: {e}")))?;
 
-    // Convert Ed25519 private key to X25519 by hashing with SHA-512 and clamping
-    // This follows the standard Ed25519 -> X25519 conversion
-    let hash = Sha256::digest(ed_private);
-    let mut x25519_private = [0u8; 32];
-    x25519_private.copy_from_slice(&hash);
+        let derived = self
+            .derive(&derivation_path)
+            .map_err(|e| AppError::KeyDerivation(format!("derivation failed: {e}")))?;
 
-    // Clamp the scalar per X25519 spec
-    x25519_private[0] &= 248;
-    x25519_private[31] &= 127;
-    x25519_private[31] |= 64;
+        Ok(Secret::generate_ed25519(
+            None,
+            Some(derived.signing_key.as_bytes()),
+        ))
+    }
 
-    let secret = x25519_dalek::StaticSecret::from(x25519_private);
-    let public = x25519_dalek::PublicKey::from(&secret);
+    fn derive_x25519(&self, path: &str) -> Result<Secret, AppError> {
+        let derivation_path: DerivationPath = path
+            .parse()
+            .map_err(|e| AppError::KeyDerivation(format!("invalid derivation path: {e}")))?;
 
-    Ok((x25519_private, public.to_bytes()))
-}
+        let derived = self
+            .derive(&derivation_path)
+            .map_err(|e| AppError::KeyDerivation(format!("derivation failed: {e}")))?;
 
-/// Encode public key bytes in multibase (base58btc) format.
-pub fn multibase_encode(bytes: &[u8]) -> String {
-    multibase::encode(multibase::Base::Base58Btc, bytes)
+        let x25519_seed = ed25519_private_to_x25519(derived.signing_key.as_bytes());
+        Ok(Secret::generate_x25519(None, Some(&x25519_seed))?)
+    }
 }
 
 /// Load an existing master seed from the store, or generate/derive a new one.
@@ -62,87 +56,127 @@ pub fn multibase_encode(bytes: &[u8]) -> String {
 pub async fn load_or_generate_seed(
     seed_store: &dyn SeedStore,
     mnemonic: Option<&str>,
-) -> Result<Vec<u8>, AppError> {
+) -> Result<ExtendedSigningKey, AppError> {
     if let Some(phrase) = mnemonic {
         let m = bip39::Mnemonic::parse(phrase)
             .map_err(|e| AppError::KeyDerivation(format!("invalid BIP-39 mnemonic: {e}")))?;
         let seed = m.to_seed("");
         seed_store.set(&seed).await?;
-        return Ok(seed.to_vec());
+        return ExtendedSigningKey::from_seed(&seed).map_err(|e| {
+            AppError::KeyDerivation(format!(
+                "Couldn't create bip32 root signing key! Reason: {e}"
+            ))
+        });
     }
 
     if let Some(existing) = seed_store.get().await? {
-        return Ok(existing);
+        return ExtendedSigningKey::from_seed(&existing).map_err(|e| {
+            AppError::KeyDerivation(format!(
+                "Couldn't create bip32 root signing key! Reason: {e}"
+            ))
+        });
     }
 
     let mut seed = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut seed);
     seed_store.set(&seed).await?;
-    Ok(seed.to_vec())
+    ExtendedSigningKey::from_seed(&seed).map_err(|e| {
+        AppError::KeyDerivation(format!(
+            "Couldn't create bip32 root signing key! Reason: {e}"
+        ))
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn get_bip32() -> ExtendedSigningKey {
+        ExtendedSigningKey::from_seed(&[
+            7, 26, 142, 230, 65, 85, 188, 182, 29, 129, 52, 229, 217, 159, 243, 182, 73, 89, 196,
+            246, 58, 28, 100, 144, 187, 21, 157, 39, 4, 188, 154, 180,
+        ])
+        .unwrap()
+    }
+
     #[test]
     fn test_derive_ed25519_deterministic() {
-        let seed = [42u8; 32];
+        let bip32 = get_bip32();
         let path = "m/44'/0'/0'";
 
-        let (priv1, pub1) = derive_ed25519(&seed, path).unwrap();
-        let (priv2, pub2) = derive_ed25519(&seed, path).unwrap();
+        let secret = bip32.derive_ed25519(path).unwrap();
 
-        assert_eq!(priv1, priv2);
-        assert_eq!(pub1, pub2);
+        assert_eq!(
+            secret.get_private_keymultibase().unwrap(),
+            "z3u2RHYaCxd1wzvJB6wQEcnrLth65xcNHcGDDSdfwDjmkoG3".to_string()
+        );
+        assert_eq!(
+            secret.get_public_keymultibase().unwrap(),
+            "z6MkestKNR7EyyB8yojbPcRoG8rF6iX4uXYkyVbDBsM9Fj5i".to_string()
+        );
     }
 
     #[test]
     fn test_derive_ed25519_different_paths() {
-        let seed = [42u8; 32];
+        let bip32 = get_bip32();
 
-        let (_, pub1) = derive_ed25519(&seed, "m/44'/0'/0'").unwrap();
-        let (_, pub2) = derive_ed25519(&seed, "m/44'/0'/1'").unwrap();
+        let secret1 = bip32.derive_ed25519("m/44'/0'/0'").unwrap();
+        let secret2 = bip32.derive_ed25519("m/44'/0'/1'").unwrap();
 
-        assert_ne!(pub1, pub2);
+        assert_eq!(
+            secret1.get_private_keymultibase().unwrap(),
+            "z3u2RHYaCxd1wzvJB6wQEcnrLth65xcNHcGDDSdfwDjmkoG3".to_string()
+        );
+        assert_eq!(
+            secret1.get_public_keymultibase().unwrap(),
+            "z6MkestKNR7EyyB8yojbPcRoG8rF6iX4uXYkyVbDBsM9Fj5i".to_string()
+        );
+        assert_eq!(
+            secret2.get_private_keymultibase().unwrap(),
+            "z3u2iLUGo3YPXjUFE6LR2z1f84ufRDe4PEeQpvA9dPU8HZ1G".to_string()
+        );
+        assert_eq!(
+            secret2.get_public_keymultibase().unwrap(),
+            "z6Mkw5tnbEgzv7zc4SJmSACo6FbfKLHveK4dCHjar8h2voDE".to_string()
+        );
     }
 
     #[test]
     fn test_derive_x25519_deterministic() {
-        let seed = [42u8; 32];
+        let bip32 = get_bip32();
         let path = "m/44'/0'/0'";
 
-        let (priv1, pub1) = derive_x25519(&seed, path).unwrap();
-        let (priv2, pub2) = derive_x25519(&seed, path).unwrap();
+        let secret = bip32.derive_x25519(path).unwrap();
 
-        assert_eq!(priv1, priv2);
-        assert_eq!(pub1, pub2);
+        assert_eq!(
+            secret.get_private_keymultibase().unwrap(),
+            "z3wenSajog3TCG3QxA8yVvEniVxp2QU9mE3fYgDYQj8j6MHo".to_string()
+        );
+        assert_eq!(
+            secret.get_public_keymultibase().unwrap(),
+            "z6LStYM3H4UG8qn79pQwGmSRd81VMETBPjH49uf5SeqJBB7G".to_string()
+        );
     }
 
     #[test]
     fn test_derive_x25519_differs_from_ed25519() {
-        let seed = [42u8; 32];
+        let bip32 = get_bip32();
         let path = "m/44'/0'/0'";
 
-        let (_, ed_pub) = derive_ed25519(&seed, path).unwrap();
-        let (_, x_pub) = derive_x25519(&seed, path).unwrap();
+        let ed_secret = bip32.derive_ed25519(path).unwrap();
+        let x_secret = bip32.derive_x25519(path).unwrap();
 
-        assert_ne!(ed_pub, x_pub);
+        assert_ne!(
+            ed_secret.get_public_keymultibase().unwrap(),
+            x_secret.get_private_keymultibase().unwrap()
+        );
     }
 
     #[test]
     fn test_invalid_path() {
-        let seed = [42u8; 32];
-        let result = derive_ed25519(&seed, "not/a/valid/path");
+        let bip32 = get_bip32();
+        let result = bip32.derive_ed25519("not/a/valid/path");
         assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_multibase_encode() {
-        let bytes = [1u8; 32];
-        let encoded = multibase_encode(&bytes);
-        // Base58btc multibase starts with 'z'
-        assert!(encoded.starts_with('z'));
     }
 
     #[test]

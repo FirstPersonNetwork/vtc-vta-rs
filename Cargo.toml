@@ -16,6 +16,9 @@ repository = "https://github.com/FirstPersonNetwork/vtc-vta-rs"
 
 [workspace.dependencies]
 
+# Affinidi Trusted Messaging
+affinidi-messaging-sdk = "0.14"
+
 # Decentralized Trust Graph Credentials
 # NOTE: When this is published, switch from git to crates.io
 dtg-credentials = { version = "0.1", git = "https://github.com/FirstPersonNetwork/dtg-credentials-rs" }

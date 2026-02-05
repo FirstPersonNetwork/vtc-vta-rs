@@ -10,6 +10,13 @@ pub struct AppConfig {
     pub log: LogConfig,
     #[serde(default)]
     pub store: StoreConfig,
+    pub messaging: Option<MessagingConfig>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MessagingConfig {
+    pub mediator_url: String,
+    pub mediator_did: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -99,6 +106,7 @@ impl AppConfig {
                 server: ServerConfig::default(),
                 log: LogConfig::default(),
                 store: StoreConfig::default(),
+                messaging: None,
             }
         };
 
@@ -127,6 +135,34 @@ impl AppConfig {
         }
         if let Ok(data_dir) = std::env::var("VTA_STORE_DATA_DIR") {
             config.store.data_dir = PathBuf::from(data_dir);
+        }
+
+        // Messaging env var overrides
+        match (
+            std::env::var("VTA_MESSAGING_MEDIATOR_URL"),
+            std::env::var("VTA_MESSAGING_MEDIATOR_DID"),
+        ) {
+            (Ok(url), Ok(did)) => {
+                config.messaging = Some(MessagingConfig {
+                    mediator_url: url,
+                    mediator_did: did,
+                });
+            }
+            (Ok(url), Err(_)) => {
+                let messaging = config.messaging.get_or_insert(MessagingConfig {
+                    mediator_url: String::new(),
+                    mediator_did: String::new(),
+                });
+                messaging.mediator_url = url;
+            }
+            (Err(_), Ok(did)) => {
+                let messaging = config.messaging.get_or_insert(MessagingConfig {
+                    mediator_url: String::new(),
+                    mediator_did: String::new(),
+                });
+                messaging.mediator_did = did;
+            }
+            (Err(_), Err(_)) => {}
         }
 
         Ok(config)

@@ -13,6 +13,7 @@ repository.workspace = true
 [features]
 
 [dependencies]
+affinidi-messaging-sdk = { workspace = true }
 axum = "0.8"
 fjall = { workspace = true }
 toml = "0.9"

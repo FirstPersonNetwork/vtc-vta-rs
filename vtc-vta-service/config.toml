@@ -8,3 +8,7 @@ format = "text"
 
 [store]
 data_dir = "data/vta"
+
+# [messaging]
+# mediator_url = "https://mediator.example.com/mediator/v1"
+# mediator_did = "did:peer:2..."

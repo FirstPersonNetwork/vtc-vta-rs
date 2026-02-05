@@ -10,6 +10,12 @@ pub enum AppError {
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("store error: {0}")]
+    Store(#[from] fjall::Error),
+
+    #[error("serialization error: {0}")]
+    Serialization(#[from] serde_json::Error),
+
     #[error("internal error: {0}")]
     Internal(String),
 }
@@ -19,6 +25,8 @@ impl IntoResponse for AppError {
         let status = match &self {
             AppError::Config(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Io(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::Store(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::Serialization(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         };
 

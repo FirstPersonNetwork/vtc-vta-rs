@@ -22,7 +22,7 @@ pub struct CreateKeyRequest {
 
 #[derive(Debug, Serialize)]
 pub struct CreateKeyResponse {
-    pub id: Uuid,
+    pub key_id: String,
     pub key_type: KeyType,
     pub derivation_path: String,
     pub public_key: String,
@@ -33,8 +33,19 @@ pub struct CreateKeyResponse {
 
 #[derive(Debug, Serialize)]
 pub struct InvalidateKeyResponse {
-    pub id: Uuid,
+    pub key_id: String,
     pub status: KeyStatus,
+    pub updated_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RenameKeyRequest {
+    pub key_id: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RenameKeyResponse {
+    pub key_id: String,
     pub updated_at: chrono::DateTime<Utc>,
 }
 
@@ -53,11 +64,11 @@ pub async fn create_key(
     };
 
     let now = Utc::now();
-    let id = Uuid::new_v4();
+    let key_id = Uuid::new_v4().to_string();
     let public_key = multibase_encode(&public_bytes);
 
     let record = KeyRecord {
-        id,
+        key_id: key_id.clone(),
         derivation_path: req.derivation_path.clone(),
         key_type: req.key_type.clone(),
         status: KeyStatus::Active,
@@ -67,10 +78,10 @@ pub async fn create_key(
         updated_at: now,
     };
 
-    keys.insert(KeyRecord::store_key(&id), &record).await?;
+    keys.insert(KeyRecord::store_key(&key_id), &record).await?;
 
     let response = CreateKeyResponse {
-        id,
+        key_id,
         key_type: req.key_type,
         derivation_path: req.derivation_path,
         public_key,
@@ -84,32 +95,34 @@ pub async fn create_key(
 
 pub async fn get_key(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(key_id): Path<String>,
 ) -> Result<Json<KeyRecord>, AppError> {
     let keys = state.store.keyspace("keys")?;
 
     let record: KeyRecord = keys
-        .get(KeyRecord::store_key(&id))
+        .get(KeyRecord::store_key(&key_id))
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("key {id} not found")))?;
+        .ok_or_else(|| AppError::NotFound(format!("key {key_id} not found")))?;
 
     Ok(Json(record))
 }
 
 pub async fn invalidate_key(
     State(state): State<AppState>,
-    Path(id): Path<Uuid>,
+    Path(key_id): Path<String>,
 ) -> Result<Json<InvalidateKeyResponse>, AppError> {
     let keys = state.store.keyspace("keys")?;
-    let store_key = KeyRecord::store_key(&id);
+    let store_key = KeyRecord::store_key(&key_id);
 
     let mut record: KeyRecord = keys
         .get(store_key.clone())
         .await?
-        .ok_or_else(|| AppError::NotFound(format!("key {id} not found")))?;
+        .ok_or_else(|| AppError::NotFound(format!("key {key_id} not found")))?;
 
     if record.status == KeyStatus::Revoked {
-        return Err(AppError::Conflict(format!("key {id} is already revoked")));
+        return Err(AppError::Conflict(format!(
+            "key {key_id} is already revoked"
+        )));
     }
 
     record.status = KeyStatus::Revoked;
@@ -118,8 +131,46 @@ pub async fn invalidate_key(
     keys.insert(store_key, &record).await?;
 
     Ok(Json(InvalidateKeyResponse {
-        id,
+        key_id,
         status: record.status,
+        updated_at: record.updated_at,
+    }))
+}
+
+pub async fn rename_key(
+    State(state): State<AppState>,
+    Path(key_id): Path<String>,
+    Json(req): Json<RenameKeyRequest>,
+) -> Result<Json<RenameKeyResponse>, AppError> {
+    let keys = state.store.keyspace("keys")?;
+    let old_store_key = KeyRecord::store_key(&key_id);
+
+    let mut record: KeyRecord = keys
+        .get(old_store_key.clone())
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("key {key_id} not found")))?;
+
+    let new_store_key = KeyRecord::store_key(&req.key_id);
+
+    if keys
+        .get::<KeyRecord>(new_store_key.clone())
+        .await?
+        .is_some()
+    {
+        return Err(AppError::Conflict(format!(
+            "key {} already exists",
+            req.key_id
+        )));
+    }
+
+    record.key_id = req.key_id.clone();
+    record.updated_at = Utc::now();
+
+    keys.insert(new_store_key, &record).await?;
+    keys.remove(old_store_key).await?;
+
+    Ok(Json(RenameKeyResponse {
+        key_id: req.key_id,
         updated_at: record.updated_at,
     }))
 }

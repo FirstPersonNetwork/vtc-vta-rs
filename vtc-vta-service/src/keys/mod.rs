@@ -2,7 +2,6 @@ pub mod derivation;
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
@@ -20,7 +19,7 @@ pub enum KeyStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct KeyRecord {
-    pub id: Uuid,
+    pub key_id: String,
     pub derivation_path: String,
     pub key_type: KeyType,
     pub status: KeyStatus,
@@ -31,8 +30,8 @@ pub struct KeyRecord {
 }
 
 impl KeyRecord {
-    pub fn store_key(id: &Uuid) -> String {
-        format!("key:{id}")
+    pub fn store_key(key_id: &str) -> String {
+        format!("key:{key_id}")
     }
 }
 

@@ -11,7 +11,9 @@ pub fn router() -> Router<AppState> {
         .route("/health", get(health::health))
         .route("/keys", post(keys::create_key))
         .route(
-            "/keys/{id}",
-            get(keys::get_key).delete(keys::invalidate_key),
+            "/keys/{key_id}",
+            get(keys::get_key)
+                .delete(keys::invalidate_key)
+                .patch(keys::rename_key),
         )
 }

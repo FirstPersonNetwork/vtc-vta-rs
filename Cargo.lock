@@ -1494,6 +1494,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "did-webvh"
+version = "0.1.8"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e4addef95c3564b7f3485eef12c9780fbb0fe54acbef31b92cdbb365015833a3"
+
+[[package]]
 name = "didwebvh-rs"
 version = "0.1.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5646,6 +5652,7 @@ dependencies = [
  "affinidi-tdk",
  "axum",
  "chrono",
+ "did-webvh",
  "ed25519-dalek-bip32",
  "fjall",
  "multibase",

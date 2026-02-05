@@ -1,3 +1,5 @@
+# vta_did = "did:webvh:example.com:vta"
+
 [server]
 host = "0.0.0.0"
 port = 3001

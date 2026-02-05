@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 #[derive(Debug, Deserialize)]
 pub struct AppConfig {
+    pub vta_did: Option<String>,
     #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
@@ -103,6 +104,7 @@ impl AppConfig {
                 .map_err(|e| AppError::Config(format!("failed to parse {}: {e}", path.display())))?
         } else {
             AppConfig {
+                vta_did: None,
                 server: ServerConfig::default(),
                 log: LogConfig::default(),
                 store: StoreConfig::default(),
@@ -111,6 +113,9 @@ impl AppConfig {
         };
 
         // Apply env var overrides
+        if let Ok(vta_did) = std::env::var("VTA_DID") {
+            config.vta_did = Some(vta_did);
+        }
         if let Ok(host) = std::env::var("VTA_SERVER_HOST") {
             config.server.host = host;
         }

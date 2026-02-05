@@ -9,6 +9,8 @@ use tracing_subscriber::EnvFilter;
 
 #[tokio::main]
 async fn main() {
+    print_banner();
+
     let config = AppConfig::load().expect("failed to load configuration");
 
     init_tracing(&config);
@@ -19,6 +21,27 @@ async fn main() {
         tracing::error!("server error: {e}");
         std::process::exit(1);
     }
+}
+
+fn print_banner() {
+    let cyan = "\x1b[36m";
+    let magenta = "\x1b[35m";
+    let yellow = "\x1b[33m";
+    let dim = "\x1b[2m";
+    let reset = "\x1b[0m";
+
+    eprintln!(
+        r#"
+{cyan} ██╗   ██╗{magenta}████████╗{yellow} █████╗{reset}
+{cyan} ██║   ██║{magenta}╚══██╔══╝{yellow}██╔══██╗{reset}
+{cyan} ██║   ██║{magenta}   ██║   {yellow}███████║{reset}
+{cyan} ╚██╗ ██╔╝{magenta}   ██║   {yellow}██╔══██║{reset}
+{cyan}  ╚████╔╝ {magenta}   ██║   {yellow}██║  ██║{reset}
+{cyan}   ╚═══╝  {magenta}   ╚═╝   {yellow}╚═╝  ╚═╝{reset}
+{dim}  Verified Trust Agent v{version}{reset}
+"#,
+        version = env!("CARGO_PKG_VERSION"),
+    );
 }
 
 fn init_tracing(config: &AppConfig) {

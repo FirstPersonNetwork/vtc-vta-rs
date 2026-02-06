@@ -2,6 +2,7 @@ use axum::Json;
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
 
+use crate::auth::{AdminAuth, AuthClaims};
 use crate::error::AppError;
 use crate::server::AppState;
 
@@ -19,7 +20,10 @@ pub struct UpdateConfigRequest {
     pub community_description: Option<String>,
 }
 
-pub async fn get_config(State(state): State<AppState>) -> Result<Json<ConfigResponse>, AppError> {
+pub async fn get_config(
+    _auth: AuthClaims,
+    State(state): State<AppState>,
+) -> Result<Json<ConfigResponse>, AppError> {
     let config = state.config.read().await;
     Ok(Json(ConfigResponse {
         vta_did: config.vta_did.clone(),
@@ -29,6 +33,7 @@ pub async fn get_config(State(state): State<AppState>) -> Result<Json<ConfigResp
 }
 
 pub async fn update_config(
+    _auth: AdminAuth,
     State(state): State<AppState>,
     Json(req): Json<UpdateConfigRequest>,
 ) -> Result<Json<ConfigResponse>, AppError> {

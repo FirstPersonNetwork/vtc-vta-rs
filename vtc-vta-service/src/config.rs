@@ -14,6 +14,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub store: StoreConfig,
     pub messaging: Option<MessagingConfig>,
+    #[serde(default)]
+    pub auth: AuthConfig,
     #[serde(skip)]
     pub config_path: PathBuf,
 }
@@ -44,6 +46,45 @@ pub struct LogConfig {
 pub struct StoreConfig {
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct AuthConfig {
+    #[serde(default = "default_access_token_expiry")]
+    pub access_token_expiry: u64,
+    #[serde(default = "default_refresh_token_expiry")]
+    pub refresh_token_expiry: u64,
+    #[serde(default = "default_challenge_ttl")]
+    pub challenge_ttl: u64,
+    #[serde(default = "default_session_cleanup_interval")]
+    pub session_cleanup_interval: u64,
+}
+
+fn default_access_token_expiry() -> u64 {
+    900
+}
+
+fn default_refresh_token_expiry() -> u64 {
+    86400
+}
+
+fn default_challenge_ttl() -> u64 {
+    300
+}
+
+fn default_session_cleanup_interval() -> u64 {
+    600
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            access_token_expiry: default_access_token_expiry(),
+            refresh_token_expiry: default_refresh_token_expiry(),
+            challenge_ttl: default_challenge_ttl(),
+            session_cleanup_interval: default_session_cleanup_interval(),
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize, Serialize, Clone, PartialEq)]
@@ -115,6 +156,7 @@ impl AppConfig {
                 log: LogConfig::default(),
                 store: StoreConfig::default(),
                 messaging: None,
+                auth: AuthConfig::default(),
                 config_path: PathBuf::new(),
             }
         };
@@ -177,6 +219,28 @@ impl AppConfig {
                 messaging.mediator_did = did;
             }
             (Err(_), Err(_)) => {}
+        }
+
+        // Auth env var overrides
+        if let Ok(expiry) = std::env::var("VTA_AUTH_ACCESS_EXPIRY") {
+            config.auth.access_token_expiry = expiry
+                .parse()
+                .map_err(|e| AppError::Config(format!("invalid VTA_AUTH_ACCESS_EXPIRY: {e}")))?;
+        }
+        if let Ok(expiry) = std::env::var("VTA_AUTH_REFRESH_EXPIRY") {
+            config.auth.refresh_token_expiry = expiry
+                .parse()
+                .map_err(|e| AppError::Config(format!("invalid VTA_AUTH_REFRESH_EXPIRY: {e}")))?;
+        }
+        if let Ok(ttl) = std::env::var("VTA_AUTH_CHALLENGE_TTL") {
+            config.auth.challenge_ttl = ttl
+                .parse()
+                .map_err(|e| AppError::Config(format!("invalid VTA_AUTH_CHALLENGE_TTL: {e}")))?;
+        }
+        if let Ok(interval) = std::env::var("VTA_AUTH_SESSION_CLEANUP_INTERVAL") {
+            config.auth.session_cleanup_interval = interval.parse().map_err(|e| {
+                AppError::Config(format!("invalid VTA_AUTH_SESSION_CLEANUP_INTERVAL: {e}"))
+            })?;
         }
 
         Ok(config)

@@ -1,3 +1,5 @@
+mod acl;
+mod auth;
 mod config;
 mod error;
 mod keys;

@@ -1,0 +1,196 @@
+use chrono::{DateTime, Utc};
+use reqwest::{Client, RequestBuilder};
+use serde::{Deserialize, Serialize};
+use vtc_vta_sdk::keys::{KeyRecord, KeyStatus, KeyType};
+
+/// HTTP client for the VTC-VTA service API.
+pub struct VtaClient {
+    client: Client,
+    base_url: String,
+    token: Option<String>,
+}
+
+// ── Request / Response types ────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct HealthResponse {
+    pub status: String,
+    pub version: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConfigResponse {
+    pub vta_did: Option<String>,
+    pub community_name: Option<String>,
+    pub community_description: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateConfigRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub vta_did: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub community_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub community_description: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateKeyRequest {
+    pub key_type: KeyType,
+    pub derivation_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mnemonic: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateKeyResponse {
+    pub key_id: String,
+    pub key_type: KeyType,
+    pub derivation_path: String,
+    pub public_key: String,
+    pub status: KeyStatus,
+    pub label: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct InvalidateKeyResponse {
+    pub key_id: String,
+    pub status: KeyStatus,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RenameKeyRequest {
+    pub key_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RenameKeyResponse {
+    pub key_id: String,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ErrorResponse {
+    pub error: String,
+}
+
+// ── Client implementation ───────────────────────────────────────────
+
+impl VtaClient {
+    pub fn new(base_url: &str) -> Self {
+        Self {
+            client: Client::new(),
+            base_url: base_url.trim_end_matches('/').to_string(),
+            token: None,
+        }
+    }
+
+    /// Set the Bearer token for authenticated requests.
+    pub fn set_token(&mut self, token: String) {
+        self.token = Some(token);
+    }
+
+    pub fn base_url(&self) -> &str {
+        &self.base_url
+    }
+
+    /// Attach Bearer token to a request if one is set.
+    fn with_auth(&self, req: RequestBuilder) -> RequestBuilder {
+        match &self.token {
+            Some(token) => req.bearer_auth(token),
+            None => req,
+        }
+    }
+
+    /// GET /health
+    pub async fn health(&self) -> Result<HealthResponse, Box<dyn std::error::Error>> {
+        let resp = self
+            .client
+            .get(format!("{}/health", self.base_url))
+            .send()
+            .await?;
+        Self::handle_response(resp).await
+    }
+
+    /// GET /config
+    pub async fn get_config(&self) -> Result<ConfigResponse, Box<dyn std::error::Error>> {
+        let req = self.client.get(format!("{}/config", self.base_url));
+        let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// PATCH /config
+    pub async fn update_config(
+        &self,
+        req: UpdateConfigRequest,
+    ) -> Result<ConfigResponse, Box<dyn std::error::Error>> {
+        let r = self.client.patch(format!("{}/config", self.base_url)).json(&req);
+        let resp = self.with_auth(r).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// POST /keys
+    pub async fn create_key(
+        &self,
+        req: CreateKeyRequest,
+    ) -> Result<CreateKeyResponse, Box<dyn std::error::Error>> {
+        let r = self.client.post(format!("{}/keys", self.base_url)).json(&req);
+        let resp = self.with_auth(r).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// GET /keys/{key_id}
+    pub async fn get_key(
+        &self,
+        key_id: &str,
+    ) -> Result<KeyRecord, Box<dyn std::error::Error>> {
+        let req = self.client.get(format!("{}/keys/{}", self.base_url, key_id));
+        let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// DELETE /keys/{key_id}
+    pub async fn invalidate_key(
+        &self,
+        key_id: &str,
+    ) -> Result<InvalidateKeyResponse, Box<dyn std::error::Error>> {
+        let req = self.client.delete(format!("{}/keys/{}", self.base_url, key_id));
+        let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// PATCH /keys/{key_id}
+    pub async fn rename_key(
+        &self,
+        key_id: &str,
+        new_key_id: &str,
+    ) -> Result<RenameKeyResponse, Box<dyn std::error::Error>> {
+        let body = RenameKeyRequest {
+            key_id: new_key_id.to_string(),
+        };
+        let req = self.client.patch(format!("{}/keys/{}", self.base_url, key_id)).json(&body);
+        let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    async fn handle_response<T: serde::de::DeserializeOwned>(
+        resp: reqwest::Response,
+    ) -> Result<T, Box<dyn std::error::Error>> {
+        if resp.status().is_success() {
+            Ok(resp.json::<T>().await?)
+        } else {
+            let status = resp.status();
+            let body = resp
+                .json::<ErrorResponse>()
+                .await
+                .map(|e| e.error)
+                .unwrap_or_else(|_| "unknown error".to_string());
+            Err(format!("{status}: {body}").into())
+        }
+    }
+}

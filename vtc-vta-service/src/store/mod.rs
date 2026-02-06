@@ -112,6 +112,25 @@ impl KeyspaceHandle {
         Ok(result.map(|v| v.to_vec()))
     }
 
+    /// Iterate all key-value pairs whose key starts with `prefix`.
+    pub async fn prefix_iter_raw(
+        &self,
+        prefix: impl Into<Vec<u8>>,
+    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, AppError> {
+        let prefix = prefix.into();
+        let ks = self.keyspace.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<(Vec<u8>, Vec<u8>)>, AppError> {
+            let mut results = Vec::new();
+            for guard in ks.prefix(&prefix) {
+                let (key, value) = guard.into_inner()?;
+                results.push((key.to_vec(), value.to_vec()));
+            }
+            Ok(results)
+        })
+        .await
+        .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))?
+    }
+
     /// Atomically check that `new_key` doesn't exist, insert `value` at `new_key`,
     /// and remove `old_key` in a single blocking operation.
     pub async fn swap<V: Serialize>(

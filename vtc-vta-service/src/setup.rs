@@ -15,7 +15,10 @@ use serde_json::json;
 use url::Url;
 use uuid::Uuid;
 
-use crate::config::{AppConfig, LogConfig, LogFormat, MessagingConfig, ServerConfig, StoreConfig};
+use crate::acl::{AclEntry, Role, store_acl_entry};
+use crate::config::{
+    AppConfig, AuthConfig, LogConfig, LogFormat, MessagingConfig, ServerConfig, StoreConfig,
+};
 use crate::keys::seed_store::KeyringSeedStore;
 use crate::keys::{store_key, KeyRecord, KeyStatus, KeyType as SdkKeyType};
 use crate::store::{KeyspaceHandle, Store};
@@ -183,7 +186,26 @@ pub async fn run_setup_wizard(config_path: Option<PathBuf>) -> Result<(), Box<dy
     // 12. VTA DID (after mediator so we can embed it as a service endpoint)
     let vta_did = create_vta_did(&seed, &messaging, &keys_ks).await?;
 
-    // 12. Save config
+    // 13. Bootstrap admin DID in ACL
+    let admin_did: String = Input::new()
+        .with_prompt("Initial admin DID (the DID allowed to manage this VTA)")
+        .interact_text()?;
+
+    let acl_ks = store.keyspace("acl")?;
+    let admin_entry = AclEntry {
+        did: admin_did.clone(),
+        role: Role::Admin,
+        label: Some("Initial admin".into()),
+        created_at: std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        created_by: "setup".into(),
+    };
+    store_acl_entry(&acl_ks, &admin_entry).await?;
+    eprintln!("  Admin DID added to ACL: {admin_did}");
+
+    // 14. Save config
     let config = AppConfig {
         vta_did,
         community_name,
@@ -197,11 +219,12 @@ pub async fn run_setup_wizard(config_path: Option<PathBuf>) -> Result<(), Box<dy
             data_dir: PathBuf::from(data_dir),
         },
         messaging: Some(messaging),
+        auth: AuthConfig::default(),
         config_path: config_path.clone(),
     };
     config.save()?;
 
-    // 13. Summary
+    // 15. Summary
     eprintln!();
     eprintln!("\x1b[1;32mSetup complete!\x1b[0m");
     eprintln!("  Config saved to: {}", config_path.display());
@@ -217,6 +240,7 @@ pub async fn run_setup_wizard(config_path: Option<PathBuf>) -> Result<(), Box<dy
         eprintln!("  Mediator DID: {}", msg.mediator_did);
         eprintln!("  Mediator URL: {}", msg.mediator_url);
     }
+    eprintln!("  Admin DID: {admin_did}");
 
     Ok(())
 }

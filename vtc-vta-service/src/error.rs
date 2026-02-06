@@ -34,6 +34,15 @@ pub enum AppError {
 
     #[error("secrets error: {0}")]
     Secrets(#[from] SecretsResolverError),
+
+    #[error("authentication error: {0}")]
+    Authentication(String),
+
+    #[error("unauthorized: {0}")]
+    Unauthorized(String),
+
+    #[error("forbidden: {0}")]
+    Forbidden(String),
 }
 
 impl IntoResponse for AppError {
@@ -49,6 +58,9 @@ impl IntoResponse for AppError {
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Secrets(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::Authentication(_) => StatusCode::UNAUTHORIZED,
+            AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
+            AppError::Forbidden(_) => StatusCode::FORBIDDEN,
         };
 
         let body = serde_json::json!({ "error": self.to_string() });

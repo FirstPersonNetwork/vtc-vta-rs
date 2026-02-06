@@ -5,6 +5,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::auth::{AdminAuth, AuthClaims};
 use crate::error::AppError;
 use crate::keys::derivation::{Bip32Extension, load_or_generate_seed};
 use crate::keys::{self, KeyRecord, KeyStatus, KeyType};
@@ -48,6 +49,7 @@ pub struct RenameKeyResponse {
 }
 
 pub async fn create_key(
+    _auth: AdminAuth,
     State(state): State<AppState>,
     Json(req): Json<CreateKeyRequest>,
 ) -> Result<(StatusCode, Json<CreateKeyResponse>), AppError> {
@@ -91,6 +93,7 @@ pub async fn create_key(
 }
 
 pub async fn get_key(
+    _auth: AuthClaims,
     State(state): State<AppState>,
     Path(key_id): Path<String>,
 ) -> Result<Json<KeyRecord>, AppError> {
@@ -105,6 +108,7 @@ pub async fn get_key(
 }
 
 pub async fn invalidate_key(
+    _auth: AdminAuth,
     State(state): State<AppState>,
     Path(key_id): Path<String>,
 ) -> Result<Json<InvalidateKeyResponse>, AppError> {
@@ -135,6 +139,7 @@ pub async fn invalidate_key(
 }
 
 pub async fn rename_key(
+    _auth: AdminAuth,
     State(state): State<AppState>,
     Path(key_id): Path<String>,
     Json(req): Json<RenameKeyRequest>,

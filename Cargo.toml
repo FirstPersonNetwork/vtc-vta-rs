@@ -52,6 +52,10 @@ rand = "0.8"
 
 # DID Web with Verifiable History
 did-webvh = "0.1"
+didwebvh-rs = "0.1"
+
+# URL parsing
+url = "2"
 
 # Cryptography
 sha2 = "0.10"

@@ -1,11 +1,36 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 
+use affinidi_tdk::secrets_resolver::secrets::Secret;
 use bip39::Mnemonic;
+use chrono::Utc;
 use dialoguer::{Confirm, Input, Select};
+use didwebvh_rs::log_entry::LogEntryMethods;
+use didwebvh_rs::parameters::Parameters as WebVHParameters;
+use didwebvh_rs::url::WebVHURL;
+use didwebvh_rs::DIDWebVHState;
+use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
 use rand::RngCore;
+use serde_json::json;
+use url::Url;
+use uuid::Uuid;
 
 use crate::config::{AppConfig, LogConfig, LogFormat, MessagingConfig, ServerConfig, StoreConfig};
 use crate::keys::seed_store::{KeyringSeedStore, SeedStore};
+use crate::keys::{store_key, KeyRecord, KeyStatus, KeyType as SdkKeyType};
+use crate::store::{KeyspaceHandle, Store};
+
+/// Derivation path for the VTA's Ed25519 signing/verification key.
+const VTA_SIGNING_KEY_PATH: &str = "m/44'/0'/0'";
+
+/// Derivation path for the VTA's X25519 key-agreement key.
+const VTA_KEY_AGREEMENT_PATH: &str = "m/44'/0'/1'";
+
+/// Base derivation path for VTA pre-rotation keys (`m/44'/1'/N'`).
+const VTA_PRE_ROTATION_BASE: &str = "m/44'/1'";
+
+/// Base derivation path for mediator pre-rotation keys (`m/44'/2'/N'`).
+const MEDIATOR_PRE_ROTATION_BASE: &str = "m/44'/2'";
 
 pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Welcome to the VTA setup wizard.\n");
@@ -54,36 +79,25 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
         Some(community_description)
     };
 
-    // 4. VTA DID
-    let vta_did: String = Input::new()
-        .with_prompt("VTA DID (leave empty to skip)")
-        .allow_empty(true)
-        .interact_text()?;
-    let vta_did = if vta_did.is_empty() {
-        None
-    } else {
-        Some(vta_did)
-    };
-
-    // 5. Server host
+    // 4. Server host
     let host: String = Input::new()
         .with_prompt("Server host")
         .default("0.0.0.0".into())
         .interact_text()?;
 
-    // 6. Server port
+    // 5. Server port
     let port: u16 = Input::new()
         .with_prompt("Server port")
         .default(3000u16)
         .interact_text()?;
 
-    // 7. Log level
+    // 6. Log level
     let log_level: String = Input::new()
         .with_prompt("Log level")
         .default("info".into())
         .interact_text()?;
 
-    // 8. Log format
+    // 7. Log format
     let log_format_items = &["text", "json"];
     let log_format_idx = Select::new()
         .with_prompt("Log format")
@@ -95,29 +109,19 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
         _ => LogFormat::Text,
     };
 
-    // 9. Data directory
+    // 8. Data directory
     let data_dir: String = Input::new()
         .with_prompt("Data directory")
         .default("data/vta".into())
         .interact_text()?;
 
-    // 10. DIDComm messaging
-    let messaging = if Confirm::new()
-        .with_prompt("Configure DIDComm messaging?")
-        .default(false)
-        .interact()?
-    {
-        let mediator_url: String = Input::new().with_prompt("Mediator URL").interact_text()?;
-        let mediator_did: String = Input::new().with_prompt("Mediator DID").interact_text()?;
-        Some(MessagingConfig {
-            mediator_url,
-            mediator_did,
-        })
-    } else {
-        None
-    };
+    // 9. Open the store so we can persist key records during DID creation
+    let store = Store::open(&StoreConfig {
+        data_dir: PathBuf::from(&data_dir),
+    })?;
+    let keys_ks = store.keyspace("keys")?;
 
-    // 11. BIP-39 mnemonic
+    // 10. BIP-39 mnemonic
     let mnemonic_options = &["Generate new 24-word mnemonic", "Import existing mnemonic"];
     let mnemonic_choice = Select::new()
         .with_prompt("BIP-39 mnemonic")
@@ -164,6 +168,17 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
         }
     };
 
+    // Store seed in OS keyring
+    let seed = mnemonic.to_seed("");
+    let seed_store = KeyringSeedStore::new("vtc-vta", "master_seed");
+    seed_store.set(&seed).await?;
+
+    // 11. DIDComm messaging (with mediator DID creation)
+    let messaging = configure_messaging(&seed, &keys_ks).await?;
+
+    // 12. VTA DID (after mediator so we can embed it as a service endpoint)
+    let vta_did = create_vta_did(&seed, &messaging, &keys_ks).await?;
+
     // 12. Save config
     let config = AppConfig {
         vta_did,
@@ -177,16 +192,12 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
         store: StoreConfig {
             data_dir: PathBuf::from(data_dir),
         },
-        messaging,
+        messaging: Some(messaging),
         config_path: config_path.clone(),
     };
     config.save()?;
 
-    // 13. Store seed in OS keyring
-    let seed_store = KeyringSeedStore::new("vtc-vta", "master_seed");
-    seed_store.set(&mnemonic.to_seed("")).await?;
-
-    // 14. Summary
+    // 13. Summary
     eprintln!();
     eprintln!("\x1b[1;32mSetup complete!\x1b[0m");
     eprintln!("  Config saved to: {}", config_path.display());
@@ -194,7 +205,413 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(name) = &config.community_name {
         eprintln!("  Community: {name}");
     }
+    if let Some(did) = &config.vta_did {
+        eprintln!("  VTA DID: {did}");
+    }
     eprintln!("  Server: {}:{}", config.server.host, config.server.port);
+    if let Some(msg) = &config.messaging {
+        eprintln!("  Mediator DID: {}", msg.mediator_did);
+        eprintln!("  Mediator URL: {}", msg.mediator_url);
+    }
 
     Ok(())
+}
+
+/// Guide the user through creating (or entering) a did:webvh DID for the VTA.
+///
+/// The mediator is added as a DIDCommMessaging service endpoint in the VTA's
+/// DID document.
+///
+/// Returns `Some(did_string)` or `None` if skipped.
+async fn create_vta_did(
+    seed: &[u8],
+    messaging: &MessagingConfig,
+    keys_ks: &KeyspaceHandle,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let did_options = &[
+        "Create a new did:webvh DID",
+        "Enter an existing DID",
+        "Skip (no VTA DID for now)",
+    ];
+    let choice = Select::new()
+        .with_prompt("VTA DID")
+        .items(did_options)
+        .default(0)
+        .interact()?;
+
+    match choice {
+        0 => {
+            // Derive keys from BIP-32 seed
+            let root = ExtendedSigningKey::from_seed(seed)
+                .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
+
+            let signing_path: DerivationPath = VTA_SIGNING_KEY_PATH
+                .parse()
+                .map_err(|e| format!("Invalid derivation path: {e}"))?;
+            let signing_derived = root
+                .derive(&signing_path)
+                .map_err(|e| format!("Key derivation failed: {e}"))?;
+            let signing_secret =
+                Secret::generate_ed25519(None, Some(signing_derived.signing_key.as_bytes()));
+
+            let ka_path: DerivationPath = VTA_KEY_AGREEMENT_PATH
+                .parse()
+                .map_err(|e| format!("Invalid derivation path: {e}"))?;
+            let ka_derived = root
+                .derive(&ka_path)
+                .map_err(|e| format!("Key derivation failed: {e}"))?;
+            let ka_secret =
+                Secret::generate_ed25519(None, Some(ka_derived.signing_key.as_bytes()));
+            let ka_secret = ka_secret
+                .to_x25519()
+                .map_err(|e| format!("X25519 conversion failed: {e}"))?;
+
+            let did = create_webvh_did(
+                &signing_secret,
+                Some(&ka_secret),
+                "VTA",
+                Some(messaging),
+                seed,
+                VTA_PRE_ROTATION_BASE,
+                keys_ks,
+            )
+            .await?;
+            Ok(Some(did))
+        }
+        1 => {
+            let did: String = Input::new().with_prompt("VTA DID").interact_text()?;
+            Ok(Some(did))
+        }
+        _ => Ok(None),
+    }
+}
+
+/// Guide the user through DIDComm messaging configuration.
+///
+/// Offers to create a new mediator DID or enter an existing one.
+async fn configure_messaging(
+    seed: &[u8],
+    keys_ks: &KeyspaceHandle,
+) -> Result<MessagingConfig, Box<dyn std::error::Error>> {
+    let mediator_url: String = Input::new()
+        .with_prompt("Mediator URL")
+        .interact_text()?;
+
+    let mediator_options = &[
+        "Create a new did:webvh DID for the mediator",
+        "Enter an existing mediator DID",
+    ];
+    let mediator_choice = Select::new()
+        .with_prompt("Mediator DID")
+        .items(mediator_options)
+        .default(0)
+        .interact()?;
+
+    let mediator_did = match mediator_choice {
+        0 => {
+            let signing_secret = Secret::generate_ed25519(None, None);
+            let ka_secret = Secret::generate_ed25519(None, None);
+            let ka_secret = ka_secret
+                .to_x25519()
+                .map_err(|e| format!("X25519 conversion failed: {e}"))?;
+
+            create_webvh_did(
+                &signing_secret,
+                Some(&ka_secret),
+                "mediator",
+                None,
+                seed,
+                MEDIATOR_PRE_ROTATION_BASE,
+                keys_ks,
+            )
+            .await?
+        }
+        _ => Input::new()
+            .with_prompt("Mediator DID")
+            .interact_text()?,
+    };
+
+    Ok(MessagingConfig {
+        mediator_url,
+        mediator_did,
+    })
+}
+
+/// Prompt the user for a URL (e.g. `https://example.com/dids/vta`) and convert
+/// it to a [`WebVHURL`].  Re-prompts on invalid input.
+fn prompt_webvh_url(label: &str) -> Result<WebVHURL, Box<dyn std::error::Error>> {
+    eprintln!();
+    eprintln!("  Enter the URL where the {label} DID document will be hosted.");
+    eprintln!("  Examples:");
+    eprintln!("    https://example.com                -> did:webvh:{{SCID}}:example.com");
+    eprintln!("    https://example.com/dids/vta       -> did:webvh:{{SCID}}:example.com:dids:vta");
+    eprintln!("    http://localhost:8000               -> did:webvh:{{SCID}}:localhost%3A8000");
+    eprintln!();
+
+    loop {
+        let raw: String = Input::new()
+            .with_prompt(format!("{label} DID URL"))
+            .default("http://localhost:8000/".into())
+            .interact_text()?;
+
+        let parsed = match Url::parse(&raw) {
+            Ok(u) => u,
+            Err(e) => {
+                eprintln!("\x1b[31mInvalid URL: {e} — please try again.\x1b[0m");
+                continue;
+            }
+        };
+
+        match WebVHURL::parse_url(&parsed) {
+            Ok(webvh_url) => {
+                let did_display = webvh_url.to_string();
+                let http_url = webvh_url
+                    .get_http_url(None)
+                    .map_err(|e| format!("{e}"))?;
+
+                eprintln!("  DID:  {did_display}");
+                eprintln!("  URL:  {http_url}");
+
+                if Confirm::new()
+                    .with_prompt("Is this correct?")
+                    .default(true)
+                    .interact()?
+                {
+                    return Ok(webvh_url);
+                }
+            }
+            Err(e) => {
+                eprintln!("\x1b[31mCould not convert to a webvh DID: {e} — please try again.\x1b[0m");
+            }
+        }
+    }
+}
+
+/// Prompt the user to optionally generate pre-rotation keys.
+///
+/// Keys are derived from the BIP-32 seed at `{base_path}/0'`, `{base_path}/1'`,
+/// etc. and stored as [`KeyRecord`] entries in the `"keys"` keyspace.
+///
+/// Returns the list of next-key hashes.  Returns an empty vec when the user
+/// declines.
+async fn prompt_pre_rotation_keys(
+    seed: &[u8],
+    base_path: &str,
+    label: &str,
+    keys_ks: &KeyspaceHandle,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    eprintln!();
+    eprintln!("  Pre-rotation protects against an attacker changing your authorization keys.");
+    eprintln!("  You generate future keys now and only publish their hashes.  When you later");
+    eprintln!("  need to rotate keys, you reveal the actual key that matches the hash.");
+
+    if !Confirm::new()
+        .with_prompt("Enable key pre-rotation?")
+        .default(true)
+        .interact()?
+    {
+        return Ok(vec![]);
+    }
+
+    let root = ExtendedSigningKey::from_seed(seed)
+        .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
+
+    let mut hashes: Vec<String> = Vec::new();
+    let mut index: u32 = 0;
+
+    loop {
+        let path = format!("{base_path}/{index}'");
+        let derivation_path: DerivationPath = path
+            .parse()
+            .map_err(|e| format!("Invalid derivation path: {e}"))?;
+        let derived = root
+            .derive(&derivation_path)
+            .map_err(|e| format!("Key derivation failed: {e}"))?;
+
+        let secret = Secret::generate_ed25519(None, Some(derived.signing_key.as_bytes()));
+
+        let pub_mb = secret
+            .get_public_keymultibase()
+            .map_err(|e| format!("{e}"))?;
+        let hash = secret
+            .get_public_keymultibase_hash()
+            .map_err(|e| format!("{e}"))?;
+
+        // Store key record
+        let key_id = Uuid::new_v4().to_string();
+        let now = Utc::now();
+        let record = KeyRecord {
+            key_id: key_id.clone(),
+            derivation_path: path,
+            key_type: SdkKeyType::Ed25519,
+            status: KeyStatus::Active,
+            public_key: pub_mb.clone(),
+            label: Some(format!("{label} pre-rotation key {index}")),
+            created_at: now,
+            updated_at: now,
+        };
+        keys_ks.insert(store_key(&key_id), &record).await?;
+
+        eprintln!();
+        eprintln!("  publicKeyMultibase: {pub_mb}");
+
+        hashes.push(hash);
+        index += 1;
+
+        if !Confirm::new()
+            .with_prompt(format!(
+                "Generated {} pre-rotation key(s). Generate another?",
+                hashes.len()
+            ))
+            .default(false)
+            .interact()?
+        {
+            break;
+        }
+    }
+
+    Ok(hashes)
+}
+
+/// Interactive did:webvh creation flow shared by VTA and mediator DID setup.
+///
+/// Prompts for a URL, builds a DID document, creates the log entry,
+/// and saves the `did.jsonl` file.
+///
+/// `label` is used in prompts (e.g. "VTA" or "mediator").
+/// When `messaging` is provided a DIDCommMessaging service endpoint is added
+/// to the DID document.
+async fn create_webvh_did(
+    signing_secret: &Secret,
+    ka_secret: Option<&Secret>,
+    label: &str,
+    messaging: Option<&MessagingConfig>,
+    seed: &[u8],
+    pre_rotation_base: &str,
+    keys_ks: &KeyspaceHandle,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // Prompt for URL and convert to WebVHURL
+    let webvh_url = prompt_webvh_url(label)?;
+    let did_id = webvh_url.to_string(); // e.g. did:webvh:{SCID}:example.com
+
+    let pub_key = signing_secret
+        .get_public_keymultibase()
+        .map_err(|e| format!("Failed to get public key: {e}"))?;
+
+    // Build DID document
+    let mut did_document = json!({
+        "@context": [
+            "https://www.w3.org/ns/did/v1",
+            "https://www.w3.org/ns/cid/v1"
+        ],
+        "id": &did_id,
+        "verificationMethod": [
+            {
+                "id": format!("{did_id}#key-0"),
+                "type": "Multikey",
+                "controller": &did_id,
+                "publicKeyMultibase": pub_key
+            }
+        ],
+        "authentication": [format!("{did_id}#key-0")],
+        "assertionMethod": [format!("{did_id}#key-0")]
+    });
+
+    // Add X25519 key agreement method if provided
+    if let Some(ka) = ka_secret {
+        let ka_pub = ka
+            .get_public_keymultibase()
+            .map_err(|e| format!("Failed to get key-agreement public key: {e}"))?;
+
+        did_document["verificationMethod"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "id": format!("{did_id}#key-1"),
+                "type": "Multikey",
+                "controller": &did_id,
+                "publicKeyMultibase": ka_pub
+            }));
+
+        did_document["keyAgreement"] = json!([format!("{did_id}#key-1")]);
+    }
+
+    // Add DIDCommMessaging service endpoint when a mediator is configured
+    if let Some(msg) = messaging {
+        did_document["service"] = json!([
+            {
+                "id": format!("{did_id}#didcomm"),
+                "type": "DIDCommMessaging",
+                "serviceEndpoint": [{
+                    "accept": ["didcomm/v2"],
+                    "routingKeys": [msg.mediator_did]
+                }]
+            }
+        ]);
+    }
+
+    eprintln!();
+    eprintln!(
+        "\x1b[2mDID Document:\n{}\x1b[0m",
+        serde_json::to_string_pretty(&did_document)?
+    );
+    eprintln!();
+
+    // Portability
+    let portable = Confirm::new()
+        .with_prompt("Make this DID portable (can move to a different domain later)?")
+        .default(true)
+        .interact()?;
+
+    // Pre-rotation keys
+    let next_key_hashes = prompt_pre_rotation_keys(seed, pre_rotation_base, label, keys_ks).await?;
+
+    // Build parameters
+    let parameters = WebVHParameters {
+        update_keys: Some(Arc::new(vec![pub_key])),
+        portable: Some(portable),
+        next_key_hashes: if next_key_hashes.is_empty() {
+            None
+        } else {
+            Some(Arc::new(next_key_hashes))
+        },
+        ..Default::default()
+    };
+
+    // Create the log entry
+    let mut did_state = DIDWebVHState::default();
+    did_state
+        .create_log_entry(None, &did_document, &parameters, signing_secret)
+        .map_err(|e| format!("Failed to create DID log entry: {e}"))?;
+
+    let scid = did_state.scid.clone();
+    let log_entry_state = did_state.log_entries.last().unwrap();
+
+    let fallback_did = format!("did:webvh:{scid}:{}", webvh_url.domain);
+    let final_did = match log_entry_state.log_entry.get_did_document() {
+        Ok(doc) => doc
+            .get("id")
+            .and_then(|id| id.as_str())
+            .map(String::from)
+            .unwrap_or(fallback_did),
+        Err(_) => fallback_did,
+    };
+
+    eprintln!("\x1b[1;32mCreated DID:\x1b[0m {final_did}");
+
+    // Save did.jsonl
+    let default_file = format!("{label}-did.jsonl");
+    let did_file: String = Input::new()
+        .with_prompt("Save DID log to file")
+        .default(default_file)
+        .interact_text()?;
+
+    log_entry_state
+        .log_entry
+        .save_to_file(&did_file)
+        .map_err(|e| format!("Failed to save DID log file: {e}"))?;
+
+    eprintln!("  DID log saved to: {did_file}");
+
+    Ok(final_did)
 }

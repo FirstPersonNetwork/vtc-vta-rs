@@ -32,8 +32,10 @@ keyring = "3"
 uuid = { workspace = true }
 chrono = { workspace = true }
 did-webvh = { workspace = true }
+didwebvh-rs = { workspace = true }
 rand = { workspace = true }
 dialoguer = "0.11"
 sha2 = { workspace = true }
 x25519-dalek = { workspace = true }
 multibase = { workspace = true }
+url = { workspace = true }

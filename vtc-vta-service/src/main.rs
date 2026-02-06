@@ -3,6 +3,7 @@ mod error;
 mod keys;
 mod routes;
 mod server;
+mod setup;
 mod store;
 
 use std::sync::Arc;
@@ -14,6 +15,15 @@ use tracing_subscriber::EnvFilter;
 #[tokio::main]
 async fn main() {
     print_banner();
+
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() > 1 && args[1] == "setup" {
+        if let Err(e) = setup::run_setup_wizard().await {
+            eprintln!("Setup failed: {e}");
+            std::process::exit(1);
+        }
+        std::process::exit(0);
+    }
 
     let config = AppConfig::load().expect("failed to load configuration");
 

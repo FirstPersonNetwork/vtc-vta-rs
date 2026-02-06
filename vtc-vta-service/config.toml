@@ -1,10 +1,9 @@
-# vta_did = "did:webvh:example.com:vta"
-# community_name = "My Community"
-# community_description = "A description of the community"
+community_name = "Linux Kernel"
+community_description = "Maintainers of the kernel"
 
 [server]
 host = "0.0.0.0"
-port = 3001
+port = 3000
 
 [log]
 level = "info"
@@ -13,6 +12,6 @@ format = "text"
 [store]
 data_dir = "data/vta"
 
-# [messaging]
-# mediator_url = "https://mediator.example.com/mediator/v1"
-# mediator_did = "did:peer:2..."
+[messaging]
+mediator_url = "test"
+mediator_did = "test"

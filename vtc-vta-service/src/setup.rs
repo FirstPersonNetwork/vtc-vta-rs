@@ -15,7 +15,11 @@ use serde_json::json;
 use url::Url;
 use uuid::Uuid;
 
+use base64::Engine;
+use base64::engine::general_purpose::STANDARD as BASE64;
+
 use crate::acl::{AclEntry, Role, store_acl_entry};
+use crate::auth::credentials::generate_did_key;
 use crate::config::{
     AppConfig, AuthConfig, LogConfig, LogFormat, MessagingConfig, ServerConfig, StoreConfig,
 };
@@ -34,6 +38,9 @@ const VTA_PRE_ROTATION_BASE: &str = "m/44'/1'";
 
 /// Base derivation path for mediator pre-rotation keys (`m/44'/2'/N'`).
 const MEDIATOR_PRE_ROTATION_BASE: &str = "m/44'/2'";
+
+/// Base derivation path for admin pre-rotation keys (`m/44'/3'/N'`).
+const ADMIN_PRE_ROTATION_BASE: &str = "m/44'/3'";
 
 pub async fn run_setup_wizard(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Welcome to the VTA setup wizard.\n");
@@ -187,9 +194,8 @@ pub async fn run_setup_wizard(config_path: Option<PathBuf>) -> Result<(), Box<dy
     let vta_did = create_vta_did(&seed, &messaging, &keys_ks).await?;
 
     // 13. Bootstrap admin DID in ACL
-    let admin_did: String = Input::new()
-        .with_prompt("Initial admin DID (the DID allowed to manage this VTA)")
-        .interact_text()?;
+    let (admin_did, admin_credential) =
+        create_admin_did(&seed, &vta_did, &keys_ks).await?;
 
     let acl_ks = store.keyspace("acl")?;
     let admin_entry = AclEntry {
@@ -241,8 +247,106 @@ pub async fn run_setup_wizard(config_path: Option<PathBuf>) -> Result<(), Box<dy
         eprintln!("  Mediator URL: {}", msg.mediator_url);
     }
     eprintln!("  Admin DID: {admin_did}");
+    if let Some(cred) = &admin_credential {
+        eprintln!();
+        eprintln!("\x1b[1;33m╔══════════════════════════════════════════════════════════╗");
+        eprintln!("║  REMINDER: Save your admin credential string below.     ║");
+        eprintln!("║  You will need it to authenticate with the VTA.         ║");
+        eprintln!("╚══════════════════════════════════════════════════════════╝\x1b[0m");
+        eprintln!();
+        eprintln!("  \x1b[1m{cred}\x1b[0m");
+        eprintln!();
+    }
 
     Ok(())
+}
+
+/// Guide the user through creating or entering an admin DID.
+///
+/// Returns `(did, Option<credential_string>)`. The credential string is only
+/// produced for the `did:key` option (base64-encoded JSON bundle).
+async fn create_admin_did(
+    seed: &[u8],
+    vta_did: &Option<String>,
+    keys_ks: &KeyspaceHandle,
+) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
+    let admin_options = &[
+        "Generate a new did:key (Ed25519)",
+        "Create a new did:webvh DID",
+        "Enter an existing DID",
+    ];
+    let choice = Select::new()
+        .with_prompt("Admin DID")
+        .items(admin_options)
+        .default(0)
+        .interact()?;
+
+    match choice {
+        0 => {
+            // Generate did:key
+            let (did, private_key_multibase) = generate_did_key();
+
+            // Build credential bundle (same format as POST /auth/credentials)
+            let vta_did_str = vta_did.clone().unwrap_or_default();
+            let bundle = serde_json::json!({
+                "did": did,
+                "privateKeyMultibase": private_key_multibase,
+                "vtaDid": vta_did_str,
+            });
+            let bundle_json = serde_json::to_string(&bundle)?;
+            let credential = BASE64.encode(bundle_json.as_bytes());
+
+            eprintln!();
+            eprintln!("\x1b[1;32mGenerated admin DID:\x1b[0m {did}");
+            eprintln!();
+            eprintln!("\x1b[1;33m╔══════════════════════════════════════════════════════════╗");
+            eprintln!("║  IMPORTANT: Save the credential string below.           ║");
+            eprintln!("║  It contains your private key and is the ONLY way to    ║");
+            eprintln!("║  authenticate as admin.                                 ║");
+            eprintln!("╚══════════════════════════════════════════════════════════╝\x1b[0m");
+            eprintln!();
+            eprintln!("  \x1b[1m{credential}\x1b[0m");
+            eprintln!();
+
+            let confirmed = Confirm::new()
+                .with_prompt("I have saved the admin credential")
+                .default(false)
+                .interact()?;
+            if !confirmed {
+                eprintln!("Setup cancelled — please save your admin credential before proceeding.");
+                return Err("Admin credential not saved".into());
+            }
+
+            Ok((did, Some(credential)))
+        }
+        1 => {
+            // Create did:webvh for admin
+            let signing_secret = Secret::generate_ed25519(None, None);
+            let ka_secret = Secret::generate_ed25519(None, None);
+            let ka_secret = ka_secret
+                .to_x25519()
+                .map_err(|e| format!("X25519 conversion failed: {e}"))?;
+
+            let did = create_webvh_did(
+                &signing_secret,
+                Some(&ka_secret),
+                "admin",
+                None,
+                seed,
+                ADMIN_PRE_ROTATION_BASE,
+                keys_ks,
+            )
+            .await?;
+            Ok((did, None))
+        }
+        _ => {
+            // Enter existing DID
+            let did: String = Input::new()
+                .with_prompt("Admin DID")
+                .interact_text()?;
+            Ok((did, None))
+        }
+    }
 }
 
 /// Guide the user through creating (or entering) a did:webvh DID for the VTA.

@@ -1,15 +1,4 @@
-use std::future::Future;
-use std::pin::Pin;
-
 use crate::error::AppError;
-
-type GetFuture<'a> = Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>, AppError>> + Send + 'a>>;
-type SetFuture<'a> = Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + 'a>>;
-
-pub trait SeedStore: Send + Sync {
-    fn get(&self) -> GetFuture<'_>;
-    fn set(&self, seed: &[u8]) -> SetFuture<'_>;
-}
 
 pub struct KeyringSeedStore {
     service: String,
@@ -23,48 +12,42 @@ impl KeyringSeedStore {
             user: user.into(),
         }
     }
-}
 
-impl SeedStore for KeyringSeedStore {
-    fn get(&self) -> GetFuture<'_> {
+    pub async fn get(&self) -> Result<Option<Vec<u8>>, AppError> {
         let service = self.service.clone();
         let user = self.user.clone();
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
-                let entry = keyring::Entry::new(&service, &user).map_err(|e| {
-                    AppError::Keyring(format!("failed to create keyring entry: {e}"))
-                })?;
-                match entry.get_password() {
-                    Ok(hex_seed) => {
-                        let bytes = hex::decode(&hex_seed).map_err(|e| {
-                            AppError::Keyring(format!("failed to decode seed: {e}"))
-                        })?;
-                        Ok(Some(bytes))
-                    }
-                    Err(keyring::Error::NoEntry) => Ok(None),
-                    Err(e) => Err(AppError::Keyring(format!("failed to read seed: {e}"))),
+        tokio::task::spawn_blocking(move || {
+            let entry = keyring::Entry::new(&service, &user).map_err(|e| {
+                AppError::Keyring(format!("failed to create keyring entry: {e}"))
+            })?;
+            match entry.get_password() {
+                Ok(hex_seed) => {
+                    let bytes = hex::decode(&hex_seed).map_err(|e| {
+                        AppError::Keyring(format!("failed to decode seed: {e}"))
+                    })?;
+                    Ok(Some(bytes))
                 }
-            })
-            .await
-            .unwrap()
+                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(e) => Err(AppError::Keyring(format!("failed to read seed: {e}"))),
+            }
         })
+        .await
+        .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))?
     }
 
-    fn set(&self, seed: &[u8]) -> SetFuture<'_> {
+    pub async fn set(&self, seed: &[u8]) -> Result<(), AppError> {
         let service = self.service.clone();
         let user = self.user.clone();
         let hex_seed = hex::encode(seed);
-        Box::pin(async move {
-            tokio::task::spawn_blocking(move || {
-                let entry = keyring::Entry::new(&service, &user).map_err(|e| {
-                    AppError::Keyring(format!("failed to create keyring entry: {e}"))
-                })?;
-                entry
-                    .set_password(&hex_seed)
-                    .map_err(|e| AppError::Keyring(format!("failed to store seed: {e}")))
-            })
-            .await
-            .unwrap()
+        tokio::task::spawn_blocking(move || {
+            let entry = keyring::Entry::new(&service, &user).map_err(|e| {
+                AppError::Keyring(format!("failed to create keyring entry: {e}"))
+            })?;
+            entry
+                .set_password(&hex_seed)
+                .map_err(|e| AppError::Keyring(format!("failed to store seed: {e}")))
         })
+        .await
+        .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))?
     }
 }

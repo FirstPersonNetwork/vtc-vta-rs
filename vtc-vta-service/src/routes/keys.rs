@@ -53,7 +53,7 @@ pub async fn create_key(
 ) -> Result<(StatusCode, Json<CreateKeyResponse>), AppError> {
     let keys = state.store.keyspace("keys")?;
 
-    let bip32 = load_or_generate_seed(&*state.seed_store, req.mnemonic.as_deref()).await?;
+    let bip32 = load_or_generate_seed(&state.seed_store, req.mnemonic.as_deref()).await?;
 
     let secret = match req.key_type {
         KeyType::Ed25519 => bip32.derive_ed25519(&req.derivation_path)?,
@@ -148,23 +148,15 @@ pub async fn rename_key(
         .ok_or_else(|| AppError::NotFound(format!("key {key_id} not found")))?;
 
     let new_store_key = keys::store_key(&req.key_id);
+    record.key_id = req.key_id.clone();
+    record.updated_at = Utc::now();
 
-    if keys
-        .get::<KeyRecord>(new_store_key.clone())
-        .await?
-        .is_some()
-    {
+    if !keys.swap(old_store_key, new_store_key, &record).await? {
         return Err(AppError::Conflict(format!(
             "key {} already exists",
             req.key_id
         )));
     }
-
-    record.key_id = req.key_id.clone();
-    record.updated_at = Utc::now();
-
-    keys.insert(new_store_key, &record).await?;
-    keys.remove(old_store_key).await?;
 
     Ok(Json(RenameKeyResponse {
         key_id: req.key_id,

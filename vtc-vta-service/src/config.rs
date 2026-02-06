@@ -97,10 +97,10 @@ impl Default for StoreConfig {
 }
 
 impl AppConfig {
-    pub fn load() -> Result<Self, AppError> {
-        let path = std::env::var("VTA_CONFIG_PATH")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("config.toml"));
+    pub fn load(config_path: Option<PathBuf>) -> Result<Self, AppError> {
+        let path = config_path
+            .or_else(|| std::env::var("VTA_CONFIG_PATH").ok().map(PathBuf::from))
+            .unwrap_or_else(|| PathBuf::from("config.toml"));
 
         let mut config = if path.exists() {
             let contents = std::fs::read_to_string(&path).map_err(AppError::Io)?;

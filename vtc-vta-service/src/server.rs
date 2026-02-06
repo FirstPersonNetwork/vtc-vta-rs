@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::config::AppConfig;
 use crate::error::AppError;
-use crate::keys::seed_store::SeedStore;
+use crate::keys::seed_store::KeyringSeedStore;
 use crate::routes;
 use crate::store::Store;
 use tokio::net::TcpListener;
@@ -14,13 +14,13 @@ use tracing::info;
 pub struct AppState {
     pub store: Store,
     pub config: Arc<RwLock<AppConfig>>,
-    pub seed_store: Arc<dyn SeedStore>,
+    pub seed_store: Arc<KeyringSeedStore>,
 }
 
 pub async fn run(
     config: AppConfig,
     store: Store,
-    seed_store: Arc<dyn SeedStore>,
+    seed_store: Arc<KeyringSeedStore>,
 ) -> Result<(), AppError> {
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = TcpListener::bind(&addr).await.map_err(AppError::Io)?;

@@ -1,6 +1,6 @@
 
 [workspace]
-members = ["vtc-vta-sdk", "vtc-vta-service"]
+members = ["cnm-cli", "vtc-vta-sdk", "vtc-vta-service"]
 resolver = "3"
 
 [workspace.package]
@@ -24,7 +24,13 @@ affinidi-tdk = "0.4"
 dtg-credentials = { version = "0.1", git = "https://github.com/FirstPersonNetwork/dtg-credentials-rs" }
 
 # Async runtime
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = [
+  "rt-multi-thread",
+  "macros",
+  "net",
+  "sync",
+  "signal",
+] }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
@@ -48,7 +54,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # Random number generation
-rand = "0.8"
+rand = "0.9"
 
 # DID Web with Verifiable History
 did-webvh = "0.1"
@@ -62,6 +68,14 @@ sha2 = "0.10"
 x25519-dalek = { version = "2", features = ["static_secrets"] }
 multibase = "0.9"
 
+# CLI argument parsing
+clap = { version = "4", features = ["derive"] }
+
 # Logging / tracing
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = true

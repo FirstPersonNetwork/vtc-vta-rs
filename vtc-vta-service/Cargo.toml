@@ -11,6 +11,8 @@ license.workspace = true
 repository.workspace = true
 
 [features]
+default = ["setup"]
+setup = ["dep:dialoguer", "dep:didwebvh-rs", "dep:url"]
 
 [dependencies]
 vtc-vta-sdk = { path = "../vtc-vta-sdk" }
@@ -31,11 +33,11 @@ hex = "0.4"
 keyring = "3"
 uuid = { workspace = true }
 chrono = { workspace = true }
-did-webvh = { workspace = true }
-didwebvh-rs = { workspace = true }
+clap = { workspace = true }
+didwebvh-rs = { workspace = true, optional = true }
 rand = { workspace = true }
-dialoguer = "0.11"
+dialoguer = { version = "0.12", optional = true }
 sha2 = { workspace = true }
 x25519-dalek = { workspace = true }
 multibase = { workspace = true }
-url = { workspace = true }
+url = { workspace = true, optional = true }

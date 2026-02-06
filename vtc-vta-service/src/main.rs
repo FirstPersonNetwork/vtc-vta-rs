@@ -3,38 +3,69 @@ mod error;
 mod keys;
 mod routes;
 mod server;
+#[cfg(feature = "setup")]
 mod setup;
 mod store;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
+use clap::{Parser, Subcommand};
 use config::{AppConfig, LogFormat};
 use keys::seed_store::KeyringSeedStore;
 use tracing_subscriber::EnvFilter;
 
+#[derive(Parser)]
+#[command(name = "vtc-vta", about = "Verified Trust Agent", version)]
+struct Cli {
+    /// Path to the configuration file
+    #[arg(short, long, global = true)]
+    config: Option<PathBuf>,
+
+    #[command(subcommand)]
+    command: Option<Commands>,
+}
+
+#[derive(Subcommand)]
+enum Commands {
+    /// Run the interactive setup wizard
+    Setup,
+}
+
 #[tokio::main]
 async fn main() {
+    let cli = Cli::parse();
+
     print_banner();
 
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() > 1 && args[1] == "setup" {
-        if let Err(e) = setup::run_setup_wizard().await {
-            eprintln!("Setup failed: {e}");
-            std::process::exit(1);
+    match cli.command {
+        Some(Commands::Setup) => {
+            #[cfg(feature = "setup")]
+            {
+                if let Err(e) = setup::run_setup_wizard(cli.config).await {
+                    eprintln!("Setup failed: {e}");
+                    std::process::exit(1);
+                }
+            }
+            #[cfg(not(feature = "setup"))]
+            {
+                eprintln!("Setup wizard not available (compiled without 'setup' feature)");
+                std::process::exit(1);
+            }
         }
-        std::process::exit(0);
-    }
+        None => {
+            let config = AppConfig::load(cli.config).expect("failed to load configuration");
 
-    let config = AppConfig::load().expect("failed to load configuration");
+            init_tracing(&config);
 
-    init_tracing(&config);
+            let store = store::Store::open(&config.store).expect("failed to open store");
+            let seed_store = Arc::new(KeyringSeedStore::new("vtc-vta", "master_seed"));
 
-    let store = store::Store::open(&config.store).expect("failed to open store");
-    let seed_store = Arc::new(KeyringSeedStore::new("vtc-vta", "master_seed"));
-
-    if let Err(e) = server::run(config, store, seed_store).await {
-        tracing::error!("server error: {e}");
-        std::process::exit(1);
+            if let Err(e) = server::run(config, store, seed_store).await {
+                tracing::error!("server error: {e}");
+                std::process::exit(1);
+            }
+        }
     }
 }
 

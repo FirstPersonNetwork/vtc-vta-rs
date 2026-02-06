@@ -32,23 +32,32 @@ pub async fn update_config(
     State(state): State<AppState>,
     Json(req): Json<UpdateConfigRequest>,
 ) -> Result<Json<ConfigResponse>, AppError> {
-    let mut config = state.config.write().await;
+    let (response, contents, path) = {
+        let mut config = state.config.write().await;
 
-    if let Some(vta_did) = req.vta_did {
-        config.vta_did = Some(vta_did);
-    }
-    if let Some(community_name) = req.community_name {
-        config.community_name = Some(community_name);
-    }
-    if let Some(community_description) = req.community_description {
-        config.community_description = Some(community_description);
-    }
+        if let Some(vta_did) = req.vta_did {
+            config.vta_did = Some(vta_did);
+        }
+        if let Some(community_name) = req.community_name {
+            config.community_name = Some(community_name);
+        }
+        if let Some(community_description) = req.community_description {
+            config.community_description = Some(community_description);
+        }
 
-    config.save()?;
+        let response = ConfigResponse {
+            vta_did: config.vta_did.clone(),
+            community_name: config.community_name.clone(),
+            community_description: config.community_description.clone(),
+        };
+        let contents = toml::to_string_pretty(&*config)
+            .map_err(|e| AppError::Config(format!("failed to serialize config: {e}")))?;
+        let path = config.config_path.clone();
 
-    Ok(Json(ConfigResponse {
-        vta_did: config.vta_did.clone(),
-        community_name: config.community_name.clone(),
-        community_description: config.community_description.clone(),
-    }))
+        (response, contents, path)
+    }; // write lock released here
+
+    std::fs::write(&path, contents).map_err(AppError::Io)?;
+
+    Ok(Json(response))
 }

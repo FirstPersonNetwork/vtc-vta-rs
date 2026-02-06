@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::keys::seed_store::SeedStore;
+use crate::keys::seed_store::KeyringSeedStore;
 use affinidi_tdk::{
     affinidi_crypto::ed25519::ed25519_private_to_x25519, secrets_resolver::secrets::Secret,
 };
@@ -54,7 +54,7 @@ impl Bip32Extension for ExtendedSigningKey {
 /// - If no mnemonic and a seed already exists, returns the existing seed.
 /// - If no mnemonic and no seed exists, generates 32 random bytes and stores them.
 pub async fn load_or_generate_seed(
-    seed_store: &dyn SeedStore,
+    seed_store: &KeyringSeedStore,
     mnemonic: Option<&str>,
 ) -> Result<ExtendedSigningKey, AppError> {
     if let Some(phrase) = mnemonic {

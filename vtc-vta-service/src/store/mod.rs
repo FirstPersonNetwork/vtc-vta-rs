@@ -35,79 +35,104 @@ impl Store {
         let db = self.db.clone();
         tokio::task::spawn_blocking(move || db.persist(PersistMode::SyncAll))
             .await
-            .unwrap()?;
+            .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))??;
         Ok(())
     }
 }
 
 impl KeyspaceHandle {
-    pub async fn insert<V: Serialize + Send + 'static>(
+    pub async fn insert<V: Serialize>(
         &self,
-        key: impl Into<Vec<u8>> + Send + 'static,
+        key: impl Into<Vec<u8>>,
         value: &V,
     ) -> Result<(), AppError> {
+        let key = key.into();
         let bytes = serde_json::to_vec(value)?;
         let ks = self.keyspace.clone();
-        tokio::task::spawn_blocking(move || ks.insert(key.into(), bytes))
+        tokio::task::spawn_blocking(move || ks.insert(key, bytes))
             .await
-            .unwrap()?;
+            .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))??;
         Ok(())
     }
 
     pub async fn get<V: DeserializeOwned + Send + 'static>(
         &self,
-        key: impl Into<Vec<u8>> + Send + 'static,
+        key: impl Into<Vec<u8>>,
     ) -> Result<Option<V>, AppError> {
+        let key = key.into();
         let ks = self.keyspace.clone();
-        let result = tokio::task::spawn_blocking(move || ks.get(key.into()))
-            .await
-            .unwrap()?;
-
-        match result {
-            Some(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
-            None => Ok(None),
-        }
+        tokio::task::spawn_blocking(move || -> Result<Option<V>, AppError> {
+            match ks.get(key)? {
+                Some(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+                None => Ok(None),
+            }
+        })
+        .await
+        .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))?
     }
 
-    pub async fn remove(&self, key: impl Into<Vec<u8>> + Send + 'static) -> Result<(), AppError> {
+    pub async fn remove(&self, key: impl Into<Vec<u8>>) -> Result<(), AppError> {
+        let key = key.into();
         let ks = self.keyspace.clone();
-        tokio::task::spawn_blocking(move || ks.remove(key.into()))
+        tokio::task::spawn_blocking(move || ks.remove(key))
             .await
-            .unwrap()?;
+            .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))??;
         Ok(())
     }
 
-    pub async fn contains_key(
-        &self,
-        key: impl Into<Vec<u8>> + Send + 'static,
-    ) -> Result<bool, AppError> {
+    pub async fn contains_key(&self, key: impl Into<Vec<u8>>) -> Result<bool, AppError> {
+        let key = key.into();
         let ks = self.keyspace.clone();
-        let result = tokio::task::spawn_blocking(move || ks.contains_key(key.into()))
+        Ok(tokio::task::spawn_blocking(move || ks.contains_key(key))
             .await
-            .unwrap()?;
-        Ok(result)
+            .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))??
+        )
     }
 
     pub async fn insert_raw(
         &self,
-        key: impl Into<Vec<u8>> + Send + 'static,
-        value: impl Into<Vec<u8>> + Send + 'static,
+        key: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
     ) -> Result<(), AppError> {
+        let key = key.into();
+        let value = value.into();
         let ks = self.keyspace.clone();
-        tokio::task::spawn_blocking(move || ks.insert(key.into(), value.into()))
+        tokio::task::spawn_blocking(move || ks.insert(key, value))
             .await
-            .unwrap()?;
+            .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))??;
         Ok(())
     }
 
-    pub async fn get_raw(
-        &self,
-        key: impl Into<Vec<u8>> + Send + 'static,
-    ) -> Result<Option<Vec<u8>>, AppError> {
+    pub async fn get_raw(&self, key: impl Into<Vec<u8>>) -> Result<Option<Vec<u8>>, AppError> {
+        let key = key.into();
         let ks = self.keyspace.clone();
-        let result = tokio::task::spawn_blocking(move || ks.get(key.into()))
+        let result = tokio::task::spawn_blocking(move || ks.get(key))
             .await
-            .unwrap()?;
+            .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))??;
         Ok(result.map(|v| v.to_vec()))
+    }
+
+    /// Atomically check that `new_key` doesn't exist, insert `value` at `new_key`,
+    /// and remove `old_key` in a single blocking operation.
+    pub async fn swap<V: Serialize>(
+        &self,
+        old_key: impl Into<Vec<u8>>,
+        new_key: impl Into<Vec<u8>>,
+        value: &V,
+    ) -> Result<bool, AppError> {
+        let old_key = old_key.into();
+        let new_key = new_key.into();
+        let bytes = serde_json::to_vec(value)?;
+        let ks = self.keyspace.clone();
+        tokio::task::spawn_blocking(move || -> Result<bool, AppError> {
+            if ks.contains_key(&new_key)? {
+                return Ok(false);
+            }
+            ks.insert(&new_key, bytes)?;
+            ks.remove(&old_key)?;
+            Ok(true)
+        })
+        .await
+        .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))?
     }
 }

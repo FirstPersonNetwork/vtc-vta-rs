@@ -16,7 +16,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::config::{AppConfig, LogConfig, LogFormat, MessagingConfig, ServerConfig, StoreConfig};
-use crate::keys::seed_store::{KeyringSeedStore, SeedStore};
+use crate::keys::seed_store::KeyringSeedStore;
 use crate::keys::{store_key, KeyRecord, KeyStatus, KeyType as SdkKeyType};
 use crate::store::{KeyspaceHandle, Store};
 
@@ -32,11 +32,15 @@ const VTA_PRE_ROTATION_BASE: &str = "m/44'/1'";
 /// Base derivation path for mediator pre-rotation keys (`m/44'/2'/N'`).
 const MEDIATOR_PRE_ROTATION_BASE: &str = "m/44'/2'";
 
-pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_setup_wizard(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Welcome to the VTA setup wizard.\n");
 
     // 1. Config file path
-    let default_path = std::env::var("VTA_CONFIG_PATH").unwrap_or_else(|_| "config.toml".into());
+    let default_path = config_path
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| {
+            std::env::var("VTA_CONFIG_PATH").unwrap_or_else(|_| "config.toml".into())
+        });
     let config_path: String = Input::new()
         .with_prompt("Config file path")
         .default(default_path)

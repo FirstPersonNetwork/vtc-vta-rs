@@ -143,23 +143,16 @@ impl AppConfig {
             .or_else(|| std::env::var("VTA_CONFIG_PATH").ok().map(PathBuf::from))
             .unwrap_or_else(|| PathBuf::from("config.toml"));
 
-        let mut config = if path.exists() {
-            let contents = std::fs::read_to_string(&path).map_err(AppError::Io)?;
-            toml::from_str::<AppConfig>(&contents)
-                .map_err(|e| AppError::Config(format!("failed to parse {}: {e}", path.display())))?
-        } else {
-            AppConfig {
-                vta_did: None,
-                community_name: None,
-                community_description: None,
-                server: ServerConfig::default(),
-                log: LogConfig::default(),
-                store: StoreConfig::default(),
-                messaging: None,
-                auth: AuthConfig::default(),
-                config_path: PathBuf::new(),
-            }
-        };
+        if !path.exists() {
+            return Err(AppError::Config(format!(
+                "configuration file not found: {}",
+                path.display()
+            )));
+        }
+
+        let contents = std::fs::read_to_string(&path).map_err(AppError::Io)?;
+        let mut config = toml::from_str::<AppConfig>(&contents)
+            .map_err(|e| AppError::Config(format!("failed to parse {}: {e}", path.display())))?;
 
         config.config_path = path.clone();
 

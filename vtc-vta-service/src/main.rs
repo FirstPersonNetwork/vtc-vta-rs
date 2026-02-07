@@ -56,7 +56,19 @@ async fn main() {
             }
         }
         None => {
-            let config = AppConfig::load(cli.config).expect("failed to load configuration");
+            let config = match AppConfig::load(cli.config) {
+                Ok(config) => config,
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    eprintln!();
+                    eprintln!("To set up a new VTA instance, run:");
+                    eprintln!("  vtc-vta setup");
+                    eprintln!();
+                    eprintln!("Or specify a config file:");
+                    eprintln!("  vtc-vta --config <path>");
+                    std::process::exit(1);
+                }
+            };
 
             init_tracing(&config);
 

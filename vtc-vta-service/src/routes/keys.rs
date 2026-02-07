@@ -5,6 +5,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use tracing::info;
+
 use crate::auth::{AdminAuth, AuthClaims};
 use crate::error::AppError;
 use crate::keys::derivation::{Bip32Extension, load_or_generate_seed};
@@ -79,6 +81,8 @@ pub async fn create_key(
 
     keys.insert(keys::store_key(&key_id), &record).await?;
 
+    info!(key_id = %key_id, key_type = ?req.key_type, path = %req.derivation_path, "key created");
+
     let response = CreateKeyResponse {
         key_id,
         key_type: req.key_type,
@@ -104,6 +108,7 @@ pub async fn get_key(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("key {key_id} not found")))?;
 
+    info!(key_id = %key_id, "key retrieved");
     Ok(Json(record))
 }
 
@@ -131,6 +136,7 @@ pub async fn invalidate_key(
 
     keys.insert(store_key, &record).await?;
 
+    info!(key_id = %key_id, "key revoked");
     Ok(Json(InvalidateKeyResponse {
         key_id,
         status: record.status,
@@ -163,6 +169,7 @@ pub async fn rename_key(
         )));
     }
 
+    info!(old_id = %key_id, new_id = %req.key_id, "key renamed");
     Ok(Json(RenameKeyResponse {
         key_id: req.key_id,
         updated_at: record.updated_at,

@@ -69,7 +69,7 @@ x25519-dalek = { version = "2", features = ["static_secrets"] }
 multibase = "0.9"
 
 # JWT
-jsonwebtoken = "10"
+jsonwebtoken = { version = "10", features = ["rust_crypto"] }
 
 # Axum extras (typed headers for Bearer auth)
 axum-extra = { version = "0.12", features = ["typed-header"] }

@@ -20,6 +20,7 @@ use crate::auth::session::{
 };
 use crate::error::AppError;
 use crate::server::AppState;
+use tracing::{info, warn};
 
 // ---------- POST /auth/challenge ----------
 
@@ -68,6 +69,8 @@ pub async fn challenge(
     let sessions = state.store.keyspace("sessions")?;
     store_session(&sessions, &session).await?;
 
+    info!(did = %session.did, session_id = %session.session_id, "auth challenge issued");
+
     Ok(Json(ChallengeResponse {
         session_id,
         data: ChallengeData { challenge },
@@ -84,6 +87,7 @@ pub struct AuthenticateResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AuthenticateData {
     pub access_token: String,
     pub access_expires_at: u64,
@@ -143,16 +147,19 @@ pub async fn authenticate(
         .ok_or_else(|| AppError::Authentication("session not found".into()))?;
 
     if session.state != SessionState::ChallengeSent {
+        warn!(session_id, "authentication rejected: session replay");
         return Err(AppError::Authentication(
             "session already authenticated (replay)".into(),
         ));
     }
     if session.challenge != challenge {
+        warn!(session_id, "authentication rejected: challenge mismatch");
         return Err(AppError::Authentication("challenge mismatch".into()));
     }
     // Match the DID (compare base DID, ignoring any fragment)
     let sender_base = sender_did.split('#').next().unwrap_or(sender_did);
     if session.did != sender_base {
+        warn!(session_id, sender = %sender_base, expected = %session.did, "authentication rejected: DID mismatch");
         return Err(AppError::Authentication("DID mismatch".into()));
     }
 
@@ -187,6 +194,8 @@ pub async fn authenticate(
     // Store reverse refresh index
     store_refresh_index(&sessions, &refresh_token, &session.session_id).await?;
 
+    info!(did = %session.did, session_id = %session.session_id, "authentication successful");
+
     Ok(Json(AuthenticateResponse {
         session_id: session.session_id,
         data: AuthenticateData {
@@ -208,6 +217,7 @@ pub struct RefreshResponse {
 }
 
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RefreshData {
     pub access_token: String,
     pub access_expires_at: u64,
@@ -290,6 +300,8 @@ pub async fn refresh(
     let access_expires_at = claims.exp;
     let access_token = jwt_keys.encode(&claims)?;
 
+    info!(did = %session.did, session_id = %session.session_id, "token refreshed");
+
     Ok(Json(RefreshResponse {
         session_id: session.session_id,
         data: RefreshData {
@@ -358,6 +370,8 @@ pub async fn generate_credentials(
     let bundle_json = serde_json::to_string(&bundle)?;
     let credential = BASE64.encode(bundle_json.as_bytes());
 
+    info!(did = %did, role = %req.role, caller = %entry.created_by, "credentials generated");
+
     Ok((
         StatusCode::CREATED,
         Json(GenerateCredentialsResponse {
@@ -399,6 +413,7 @@ pub async fn session_list(
     let sessions = state.store.keyspace("sessions")?;
     let all = list_sessions(&sessions).await?;
     let summaries: Vec<SessionSummary> = all.into_iter().map(SessionSummary::from).collect();
+    info!(caller = %_auth.0.did, count = summaries.len(), "sessions listed");
     Ok(Json(summaries))
 }
 
@@ -422,6 +437,7 @@ pub async fn revoke_session(
     }
 
     delete_session(&sessions, &session_id).await?;
+    info!(caller = %auth.did, session_id = %session_id, "session revoked");
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -453,5 +469,6 @@ pub async fn revoke_sessions_by_did(
         }
     }
 
+    info!(caller = %_auth.0.did, target_did = %query.did, revoked, "sessions revoked by DID");
     Ok(Json(RevokeByDidResponse { revoked }))
 }

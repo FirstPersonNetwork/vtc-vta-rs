@@ -2,6 +2,8 @@ use axum::Json;
 use axum::extract::State;
 use serde::{Deserialize, Serialize};
 
+use tracing::info;
+
 use crate::auth::{AdminAuth, AuthClaims};
 use crate::error::AppError;
 use crate::server::AppState;
@@ -25,6 +27,7 @@ pub async fn get_config(
     State(state): State<AppState>,
 ) -> Result<Json<ConfigResponse>, AppError> {
     let config = state.config.read().await;
+    info!(caller = %_auth.did, "config retrieved");
     Ok(Json(ConfigResponse {
         vta_did: config.vta_did.clone(),
         community_name: config.community_name.clone(),
@@ -64,5 +67,6 @@ pub async fn update_config(
 
     std::fs::write(&path, contents).map_err(AppError::Io)?;
 
+    info!(caller = %_auth.0.did, "config updated");
     Ok(Json(response))
 }

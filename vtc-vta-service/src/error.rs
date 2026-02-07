@@ -1,6 +1,7 @@
 use affinidi_tdk::secrets_resolver::errors::SecretsResolverError;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use tracing::{debug, warn};
 
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)]
@@ -62,6 +63,12 @@ impl IntoResponse for AppError {
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
         };
+
+        if status.is_server_error() {
+            warn!(status = %status.as_u16(), error = %self, "server error");
+        } else {
+            debug!(status = %status.as_u16(), error = %self, "client error");
+        }
 
         let body = serde_json::json!({ "error": self.to_string() });
         (status, axum::Json(body)).into_response()

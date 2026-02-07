@@ -29,44 +29,25 @@ impl JwtKeys {
         let signing_key = ed25519_dalek::SigningKey::from_bytes(private_bytes);
         let public_bytes = signing_key.verifying_key().to_bytes();
 
-        // Build PKCS8 v2 DER for the private key (used by EncodingKey)
+        // Build PKCS8 v1 DER for the private key (used by EncodingKey)
         //
-        // SEQUENCE {
-        //   INTEGER 0               (version v1)
-        //   SEQUENCE { OID 1.3.101.112 }   (Ed25519)
-        //   OCTET STRING { OCTET STRING <32 private bytes> }
-        //   [1] { BIT STRING { 0x00 <32 public bytes> } }
+        // SEQUENCE {                                  -- 0x30, 0x2e (46 bytes)
+        //   INTEGER 0                                 -- 0x02, 0x01, 0x00
+        //   SEQUENCE { OID 1.3.101.112 }              -- 0x30, 0x05, ...
+        //   OCTET STRING { OCTET STRING <32 bytes> }  -- 0x04, 0x22, 0x04, 0x20, ...
         // }
-        let mut pkcs8 = Vec::with_capacity(96);
+        let mut pkcs8 = Vec::with_capacity(48);
         pkcs8.extend_from_slice(&[
-            0x30, 0x52, // SEQUENCE, 82 bytes
-            0x02, 0x01, 0x00, // INTEGER 0 (version)
-            0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, // AlgorithmIdentifier
+            0x30, 0x2e, // SEQUENCE, 46 bytes
+            0x02, 0x01, 0x00, // INTEGER 0 (version v1)
+            0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, // AlgorithmIdentifier (Ed25519)
             0x04, 0x22, 0x04, 0x20, // OCTET STRING { OCTET STRING, 32 bytes }
         ]);
         pkcs8.extend_from_slice(private_bytes);
-        pkcs8.extend_from_slice(&[
-            0xa1, 0x23, // [1] EXPLICIT, 35 bytes
-            0x03, 0x21, 0x00, // BIT STRING, 33 bytes, 0 unused bits
-        ]);
-        pkcs8.extend_from_slice(&public_bytes);
-
-        // Build SubjectPublicKeyInfo (SPKI) DER for the public key (used by DecodingKey)
-        //
-        // SEQUENCE {
-        //   SEQUENCE { OID 1.3.101.112 }
-        //   BIT STRING { 0x00 <32 public bytes> }
-        // }
-        let mut spki = Vec::with_capacity(44);
-        spki.extend_from_slice(&[
-            0x30, 0x2a, // SEQUENCE, 42 bytes
-            0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, // AlgorithmIdentifier
-            0x03, 0x21, 0x00, // BIT STRING, 33 bytes, 0 unused bits
-        ]);
-        spki.extend_from_slice(&public_bytes);
 
         let encoding = EncodingKey::from_ed_der(&pkcs8);
-        let decoding = DecodingKey::from_ed_der(&spki);
+        // rust_crypto backend expects raw 32-byte public key, not SPKI DER
+        let decoding = DecodingKey::from_ed_der(&public_bytes);
 
         Ok(Self { encoding, decoding })
     }

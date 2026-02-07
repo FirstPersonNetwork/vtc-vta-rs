@@ -3,6 +3,8 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 
+use tracing::info;
+
 use crate::acl::{
     AclEntry, Role, check_acl, delete_acl_entry, get_acl_entry, list_acl_entries, store_acl_entry,
 };
@@ -45,9 +47,9 @@ pub async fn list_acl(
 ) -> Result<Json<AclListResponse>, AppError> {
     let acl = state.store.keyspace("acl")?;
     let entries = list_acl_entries(&acl).await?;
-    Ok(Json(AclListResponse {
-        entries: entries.into_iter().map(AclEntryResponse::from).collect(),
-    }))
+    let entries: Vec<AclEntryResponse> = entries.into_iter().map(AclEntryResponse::from).collect();
+    info!(caller = %_auth.0.did, count = entries.len(), "ACL listed");
+    Ok(Json(AclListResponse { entries }))
 }
 
 // ---------- POST /acl ----------
@@ -84,6 +86,7 @@ pub async fn create_acl(
 
     store_acl_entry(&acl, &entry).await?;
 
+    info!(caller = %entry.created_by, did = %entry.did, role = %entry.role, "ACL entry created");
     Ok((StatusCode::CREATED, Json(AclEntryResponse::from(entry))))
 }
 
@@ -98,6 +101,7 @@ pub async fn get_acl(
     let entry = get_acl_entry(&acl, &did)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("ACL entry not found for DID: {did}")))?;
+    info!(did = %did, "ACL entry retrieved");
     Ok(Json(AclEntryResponse::from(entry)))
 }
 
@@ -129,6 +133,7 @@ pub async fn update_acl(
 
     store_acl_entry(&acl, &entry).await?;
 
+    info!(did = %did, "ACL entry updated");
     Ok(Json(AclEntryResponse::from(entry)))
 }
 
@@ -155,5 +160,6 @@ pub async fn delete_acl(
 
     delete_acl_entry(&acl, &did).await?;
 
+    info!(caller = %auth.0.did, did = %did, "ACL entry deleted");
     Ok(StatusCode::NO_CONTENT)
 }

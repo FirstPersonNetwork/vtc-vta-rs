@@ -1,32 +1,47 @@
-/// Derivation path for the VTA's Ed25519 signing/verification key.
-pub const VTA_SIGNING_KEY_PATH: &str = "m/44'/0'/0'";
+use crate::error::AppError;
+use crate::store::KeyspaceHandle;
 
-/// Derivation path for the VTA's X25519 key-agreement key.
-pub const VTA_KEY_AGREEMENT_PATH: &str = "m/44'/0'/1'";
+/// VTA entity keys: signing, key-agreement, pre-rotation, etc.
+pub const VTA_KEY_BASE: &str = "m/26'/0'";
 
-/// Base derivation path for VTA pre-rotation keys (`m/44'/1'/N'`).
-pub const VTA_PRE_ROTATION_BASE: &str = "m/44'/1'";
+/// Admin keys: signing, key-agreement, did:key, etc.
+pub const ADMIN_KEY_BASE: &str = "m/26'/1'";
 
-/// Base derivation path for mediator pre-rotation keys (`m/44'/2'/N'`).
-pub const MEDIATOR_PRE_ROTATION_BASE: &str = "m/44'/2'";
+/// External applications (reserved base).
+pub const EXTERNAL_APP_BASE: &str = "m/26'/2'";
 
-/// Base derivation path for admin pre-rotation keys (`m/44'/3'/N'`).
-pub const ADMIN_PRE_ROTATION_BASE: &str = "m/44'/3'";
+/// DIDComm Messaging Mediator keys.
+pub const MEDIATOR_KEY_BASE: &str = "m/26'/2'/1'";
 
-/// BIP-32 derivation path for the JWT signing key (dedicated, not the DID signing key).
-pub const JWT_KEY_PATH: &str = "m/44'/3'/0'";
+/// Trust Registry keys (placeholder).
+pub const TRUST_REGISTRY_KEY_BASE: &str = "m/26'/2'/2'";
 
-/// Derivation path for the mediator's Ed25519 signing/verification key.
-pub const MEDIATOR_SIGNING_KEY_PATH: &str = "m/44'/4'/0'";
+/// Construct a full derivation path from a base and index.
+pub fn path_at(base: &str, index: u32) -> String {
+    format!("{base}/{index}'")
+}
 
-/// Derivation path for the mediator's X25519 key-agreement key.
-pub const MEDIATOR_KEY_AGREEMENT_PATH: &str = "m/44'/4'/1'";
-
-/// Derivation path for the admin did:webvh Ed25519 signing/verification key.
-pub const ADMIN_SIGNING_KEY_PATH: &str = "m/44'/5'/0'";
-
-/// Derivation path for the admin did:webvh X25519 key-agreement key.
-pub const ADMIN_KEY_AGREEMENT_PATH: &str = "m/44'/5'/1'";
-
-/// Derivation path for the admin did:key Ed25519 key.
-pub const ADMIN_DID_KEY_PATH: &str = "m/44'/5'/2'";
+/// Allocate the next sequential derivation path from a group's counter.
+///
+/// Reads the current counter for `base` from the keys keyspace,
+/// constructs `{base}/{N}'`, increments the counter, and returns the path.
+pub async fn allocate_path(
+    keys_ks: &KeyspaceHandle,
+    base: &str,
+) -> Result<String, AppError> {
+    let counter_key = format!("path_counter:{base}");
+    let current: u32 = match keys_ks.get_raw(counter_key.as_str()).await? {
+        Some(bytes) => {
+            let arr: [u8; 4] = bytes
+                .try_into()
+                .map_err(|_| AppError::Internal("corrupt path counter".into()))?;
+            u32::from_le_bytes(arr)
+        }
+        None => 0,
+    };
+    let path = path_at(base, current);
+    keys_ks
+        .insert_raw(counter_key, (current + 1).to_le_bytes().to_vec())
+        .await?;
+    Ok(path)
+}

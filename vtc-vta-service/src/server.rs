@@ -3,15 +3,18 @@ use std::time::Duration;
 
 use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
 use affinidi_tdk::secrets_resolver::{SecretsResolver, ThreadedSecretsResolver};
-use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
+use ed25519_dalek_bip32::ExtendedSigningKey;
+
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 
 use crate::auth::jwt::JwtKeys;
 use crate::auth::session::cleanup_expired_sessions;
 use crate::config::{AppConfig, AuthConfig};
 use crate::error::AppError;
 use crate::keys::derivation::Bip32Extension;
-use crate::keys::paths::{JWT_KEY_PATH, VTA_KEY_AGREEMENT_PATH, VTA_SIGNING_KEY_PATH};
 use crate::keys::seed_store::KeyringSeedStore;
+use crate::keys::{KeyRecord, KeyType};
 use crate::routes;
 use crate::store::{KeyspaceHandle, Store};
 use tokio::net::TcpListener;
@@ -47,7 +50,7 @@ pub async fn run(
 
     // Initialize auth infrastructure
     let (did_resolver, secrets_resolver, jwt_keys) =
-        init_auth(&config, &seed_store).await;
+        init_auth(&config, &seed_store, &keys_ks).await;
 
     let auth_config = config.auth.clone();
 
@@ -93,6 +96,7 @@ pub async fn run(
 async fn init_auth(
     config: &AppConfig,
     seed_store: &KeyringSeedStore,
+    keys_ks: &KeyspaceHandle,
 ) -> (
     Option<DIDCacheClient>,
     Option<Arc<ThreadedSecretsResolver>>,
@@ -127,6 +131,16 @@ async fn init_auth(
         }
     };
 
+    // Look up VTA key paths from stored key records
+    let (signing_path, ka_path) =
+        match find_vta_key_paths(keys_ks).await {
+            Ok(paths) => paths,
+            Err(e) => {
+                warn!("failed to find VTA key records: {e} — auth endpoints will not work (run setup first)");
+                return (None, None, None);
+            }
+        };
+
     // 1. DID resolver (local mode)
     let did_resolver = match DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await {
         Ok(r) => r,
@@ -140,7 +154,7 @@ async fn init_auth(
     let (secrets_resolver, _handle) = ThreadedSecretsResolver::new(None).await;
 
     // Derive and insert VTA signing secret (Ed25519)
-    match root.derive_ed25519(VTA_SIGNING_KEY_PATH) {
+    match root.derive_ed25519(&signing_path) {
         Ok(mut signing_secret) => {
             signing_secret.id = format!("{vta_did}#key-0");
             secrets_resolver.insert(signing_secret).await;
@@ -149,7 +163,7 @@ async fn init_auth(
     }
 
     // Derive and insert VTA key-agreement secret (X25519)
-    match root.derive_x25519(VTA_KEY_AGREEMENT_PATH) {
+    match root.derive_x25519(&ka_path) {
         Ok(mut ka_secret) => {
             ka_secret.id = format!("{vta_did}#key-1");
             secrets_resolver.insert(ka_secret).await;
@@ -157,11 +171,17 @@ async fn init_auth(
         Err(e) => warn!("failed to derive VTA key-agreement key: {e}"),
     }
 
-    // 3. JWT signing key at dedicated derivation path
-    let jwt_keys = match derive_jwt_keys(&root) {
-        Ok(k) => k,
-        Err(e) => {
-            warn!("failed to derive JWT keys: {e} — auth endpoints will not work");
+    // 3. JWT signing key from config (random key, not BIP-32 derived)
+    let jwt_keys = match &config.auth.jwt_signing_key {
+        Some(b64) => match decode_jwt_key(b64) {
+            Ok(k) => k,
+            Err(e) => {
+                warn!("failed to load JWT signing key: {e} — auth endpoints will not work");
+                return (Some(did_resolver), Some(Arc::new(secrets_resolver)), None);
+            }
+        },
+        None => {
+            warn!("auth.jwt_signing_key not configured — auth endpoints will not work (run setup first)");
             return (Some(did_resolver), Some(Arc::new(secrets_resolver)), None);
         }
     };
@@ -175,15 +195,53 @@ async fn init_auth(
     )
 }
 
-/// Derive JWT signing keys from the BIP-32 root at `m/44'/3'/0'`.
-fn derive_jwt_keys(root: &ExtendedSigningKey) -> Result<JwtKeys, AppError> {
-    let path: DerivationPath = JWT_KEY_PATH
-        .parse()
-        .map_err(|e| AppError::KeyDerivation(format!("invalid JWT key path: {e}")))?;
-    let derived = root
-        .derive(&path)
-        .map_err(|e| AppError::KeyDerivation(format!("JWT key derivation failed: {e}")))?;
-    JwtKeys::from_ed25519_bytes(derived.signing_key.as_bytes())
+/// Look up VTA signing and key-agreement derivation paths from stored key records.
+///
+/// Returns `(signing_path, ka_path)`.
+async fn find_vta_key_paths(
+    keys_ks: &KeyspaceHandle,
+) -> Result<(String, String), AppError> {
+    let entries = keys_ks.prefix_iter_raw("key:").await?;
+
+    let mut signing_path: Option<String> = None;
+    let mut ka_path: Option<String> = None;
+
+    for (_key, value) in &entries {
+        let record: KeyRecord = serde_json::from_slice(value)?;
+        match record.label.as_deref() {
+            Some("VTA signing key") if record.key_type == KeyType::Ed25519 => {
+                signing_path = Some(record.derivation_path);
+            }
+            Some("VTA key-agreement key") if record.key_type == KeyType::X25519 => {
+                ka_path = Some(record.derivation_path);
+            }
+            _ => {}
+        }
+        if signing_path.is_some() && ka_path.is_some() {
+            break;
+        }
+    }
+
+    match (signing_path, ka_path) {
+        (Some(s), Some(k)) => Ok((s, k)),
+        (None, _) => Err(AppError::NotFound(
+            "VTA signing key record not found in store".into(),
+        )),
+        (_, None) => Err(AppError::NotFound(
+            "VTA key-agreement key record not found in store".into(),
+        )),
+    }
+}
+
+/// Decode a base64url-no-pad JWT signing key and construct `JwtKeys`.
+fn decode_jwt_key(b64: &str) -> Result<JwtKeys, AppError> {
+    let bytes = BASE64
+        .decode(b64)
+        .map_err(|e| AppError::Config(format!("invalid jwt_signing_key base64: {e}")))?;
+    let key_bytes: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| AppError::Config("jwt_signing_key must be exactly 32 bytes".into()))?;
+    JwtKeys::from_ed25519_bytes(&key_bytes)
 }
 
 async fn session_cleanup_loop(sessions_ks: KeyspaceHandle, auth_config: AuthConfig) {

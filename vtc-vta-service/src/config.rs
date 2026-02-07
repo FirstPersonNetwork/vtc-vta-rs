@@ -58,6 +58,8 @@ pub struct AuthConfig {
     pub challenge_ttl: u64,
     #[serde(default = "default_session_cleanup_interval")]
     pub session_cleanup_interval: u64,
+    /// Base64url-no-pad encoded 32-byte Ed25519 private key for JWT signing.
+    pub jwt_signing_key: Option<String>,
 }
 
 fn default_access_token_expiry() -> u64 {
@@ -83,6 +85,7 @@ impl Default for AuthConfig {
             refresh_token_expiry: default_refresh_token_expiry(),
             challenge_ttl: default_challenge_ttl(),
             session_cleanup_interval: default_session_cleanup_interval(),
+            jwt_signing_key: None,
         }
     }
 }
@@ -234,6 +237,9 @@ impl AppConfig {
             config.auth.session_cleanup_interval = interval.parse().map_err(|e| {
                 AppError::Config(format!("invalid VTA_AUTH_SESSION_CLEANUP_INTERVAL: {e}"))
             })?;
+        }
+        if let Ok(key) = std::env::var("VTA_AUTH_JWT_SIGNING_KEY") {
+            config.auth.jwt_signing_key = Some(key);
         }
 
         Ok(config)

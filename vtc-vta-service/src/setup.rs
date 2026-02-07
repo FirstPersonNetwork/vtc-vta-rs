@@ -54,16 +54,22 @@ async fn save_key_record(
 }
 
 /// Derive a signing key (Ed25519) and key-agreement key (X25519) from the
-/// BIP-32 seed at the given paths, store them as [`KeyRecord`]s, and return
-/// the secrets so callers can use them (e.g. for DID creation).
+/// BIP-32 seed using counter-allocated paths under `base`, store them as
+/// [`KeyRecord`]s, and return the secrets so callers can use them.
 async fn derive_and_store_entity_keys(
     seed: &[u8],
-    signing_path: &str,
-    ka_path: &str,
+    base: &str,
     signing_label: &str,
     ka_label: &str,
     keys_ks: &KeyspaceHandle,
 ) -> Result<(Secret, Secret), Box<dyn std::error::Error>> {
+    let signing_path = allocate_path(keys_ks, base)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    let ka_path = allocate_path(keys_ks, base)
+        .await
+        .map_err(|e| format!("{e}"))?;
+
     let root = ExtendedSigningKey::from_seed(seed)
         .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
 
@@ -82,7 +88,7 @@ async fn derive_and_store_entity_keys(
         .map_err(|e| format!("{e}"))?;
     save_key_record(
         keys_ks,
-        signing_path,
+        &signing_path,
         SdkKeyType::Ed25519,
         &signing_pub,
         signing_label,
@@ -104,24 +110,29 @@ async fn derive_and_store_entity_keys(
     let ka_pub = ka_secret
         .get_public_keymultibase()
         .map_err(|e| format!("{e}"))?;
-    save_key_record(keys_ks, ka_path, SdkKeyType::X25519, &ka_pub, ka_label).await?;
+    save_key_record(keys_ks, &ka_path, SdkKeyType::X25519, &ka_pub, ka_label).await?;
 
     Ok((signing_secret, ka_secret))
 }
 
-/// Derive the admin did:key Ed25519 key from the BIP-32 seed, store it as a
+/// Derive the admin did:key Ed25519 key from the BIP-32 seed using a
+/// counter-allocated path under `ADMIN_KEY_BASE`, store it as a
 /// [`KeyRecord`], and return `(did, private_key_multibase)`.
 async fn derive_and_store_did_key(
     seed: &[u8],
     keys_ks: &KeyspaceHandle,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
+    let dk_path = allocate_path(keys_ks, ADMIN_KEY_BASE)
+        .await
+        .map_err(|e| format!("{e}"))?;
+
     let root = ExtendedSigningKey::from_seed(seed)
         .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
-    let dk_path: DerivationPath = ADMIN_DID_KEY_PATH
+    let derivation_path: DerivationPath = dk_path
         .parse()
         .map_err(|e| format!("Invalid derivation path: {e}"))?;
     let dk_derived = root
-        .derive(&dk_path)
+        .derive(&derivation_path)
         .map_err(|e| format!("Key derivation failed: {e}"))?;
     let signing_key = SigningKey::from_bytes(dk_derived.signing_key.as_bytes());
     let public_key = signing_key.verifying_key().to_bytes();
@@ -133,7 +144,7 @@ async fn derive_and_store_did_key(
 
     save_key_record(
         keys_ks,
-        ADMIN_DID_KEY_PATH,
+        &dk_path,
         SdkKeyType::Ed25519,
         &multibase_pubkey,
         "Admin did:key",
@@ -290,13 +301,18 @@ pub async fn run_setup_wizard(
     let seed_store = KeyringSeedStore::new("vtc-vta", "master_seed");
     seed_store.set(&seed).await?;
 
-    // 11. DIDComm messaging (with mediator DID creation)
+    // 11. Generate random JWT signing key
+    let mut jwt_key_bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut jwt_key_bytes);
+    let jwt_signing_key = BASE64.encode(jwt_key_bytes);
+
+    // 12. DIDComm messaging (with mediator DID creation)
     let messaging = configure_messaging(&seed, &keys_ks).await?;
 
-    // 12. VTA DID (after mediator so we can embed it as a service endpoint)
+    // 13. VTA DID (after mediator so we can embed it as a service endpoint)
     let vta_did = create_vta_did(&seed, &messaging, &keys_ks).await?;
 
-    // 13. Bootstrap admin DID in ACL
+    // 14. Bootstrap admin DID in ACL
     let (admin_did, admin_credential) = create_admin_did(&seed, &vta_did, &keys_ks).await?;
 
     let acl_ks = store.keyspace("acl")?;
@@ -316,7 +332,7 @@ pub async fn run_setup_wizard(
     // Flush all store writes to disk before exiting
     store.persist().await?;
 
-    // 14. Save config
+    // 15. Save config
     let config = AppConfig {
         vta_did,
         community_name,
@@ -330,12 +346,15 @@ pub async fn run_setup_wizard(
             data_dir: PathBuf::from(data_dir),
         },
         messaging: Some(messaging),
-        auth: AuthConfig::default(),
+        auth: AuthConfig {
+            jwt_signing_key: Some(jwt_signing_key),
+            ..AuthConfig::default()
+        },
         config_path: config_path.clone(),
     };
     config.save()?;
 
-    // 15. Summary
+    // 16. Summary
     eprintln!();
     eprintln!("\x1b[1;32mSetup complete!\x1b[0m");
     eprintln!("  Config saved to: {}", config_path.display());
@@ -426,8 +445,7 @@ async fn create_admin_did(
         1 => {
             let (mut signing_secret, ka_secret) = derive_and_store_entity_keys(
                 seed,
-                ADMIN_SIGNING_KEY_PATH,
-                ADMIN_KEY_AGREEMENT_PATH,
+                ADMIN_KEY_BASE,
                 "Admin signing key",
                 "Admin key-agreement key",
                 keys_ks,
@@ -440,7 +458,7 @@ async fn create_admin_did(
                 "admin",
                 None,
                 seed,
-                ADMIN_PRE_ROTATION_BASE,
+                ADMIN_KEY_BASE,
                 keys_ks,
             )
             .await?;
@@ -453,8 +471,7 @@ async fn create_admin_did(
             // Store all admin key paths so they're visible in the key list
             let _ = derive_and_store_entity_keys(
                 seed,
-                ADMIN_SIGNING_KEY_PATH,
-                ADMIN_KEY_AGREEMENT_PATH,
+                ADMIN_KEY_BASE,
                 "Admin signing key",
                 "Admin key-agreement key",
                 keys_ks,
@@ -493,8 +510,7 @@ async fn create_vta_did(
         0 => {
             let (mut signing_secret, ka_secret) = derive_and_store_entity_keys(
                 seed,
-                VTA_SIGNING_KEY_PATH,
-                VTA_KEY_AGREEMENT_PATH,
+                VTA_KEY_BASE,
                 "VTA signing key",
                 "VTA key-agreement key",
                 keys_ks,
@@ -507,7 +523,7 @@ async fn create_vta_did(
                 "VTA",
                 Some(messaging),
                 seed,
-                VTA_PRE_ROTATION_BASE,
+                VTA_KEY_BASE,
                 keys_ks,
             )
             .await?;
@@ -519,8 +535,7 @@ async fn create_vta_did(
             // Store the keys that correspond to the imported DID
             let _ = derive_and_store_entity_keys(
                 seed,
-                VTA_SIGNING_KEY_PATH,
-                VTA_KEY_AGREEMENT_PATH,
+                VTA_KEY_BASE,
                 "VTA signing key",
                 "VTA key-agreement key",
                 keys_ks,
@@ -556,8 +571,7 @@ async fn configure_messaging(
         0 => {
             let (mut signing_secret, ka_secret) = derive_and_store_entity_keys(
                 seed,
-                MEDIATOR_SIGNING_KEY_PATH,
-                MEDIATOR_KEY_AGREEMENT_PATH,
+                MEDIATOR_KEY_BASE,
                 "Mediator signing key",
                 "Mediator key-agreement key",
                 keys_ks,
@@ -570,7 +584,7 @@ async fn configure_messaging(
                 "mediator",
                 None,
                 seed,
-                MEDIATOR_PRE_ROTATION_BASE,
+                MEDIATOR_KEY_BASE,
                 keys_ks,
             )
             .await?
@@ -581,8 +595,7 @@ async fn configure_messaging(
             // Store the keys that correspond to the imported DID
             let _ = derive_and_store_entity_keys(
                 seed,
-                MEDIATOR_SIGNING_KEY_PATH,
-                MEDIATOR_KEY_AGREEMENT_PATH,
+                MEDIATOR_KEY_BASE,
                 "Mediator signing key",
                 "Mediator key-agreement key",
                 keys_ks,
@@ -651,14 +664,14 @@ fn prompt_webvh_url(label: &str) -> Result<WebVHURL, Box<dyn std::error::Error>>
 
 /// Prompt the user to optionally generate pre-rotation keys.
 ///
-/// Keys are derived from the BIP-32 seed at `{base_path}/0'`, `{base_path}/1'`,
-/// etc. and stored as [`KeyRecord`] entries in the `"keys"` keyspace.
+/// Keys are derived from the BIP-32 seed using counter-allocated paths under
+/// `base` and stored as [`KeyRecord`] entries in the `"keys"` keyspace.
 ///
 /// Returns the list of next-key hashes.  Returns an empty vec when the user
 /// declines.
 async fn prompt_pre_rotation_keys(
     seed: &[u8],
-    base_path: &str,
+    base: &str,
     label: &str,
     keys_ks: &KeyspaceHandle,
 ) -> Result<Vec<String>, Box<dyn std::error::Error>> {
@@ -679,10 +692,11 @@ async fn prompt_pre_rotation_keys(
         .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
 
     let mut hashes: Vec<String> = Vec::new();
-    let mut index: u32 = 0;
 
     loop {
-        let path = format!("{base_path}/{index}'");
+        let path = allocate_path(keys_ks, base)
+            .await
+            .map_err(|e| format!("{e}"))?;
         let derivation_path: DerivationPath = path
             .parse()
             .map_err(|e| format!("Invalid derivation path: {e}"))?;
@@ -708,7 +722,7 @@ async fn prompt_pre_rotation_keys(
             key_type: SdkKeyType::Ed25519,
             status: KeyStatus::Active,
             public_key: pub_mb.clone(),
-            label: Some(format!("{label} pre-rotation key {index}")),
+            label: Some(format!("{label} pre-rotation key {}", hashes.len())),
             created_at: now,
             updated_at: now,
         };
@@ -718,7 +732,6 @@ async fn prompt_pre_rotation_keys(
         eprintln!("  publicKeyMultibase: {pub_mb}");
 
         hashes.push(hash);
-        index += 1;
 
         if !Confirm::new()
             .with_prompt(format!(
@@ -749,7 +762,7 @@ async fn create_webvh_did(
     label: &str,
     messaging: Option<&MessagingConfig>,
     seed: &[u8],
-    pre_rotation_base: &str,
+    base: &str,
     keys_ks: &KeyspaceHandle,
 ) -> Result<String, Box<dyn std::error::Error>> {
     // Prompt for URL and convert to WebVHURL
@@ -834,8 +847,8 @@ async fn create_webvh_did(
         .default(true)
         .interact()?;
 
-    // Pre-rotation keys
-    let next_key_hashes = prompt_pre_rotation_keys(seed, pre_rotation_base, label, keys_ks).await?;
+    // Pre-rotation keys (share the same counter/base as entity keys)
+    let next_key_hashes = prompt_pre_rotation_keys(seed, base, label, keys_ks).await?;
 
     // Build parameters
     let parameters = WebVHParameters {

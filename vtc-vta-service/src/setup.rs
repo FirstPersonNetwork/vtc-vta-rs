@@ -5,10 +5,10 @@ use affinidi_tdk::secrets_resolver::secrets::Secret;
 use bip39::Mnemonic;
 use chrono::Utc;
 use dialoguer::{Confirm, Input, Select};
+use didwebvh_rs::DIDWebVHState;
 use didwebvh_rs::log_entry::LogEntryMethods;
 use didwebvh_rs::parameters::Parameters as WebVHParameters;
 use didwebvh_rs::url::WebVHURL;
-use didwebvh_rs::DIDWebVHState;
 use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
 use rand::RngCore;
 use serde_json::json;
@@ -24,7 +24,7 @@ use crate::config::{
     AppConfig, AuthConfig, LogConfig, LogFormat, MessagingConfig, ServerConfig, StoreConfig,
 };
 use crate::keys::seed_store::KeyringSeedStore;
-use crate::keys::{store_key, KeyRecord, KeyStatus, KeyType as SdkKeyType};
+use crate::keys::{KeyRecord, KeyStatus, KeyType as SdkKeyType, store_key};
 use crate::store::{KeyspaceHandle, Store};
 
 /// Derivation path for the VTA's Ed25519 signing/verification key.
@@ -42,7 +42,9 @@ const MEDIATOR_PRE_ROTATION_BASE: &str = "m/44'/2'";
 /// Base derivation path for admin pre-rotation keys (`m/44'/3'/N'`).
 const ADMIN_PRE_ROTATION_BASE: &str = "m/44'/3'";
 
-pub async fn run_setup_wizard(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_setup_wizard(
+    config_path: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Welcome to the VTA setup wizard.\n");
 
     // 1. Config file path
@@ -146,7 +148,7 @@ pub async fn run_setup_wizard(config_path: Option<PathBuf>) -> Result<(), Box<dy
     let mnemonic: Mnemonic = match mnemonic_choice {
         0 => {
             let mut entropy = [0u8; 32];
-            rand::thread_rng().fill_bytes(&mut entropy);
+            rand::rng().fill_bytes(&mut entropy);
             let m = Mnemonic::from_entropy(&entropy)?;
 
             eprintln!();
@@ -194,8 +196,7 @@ pub async fn run_setup_wizard(config_path: Option<PathBuf>) -> Result<(), Box<dy
     let vta_did = create_vta_did(&seed, &messaging, &keys_ks).await?;
 
     // 13. Bootstrap admin DID in ACL
-    let (admin_did, admin_credential) =
-        create_admin_did(&seed, &vta_did, &keys_ks).await?;
+    let (admin_did, admin_credential) = create_admin_did(&seed, &vta_did, &keys_ks).await?;
 
     let acl_ks = store.keyspace("acl")?;
     let admin_entry = AclEntry {
@@ -250,8 +251,8 @@ pub async fn run_setup_wizard(config_path: Option<PathBuf>) -> Result<(), Box<dy
     if let Some(cred) = &admin_credential {
         eprintln!();
         eprintln!("\x1b[1;33m╔══════════════════════════════════════════════════════════╗");
-        eprintln!("║  REMINDER: Save your admin credential string below.     ║");
-        eprintln!("║  You will need it to authenticate with the VTA.         ║");
+        eprintln!("║  REMINDER: Save your admin credential string below.      ║");
+        eprintln!("║  You will need it to authenticate with the VTA.          ║");
         eprintln!("╚══════════════════════════════════════════════════════════╝\x1b[0m");
         eprintln!();
         eprintln!("  \x1b[1m{cred}\x1b[0m");
@@ -300,9 +301,9 @@ async fn create_admin_did(
             eprintln!("\x1b[1;32mGenerated admin DID:\x1b[0m {did}");
             eprintln!();
             eprintln!("\x1b[1;33m╔══════════════════════════════════════════════════════════╗");
-            eprintln!("║  IMPORTANT: Save the credential string below.           ║");
-            eprintln!("║  It contains your private key and is the ONLY way to    ║");
-            eprintln!("║  authenticate as admin.                                 ║");
+            eprintln!("║  IMPORTANT: Save the credential string below.            ║");
+            eprintln!("║  It contains your private key and is the ONLY way to     ║");
+            eprintln!("║  authenticate as admin.                                  ║");
             eprintln!("╚══════════════════════════════════════════════════════════╝\x1b[0m");
             eprintln!();
             eprintln!("  \x1b[1m{credential}\x1b[0m");
@@ -321,14 +322,14 @@ async fn create_admin_did(
         }
         1 => {
             // Create did:webvh for admin
-            let signing_secret = Secret::generate_ed25519(None, None);
+            let mut signing_secret = Secret::generate_ed25519(None, None);
             let ka_secret = Secret::generate_ed25519(None, None);
             let ka_secret = ka_secret
                 .to_x25519()
                 .map_err(|e| format!("X25519 conversion failed: {e}"))?;
 
             let did = create_webvh_did(
-                &signing_secret,
+                &mut signing_secret,
                 Some(&ka_secret),
                 "admin",
                 None,
@@ -341,9 +342,7 @@ async fn create_admin_did(
         }
         _ => {
             // Enter existing DID
-            let did: String = Input::new()
-                .with_prompt("Admin DID")
-                .interact_text()?;
+            let did: String = Input::new().with_prompt("Admin DID").interact_text()?;
             Ok((did, None))
         }
     }
@@ -383,7 +382,7 @@ async fn create_vta_did(
             let signing_derived = root
                 .derive(&signing_path)
                 .map_err(|e| format!("Key derivation failed: {e}"))?;
-            let signing_secret =
+            let mut signing_secret =
                 Secret::generate_ed25519(None, Some(signing_derived.signing_key.as_bytes()));
 
             let ka_path: DerivationPath = VTA_KEY_AGREEMENT_PATH
@@ -392,14 +391,13 @@ async fn create_vta_did(
             let ka_derived = root
                 .derive(&ka_path)
                 .map_err(|e| format!("Key derivation failed: {e}"))?;
-            let ka_secret =
-                Secret::generate_ed25519(None, Some(ka_derived.signing_key.as_bytes()));
+            let ka_secret = Secret::generate_ed25519(None, Some(ka_derived.signing_key.as_bytes()));
             let ka_secret = ka_secret
                 .to_x25519()
                 .map_err(|e| format!("X25519 conversion failed: {e}"))?;
 
             let did = create_webvh_did(
-                &signing_secret,
+                &mut signing_secret,
                 Some(&ka_secret),
                 "VTA",
                 Some(messaging),
@@ -425,9 +423,7 @@ async fn configure_messaging(
     seed: &[u8],
     keys_ks: &KeyspaceHandle,
 ) -> Result<MessagingConfig, Box<dyn std::error::Error>> {
-    let mediator_url: String = Input::new()
-        .with_prompt("Mediator URL")
-        .interact_text()?;
+    let mediator_url: String = Input::new().with_prompt("Mediator URL").interact_text()?;
 
     let mediator_options = &[
         "Create a new did:webvh DID for the mediator",
@@ -441,14 +437,14 @@ async fn configure_messaging(
 
     let mediator_did = match mediator_choice {
         0 => {
-            let signing_secret = Secret::generate_ed25519(None, None);
+            let mut signing_secret = Secret::generate_ed25519(None, None);
             let ka_secret = Secret::generate_ed25519(None, None);
             let ka_secret = ka_secret
                 .to_x25519()
                 .map_err(|e| format!("X25519 conversion failed: {e}"))?;
 
             create_webvh_did(
-                &signing_secret,
+                &mut signing_secret,
                 Some(&ka_secret),
                 "mediator",
                 None,
@@ -458,9 +454,7 @@ async fn configure_messaging(
             )
             .await?
         }
-        _ => Input::new()
-            .with_prompt("Mediator DID")
-            .interact_text()?,
+        _ => Input::new().with_prompt("Mediator DID").interact_text()?,
     };
 
     Ok(MessagingConfig {
@@ -497,9 +491,7 @@ fn prompt_webvh_url(label: &str) -> Result<WebVHURL, Box<dyn std::error::Error>>
         match WebVHURL::parse_url(&parsed) {
             Ok(webvh_url) => {
                 let did_display = webvh_url.to_string();
-                let http_url = webvh_url
-                    .get_http_url(None)
-                    .map_err(|e| format!("{e}"))?;
+                let http_url = webvh_url.get_http_url(None).map_err(|e| format!("{e}"))?;
 
                 eprintln!("  DID:  {did_display}");
                 eprintln!("  URL:  {http_url}");
@@ -513,7 +505,9 @@ fn prompt_webvh_url(label: &str) -> Result<WebVHURL, Box<dyn std::error::Error>>
                 }
             }
             Err(e) => {
-                eprintln!("\x1b[31mCould not convert to a webvh DID: {e} — please try again.\x1b[0m");
+                eprintln!(
+                    "\x1b[31mCould not convert to a webvh DID: {e} — please try again.\x1b[0m"
+                );
             }
         }
     }
@@ -614,7 +608,7 @@ async fn prompt_pre_rotation_keys(
 /// When `messaging` is provided a DIDCommMessaging service endpoint is added
 /// to the DID document.
 async fn create_webvh_did(
-    signing_secret: &Secret,
+    signing_secret: &mut Secret,
     ka_secret: Option<&Secret>,
     label: &str,
     messaging: Option<&MessagingConfig>,
@@ -629,6 +623,15 @@ async fn create_webvh_did(
     let pub_key = signing_secret
         .get_public_keymultibase()
         .map_err(|e| format!("Failed to get public key: {e}"))?;
+
+    // Convert the Signing Key ID to be correct
+    signing_secret.id = [
+        "did:key:",
+        &signing_secret.get_public_keymultibase().unwrap(),
+        "#",
+        &signing_secret.get_public_keymultibase().unwrap(),
+    ]
+    .concat();
 
     // Build DID document
     let mut did_document = json!({

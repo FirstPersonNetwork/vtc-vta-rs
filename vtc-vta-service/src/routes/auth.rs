@@ -46,7 +46,7 @@ pub async fn challenge(
     Json(req): Json<ChallengeRequest>,
 ) -> Result<Json<ChallengeResponse>, AppError> {
     // ACL enforcement: DID must be in the ACL to request a challenge
-    let acl = state.store.keyspace("acl")?;
+    let acl = state.acl_ks.clone();
     check_acl(&acl, &req.did).await?;
 
     let session_id = Uuid::new_v4().to_string();
@@ -66,7 +66,7 @@ pub async fn challenge(
         refresh_expires_at: None,
     };
 
-    let sessions = state.store.keyspace("sessions")?;
+    let sessions = state.sessions_ks.clone();
     store_session(&sessions, &session).await?;
 
     info!(did = %session.did, session_id = %session.session_id, "auth challenge issued");
@@ -145,7 +145,7 @@ pub async fn authenticate(
         .ok_or_else(|| AppError::Authentication("message has no sender (from)".into()))?;
 
     // Look up session and validate
-    let sessions = state.store.keyspace("sessions")?;
+    let sessions = state.sessions_ks.clone();
     let mut session = get_session(&sessions, session_id)
         .await?
         .ok_or_else(|| AppError::Authentication("session not found".into()))?;
@@ -168,7 +168,7 @@ pub async fn authenticate(
     }
 
     // Look up ACL entry to get role for the token
-    let acl = state.store.keyspace("acl")?;
+    let acl = state.acl_ks.clone();
     let role = check_acl(&acl, &session.did).await?;
 
     // Generate tokens
@@ -268,7 +268,7 @@ pub async fn refresh(
         .ok_or_else(|| AppError::Authentication("missing refresh_token in message body".into()))?;
 
     // Look up session by refresh token
-    let sessions = state.store.keyspace("sessions")?;
+    let sessions = state.sessions_ks.clone();
     let session_id = get_session_by_refresh(&sessions, refresh_token)
         .await?
         .ok_or_else(|| AppError::Authentication("refresh token not found".into()))?;
@@ -289,7 +289,7 @@ pub async fn refresh(
     }
 
     // Look up current ACL role (propagates role changes at refresh time)
-    let acl = state.store.keyspace("acl")?;
+    let acl = state.acl_ks.clone();
     let role = check_acl(&acl, &session.did).await?;
 
     // Generate new access token
@@ -357,7 +357,7 @@ pub async fn generate_credentials(
     let (did, private_key_multibase) = generate_did_key();
 
     // Add the new DID to the ACL
-    let acl = state.store.keyspace("acl")?;
+    let acl = state.acl_ks.clone();
     let entry = AclEntry {
         did: did.clone(),
         role: req.role.clone(),
@@ -416,7 +416,7 @@ pub async fn session_list(
     _auth: ManageAuth,
     State(state): State<AppState>,
 ) -> Result<Json<Vec<SessionSummary>>, AppError> {
-    let sessions = state.store.keyspace("sessions")?;
+    let sessions = state.sessions_ks.clone();
     let all = list_sessions(&sessions).await?;
     let summaries: Vec<SessionSummary> = all.into_iter().map(SessionSummary::from).collect();
     info!(caller = %_auth.0.did, count = summaries.len(), "sessions listed");
@@ -430,7 +430,7 @@ pub async fn revoke_session(
     State(state): State<AppState>,
     Path(session_id): Path<String>,
 ) -> Result<impl IntoResponse, AppError> {
-    let sessions = state.store.keyspace("sessions")?;
+    let sessions = state.sessions_ks.clone();
     let session = get_session(&sessions, &session_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("session not found: {session_id}")))?;
@@ -464,7 +464,7 @@ pub async fn revoke_sessions_by_did(
     State(state): State<AppState>,
     Query(query): Query<RevokeByDidQuery>,
 ) -> Result<Json<RevokeByDidResponse>, AppError> {
-    let sessions = state.store.keyspace("sessions")?;
+    let sessions = state.sessions_ks.clone();
     let all = list_sessions(&sessions).await?;
     let mut revoked = 0u64;
 

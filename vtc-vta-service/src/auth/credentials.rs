@@ -2,6 +2,8 @@ use ed25519_dalek::SigningKey;
 use multibase::Base;
 use rand::RngCore;
 
+use crate::keys::ed25519_multibase_pubkey;
+
 /// Generate a new `did:key` identity from a random Ed25519 keypair.
 ///
 /// Returns `(did, private_key_multibase)` where:
@@ -14,12 +16,7 @@ pub fn generate_did_key() -> (String, String) {
     let signing_key = SigningKey::from_bytes(&seed);
     let public_key = signing_key.verifying_key().to_bytes();
 
-    // Multicodec: ed25519-pub = 0xed, 0x01
-    let mut multicodec = Vec::with_capacity(34);
-    multicodec.extend_from_slice(&[0xed, 0x01]);
-    multicodec.extend_from_slice(&public_key);
-
-    let multibase_pubkey = multibase::encode(Base::Base58Btc, &multicodec);
+    let multibase_pubkey = ed25519_multibase_pubkey(&public_key);
     let did = format!("did:key:{multibase_pubkey}");
     let private_key_multibase = multibase::encode(Base::Base58Btc, &seed);
 

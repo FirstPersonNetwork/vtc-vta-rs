@@ -46,8 +46,7 @@ impl FromRequestParts<AppState> for AuthClaims {
         let claims = jwt_keys.decode(token)?;
 
         // Verify session exists and is authenticated
-        let sessions = state.store.keyspace("sessions")?;
-        let session = get_session(&sessions, &claims.session_id)
+        let session = get_session(&state.sessions_ks, &claims.session_id)
             .await?
             .ok_or_else(|| AppError::Unauthorized("session not found".into()))?;
 

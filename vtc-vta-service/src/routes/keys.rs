@@ -55,7 +55,7 @@ pub async fn create_key(
     State(state): State<AppState>,
     Json(req): Json<CreateKeyRequest>,
 ) -> Result<(StatusCode, Json<CreateKeyResponse>), AppError> {
-    let keys = state.store.keyspace("keys")?;
+    let keys = state.keys_ks.clone();
 
     let bip32 = load_or_generate_seed(&state.seed_store, req.mnemonic.as_deref()).await?;
 
@@ -101,7 +101,7 @@ pub async fn get_key(
     State(state): State<AppState>,
     Path(key_id): Path<String>,
 ) -> Result<Json<KeyRecord>, AppError> {
-    let keys = state.store.keyspace("keys")?;
+    let keys = state.keys_ks.clone();
 
     let record: KeyRecord = keys
         .get(keys::store_key(&key_id))
@@ -117,7 +117,7 @@ pub async fn invalidate_key(
     State(state): State<AppState>,
     Path(key_id): Path<String>,
 ) -> Result<Json<InvalidateKeyResponse>, AppError> {
-    let keys = state.store.keyspace("keys")?;
+    let keys = state.keys_ks.clone();
     let store_key = keys::store_key(&key_id);
 
     let mut record: KeyRecord = keys
@@ -150,7 +150,7 @@ pub async fn rename_key(
     Path(key_id): Path<String>,
     Json(req): Json<RenameKeyRequest>,
 ) -> Result<Json<RenameKeyResponse>, AppError> {
-    let keys = state.store.keyspace("keys")?;
+    let keys = state.keys_ks.clone();
     let old_store_key = keys::store_key(&key_id);
 
     let mut record: KeyRecord = keys
@@ -196,7 +196,7 @@ pub async fn list_keys(
     State(state): State<AppState>,
     Query(query): Query<ListKeysQuery>,
 ) -> Result<Json<ListKeysResponse>, AppError> {
-    let keys = state.store.keyspace("keys")?;
+    let keys = state.keys_ks.clone();
     let approx_len = keys.approximate_len().await?;
     let raw = keys.prefix_iter_raw("key:").await?;
 

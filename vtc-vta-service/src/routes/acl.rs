@@ -45,7 +45,7 @@ pub async fn list_acl(
     _auth: ManageAuth,
     State(state): State<AppState>,
 ) -> Result<Json<AclListResponse>, AppError> {
-    let acl = state.store.keyspace("acl")?;
+    let acl = state.acl_ks.clone();
     let entries = list_acl_entries(&acl).await?;
     let entries: Vec<AclEntryResponse> = entries.into_iter().map(AclEntryResponse::from).collect();
     info!(caller = %_auth.0.did, count = entries.len(), "ACL listed");
@@ -66,7 +66,7 @@ pub async fn create_acl(
     State(state): State<AppState>,
     Json(req): Json<CreateAclRequest>,
 ) -> Result<(StatusCode, Json<AclEntryResponse>), AppError> {
-    let acl = state.store.keyspace("acl")?;
+    let acl = state.acl_ks.clone();
 
     // Check if entry already exists
     if get_acl_entry(&acl, &req.did).await?.is_some() {
@@ -97,7 +97,7 @@ pub async fn get_acl(
     State(state): State<AppState>,
     Path(did): Path<String>,
 ) -> Result<Json<AclEntryResponse>, AppError> {
-    let acl = state.store.keyspace("acl")?;
+    let acl = state.acl_ks.clone();
     let entry = get_acl_entry(&acl, &did)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("ACL entry not found for DID: {did}")))?;
@@ -119,7 +119,7 @@ pub async fn update_acl(
     Path(did): Path<String>,
     Json(req): Json<UpdateAclRequest>,
 ) -> Result<Json<AclEntryResponse>, AppError> {
-    let acl = state.store.keyspace("acl")?;
+    let acl = state.acl_ks.clone();
     let mut entry = get_acl_entry(&acl, &did)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("ACL entry not found for DID: {did}")))?;
@@ -151,7 +151,7 @@ pub async fn delete_acl(
         ));
     }
 
-    let acl = state.store.keyspace("acl")?;
+    let acl = state.acl_ks.clone();
 
     // Verify entry exists
     check_acl(&acl, &did).await.map_err(|_| {

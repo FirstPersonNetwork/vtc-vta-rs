@@ -10,24 +10,21 @@ use crate::auth::session::cleanup_expired_sessions;
 use crate::config::{AppConfig, AuthConfig};
 use crate::error::AppError;
 use crate::keys::derivation::Bip32Extension;
+use crate::keys::paths::{JWT_KEY_PATH, VTA_KEY_AGREEMENT_PATH, VTA_SIGNING_KEY_PATH};
 use crate::keys::seed_store::KeyringSeedStore;
 use crate::routes;
-use crate::store::Store;
+use crate::store::{KeyspaceHandle, Store};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
 use tracing::{info, warn};
 
-/// BIP-32 derivation path for the JWT signing key (dedicated, not the DID signing key).
-const JWT_KEY_PATH: &str = "m/44'/3'/0'";
-
-/// BIP-32 derivation paths matching the VTA DID document verification methods.
-const VTA_SIGNING_KEY_PATH: &str = "m/44'/0'/0'";
-const VTA_KEY_AGREEMENT_PATH: &str = "m/44'/0'/1'";
-
 #[derive(Clone)]
 pub struct AppState {
     pub store: Store,
+    pub keys_ks: KeyspaceHandle,
+    pub sessions_ks: KeyspaceHandle,
+    pub acl_ks: KeyspaceHandle,
     pub config: Arc<RwLock<AppConfig>>,
     pub seed_store: Arc<KeyringSeedStore>,
     pub did_resolver: Option<DIDCacheClient>,
@@ -43,6 +40,11 @@ pub async fn run(
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = TcpListener::bind(&addr).await.map_err(AppError::Io)?;
 
+    // Open cached keyspace handles
+    let keys_ks = store.keyspace("keys")?;
+    let sessions_ks = store.keyspace("sessions")?;
+    let acl_ks = store.keyspace("acl")?;
+
     // Initialize auth infrastructure
     let (did_resolver, secrets_resolver, jwt_keys) =
         init_auth(&config, &seed_store).await;
@@ -51,6 +53,9 @@ pub async fn run(
 
     let state = AppState {
         store,
+        keys_ks,
+        sessions_ks,
+        acl_ks,
         config: Arc::new(RwLock::new(config)),
         seed_store,
         did_resolver,
@@ -60,7 +65,10 @@ pub async fn run(
 
     // Spawn session cleanup background task when auth is configured
     if state.jwt_keys.is_some() {
-        tokio::spawn(session_cleanup_loop(state.store.clone(), auth_config));
+        tokio::spawn(session_cleanup_loop(
+            state.sessions_ks.clone(),
+            auth_config,
+        ));
     }
 
     let app = routes::router()
@@ -178,11 +186,11 @@ fn derive_jwt_keys(root: &ExtendedSigningKey) -> Result<JwtKeys, AppError> {
     JwtKeys::from_ed25519_bytes(derived.signing_key.as_bytes())
 }
 
-async fn session_cleanup_loop(store: Store, auth_config: AuthConfig) {
+async fn session_cleanup_loop(sessions_ks: KeyspaceHandle, auth_config: AuthConfig) {
     let interval = Duration::from_secs(auth_config.session_cleanup_interval);
     loop {
         tokio::time::sleep(interval).await;
-        if let Err(e) = cleanup_expired_sessions(&store, auth_config.challenge_ttl).await {
+        if let Err(e) = cleanup_expired_sessions(&sessions_ks, auth_config.challenge_ttl).await {
             warn!("session cleanup error: {e}");
         }
     }

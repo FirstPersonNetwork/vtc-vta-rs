@@ -1,5 +1,5 @@
 use crate::error::AppError;
-use crate::store::{KeyspaceHandle, Store};
+use crate::store::KeyspaceHandle;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::debug;
@@ -124,8 +124,10 @@ pub async fn list_sessions(sessions: &KeyspaceHandle) -> Result<Vec<Session>, Ap
 ///
 /// - `ChallengeSent` sessions expire after `challenge_ttl` seconds from `created_at`.
 /// - `Authenticated` sessions expire when `refresh_expires_at` has passed.
-pub async fn cleanup_expired_sessions(store: &Store, challenge_ttl: u64) -> Result<(), AppError> {
-    let sessions = store.keyspace("sessions")?;
+pub async fn cleanup_expired_sessions(
+    sessions: &KeyspaceHandle,
+    challenge_ttl: u64,
+) -> Result<(), AppError> {
     let entries = sessions.prefix_iter_raw("session:").await?;
     let now = now_epoch();
     let mut removed = 0u64;

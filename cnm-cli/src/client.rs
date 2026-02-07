@@ -75,6 +75,14 @@ pub struct RenameKeyResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct ListKeysResponse {
+    pub keys: Vec<KeyRecord>,
+    pub total: u64,
+    pub offset: u64,
+    pub limit: u64,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
 }
@@ -141,6 +149,22 @@ impl VtaClient {
     ) -> Result<CreateKeyResponse, Box<dyn std::error::Error>> {
         let r = self.client.post(format!("{}/keys", self.base_url)).json(&req);
         let resp = self.with_auth(r).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// GET /keys
+    pub async fn list_keys(
+        &self,
+        offset: u64,
+        limit: u64,
+        status: Option<&str>,
+    ) -> Result<ListKeysResponse, Box<dyn std::error::Error>> {
+        let mut url = format!("{}/keys?offset={}&limit={}", self.base_url, offset, limit);
+        if let Some(s) = status {
+            url.push_str(&format!("&status={s}"));
+        }
+        let req = self.client.get(url);
+        let resp = self.with_auth(req).send().await?;
         Self::handle_response(resp).await
     }
 

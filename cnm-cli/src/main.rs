@@ -105,6 +105,18 @@ enum KeyCommands {
         /// New key ID
         new_key_id: String,
     },
+    /// List all keys
+    List {
+        /// Maximum number of keys to return
+        #[arg(long, default_value = "50")]
+        limit: u64,
+        /// Number of keys to skip
+        #[arg(long, default_value = "0")]
+        offset: u64,
+        /// Filter by status (active or revoked)
+        #[arg(long)]
+        status: Option<String>,
+    },
 }
 
 fn print_banner() {
@@ -189,6 +201,11 @@ async fn main() {
             KeyCommands::Rename { key_id, new_key_id } => {
                 cmd_key_rename(&client, &key_id, &new_key_id).await
             }
+            KeyCommands::List {
+                limit,
+                offset,
+                status,
+            } => cmd_key_list(&client, offset, limit, status).await,
         },
     };
 
@@ -321,5 +338,37 @@ async fn cmd_key_rename(
     println!("Key renamed:");
     println!("  Key ID:     {}", resp.key_id);
     println!("  Updated At: {}", resp.updated_at);
+    Ok(())
+}
+
+async fn cmd_key_list(
+    client: &VtaClient,
+    offset: u64,
+    limit: u64,
+    status: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let resp = client
+        .list_keys(offset, limit, status.as_deref())
+        .await?;
+
+    if resp.keys.is_empty() {
+        println!("No keys found.");
+        return Ok(());
+    }
+
+    let end = (offset + resp.keys.len() as u64).min(resp.total);
+    println!("Keys (showing {}-{} of {}):", offset + 1, end, resp.total);
+    println!(
+        "  {:<36}  {:<8}  {:<8}  {:<20}  {}",
+        "ID", "Type", "Status", "Label", "Created"
+    );
+    for key in &resp.keys {
+        let label = key.label.as_deref().unwrap_or("\u{2014}");
+        let created = key.created_at.format("%Y-%m-%d");
+        println!(
+            "  {:<36}  {:<8}  {:<8}  {:<20}  {}",
+            key.key_id, key.key_type, key.status, label, created
+        );
+    }
     Ok(())
 }

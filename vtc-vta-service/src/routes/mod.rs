@@ -29,7 +29,7 @@ pub fn router() -> Router<AppState> {
             "/config",
             get(config::get_config).patch(config::update_config),
         )
-        .route("/keys", post(keys::create_key))
+        .route("/keys", get(keys::list_keys).post(keys::create_key))
         .route(
             "/keys/{key_id}",
             get(keys::get_key)

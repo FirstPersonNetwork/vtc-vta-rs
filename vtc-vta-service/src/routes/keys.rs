@@ -1,5 +1,5 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -173,5 +173,60 @@ pub async fn rename_key(
     Ok(Json(RenameKeyResponse {
         key_id: req.key_id,
         updated_at: record.updated_at,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListKeysQuery {
+    pub offset: Option<u64>,
+    pub limit: Option<u64>,
+    pub status: Option<KeyStatus>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListKeysResponse {
+    pub keys: Vec<KeyRecord>,
+    pub total: u64,
+    pub offset: u64,
+    pub limit: u64,
+}
+
+pub async fn list_keys(
+    _auth: AuthClaims,
+    State(state): State<AppState>,
+    Query(query): Query<ListKeysQuery>,
+) -> Result<Json<ListKeysResponse>, AppError> {
+    let keys = state.store.keyspace("keys")?;
+    let raw = keys.prefix_iter_raw("key:").await?;
+
+    let mut records: Vec<KeyRecord> = Vec::with_capacity(raw.len());
+    for (_key, value) in raw {
+        let record: KeyRecord = serde_json::from_slice(&value)?;
+        if let Some(ref status) = query.status {
+            if record.status != *status {
+                continue;
+            }
+        }
+        records.push(record);
+    }
+
+    let total = records.len() as u64;
+    let offset = query.offset.unwrap_or(0);
+    let limit = query.limit.unwrap_or(50);
+
+    let page: Vec<KeyRecord> = records
+        .into_iter()
+        .skip(offset as usize)
+        .take(limit as usize)
+        .collect();
+
+    let count = page.len();
+    info!(caller = %_auth.did, count, total, "keys listed");
+
+    Ok(Json(ListKeysResponse {
+        keys: page,
+        total,
+        offset,
+        limit,
     }))
 }

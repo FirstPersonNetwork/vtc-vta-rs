@@ -9,7 +9,9 @@ use didwebvh_rs::DIDWebVHState;
 use didwebvh_rs::log_entry::LogEntryMethods;
 use didwebvh_rs::parameters::Parameters as WebVHParameters;
 use didwebvh_rs::url::WebVHURL;
+use ed25519_dalek::SigningKey;
 use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
+use multibase::Base;
 use rand::RngCore;
 use serde_json::json;
 use url::Url;
@@ -19,7 +21,6 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD as BASE64;
 
 use crate::acl::{AclEntry, Role, store_acl_entry};
-use crate::auth::credentials::generate_did_key;
 use crate::config::{
     AppConfig, AuthConfig, LogConfig, LogFormat, MessagingConfig, ServerConfig, StoreConfig,
 };
@@ -41,6 +42,45 @@ const MEDIATOR_PRE_ROTATION_BASE: &str = "m/44'/2'";
 
 /// Base derivation path for admin pre-rotation keys (`m/44'/3'/N'`).
 const ADMIN_PRE_ROTATION_BASE: &str = "m/44'/3'";
+
+/// Derivation path for the mediator's Ed25519 signing/verification key.
+const MEDIATOR_SIGNING_KEY_PATH: &str = "m/44'/4'/0'";
+
+/// Derivation path for the mediator's X25519 key-agreement key.
+const MEDIATOR_KEY_AGREEMENT_PATH: &str = "m/44'/4'/1'";
+
+/// Derivation path for the admin did:webvh Ed25519 signing/verification key.
+const ADMIN_SIGNING_KEY_PATH: &str = "m/44'/5'/0'";
+
+/// Derivation path for the admin did:webvh X25519 key-agreement key.
+const ADMIN_KEY_AGREEMENT_PATH: &str = "m/44'/5'/1'";
+
+/// Derivation path for the admin did:key Ed25519 key.
+const ADMIN_DID_KEY_PATH: &str = "m/44'/5'/2'";
+
+/// Persist a key as a [`KeyRecord`] in the `"keys"` keyspace.
+async fn save_key_record(
+    keys_ks: &KeyspaceHandle,
+    derivation_path: &str,
+    key_type: SdkKeyType,
+    public_key: &str,
+    label: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let key_id = Uuid::new_v4().to_string();
+    let now = Utc::now();
+    let record = KeyRecord {
+        key_id: key_id.clone(),
+        derivation_path: derivation_path.to_string(),
+        key_type,
+        status: KeyStatus::Active,
+        public_key: public_key.to_string(),
+        label: Some(label.to_string()),
+        created_at: now,
+        updated_at: now,
+    };
+    keys_ks.insert(store_key(&key_id), &record).await?;
+    Ok(key_id)
+}
 
 pub async fn run_setup_wizard(
     config_path: Option<PathBuf>,
@@ -284,8 +324,38 @@ async fn create_admin_did(
 
     match choice {
         0 => {
-            // Generate did:key
-            let (did, private_key_multibase) = generate_did_key();
+            // Derive did:key from BIP-32 seed
+            let root = ExtendedSigningKey::from_seed(seed)
+                .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
+            let dk_path: DerivationPath = ADMIN_DID_KEY_PATH
+                .parse()
+                .map_err(|e| format!("Invalid derivation path: {e}"))?;
+            let dk_derived = root
+                .derive(&dk_path)
+                .map_err(|e| format!("Key derivation failed: {e}"))?;
+
+            let signing_key = SigningKey::from_bytes(dk_derived.signing_key.as_bytes());
+            let public_key = signing_key.verifying_key().to_bytes();
+
+            // Multicodec: ed25519-pub = 0xed, 0x01
+            let mut multicodec = Vec::with_capacity(34);
+            multicodec.extend_from_slice(&[0xed, 0x01]);
+            multicodec.extend_from_slice(&public_key);
+
+            let multibase_pubkey = multibase::encode(Base::Base58Btc, &multicodec);
+            let did = format!("did:key:{multibase_pubkey}");
+            let private_key_multibase =
+                multibase::encode(Base::Base58Btc, dk_derived.signing_key.as_bytes());
+
+            // Save key record
+            save_key_record(
+                keys_ks,
+                ADMIN_DID_KEY_PATH,
+                SdkKeyType::Ed25519,
+                &multibase_pubkey,
+                "Admin did:key",
+            )
+            .await?;
 
             // Build credential bundle (same format as POST /auth/credentials)
             let vta_did_str = vta_did.clone().unwrap_or_default();
@@ -321,12 +391,55 @@ async fn create_admin_did(
             Ok((did, Some(credential)))
         }
         1 => {
-            // Create did:webvh for admin
-            let mut signing_secret = Secret::generate_ed25519(None, None);
-            let ka_secret = Secret::generate_ed25519(None, None);
+            // Create did:webvh for admin with BIP-32 derived keys
+            let root = ExtendedSigningKey::from_seed(seed)
+                .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
+
+            let signing_path: DerivationPath = ADMIN_SIGNING_KEY_PATH
+                .parse()
+                .map_err(|e| format!("Invalid derivation path: {e}"))?;
+            let signing_derived = root
+                .derive(&signing_path)
+                .map_err(|e| format!("Key derivation failed: {e}"))?;
+            let mut signing_secret =
+                Secret::generate_ed25519(None, Some(signing_derived.signing_key.as_bytes()));
+
+            let ka_path: DerivationPath = ADMIN_KEY_AGREEMENT_PATH
+                .parse()
+                .map_err(|e| format!("Invalid derivation path: {e}"))?;
+            let ka_derived = root
+                .derive(&ka_path)
+                .map_err(|e| format!("Key derivation failed: {e}"))?;
+            let ka_secret =
+                Secret::generate_ed25519(None, Some(ka_derived.signing_key.as_bytes()));
             let ka_secret = ka_secret
                 .to_x25519()
                 .map_err(|e| format!("X25519 conversion failed: {e}"))?;
+
+            // Save key records
+            let signing_pub = signing_secret
+                .get_public_keymultibase()
+                .map_err(|e| format!("{e}"))?;
+            save_key_record(
+                keys_ks,
+                ADMIN_SIGNING_KEY_PATH,
+                SdkKeyType::Ed25519,
+                &signing_pub,
+                "Admin signing key",
+            )
+            .await?;
+
+            let ka_pub = ka_secret
+                .get_public_keymultibase()
+                .map_err(|e| format!("{e}"))?;
+            save_key_record(
+                keys_ks,
+                ADMIN_KEY_AGREEMENT_PATH,
+                SdkKeyType::X25519,
+                &ka_pub,
+                "Admin key-agreement key",
+            )
+            .await?;
 
             let did = create_webvh_did(
                 &mut signing_secret,
@@ -396,6 +509,31 @@ async fn create_vta_did(
                 .to_x25519()
                 .map_err(|e| format!("X25519 conversion failed: {e}"))?;
 
+            // Save key records
+            let signing_pub = signing_secret
+                .get_public_keymultibase()
+                .map_err(|e| format!("{e}"))?;
+            save_key_record(
+                keys_ks,
+                VTA_SIGNING_KEY_PATH,
+                SdkKeyType::Ed25519,
+                &signing_pub,
+                "VTA signing key",
+            )
+            .await?;
+
+            let ka_pub = ka_secret
+                .get_public_keymultibase()
+                .map_err(|e| format!("{e}"))?;
+            save_key_record(
+                keys_ks,
+                VTA_KEY_AGREEMENT_PATH,
+                SdkKeyType::X25519,
+                &ka_pub,
+                "VTA key-agreement key",
+            )
+            .await?;
+
             let did = create_webvh_did(
                 &mut signing_secret,
                 Some(&ka_secret),
@@ -437,11 +575,54 @@ async fn configure_messaging(
 
     let mediator_did = match mediator_choice {
         0 => {
-            let mut signing_secret = Secret::generate_ed25519(None, None);
-            let ka_secret = Secret::generate_ed25519(None, None);
+            let root = ExtendedSigningKey::from_seed(seed)
+                .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
+
+            let signing_path: DerivationPath = MEDIATOR_SIGNING_KEY_PATH
+                .parse()
+                .map_err(|e| format!("Invalid derivation path: {e}"))?;
+            let signing_derived = root
+                .derive(&signing_path)
+                .map_err(|e| format!("Key derivation failed: {e}"))?;
+            let mut signing_secret =
+                Secret::generate_ed25519(None, Some(signing_derived.signing_key.as_bytes()));
+
+            let ka_path: DerivationPath = MEDIATOR_KEY_AGREEMENT_PATH
+                .parse()
+                .map_err(|e| format!("Invalid derivation path: {e}"))?;
+            let ka_derived = root
+                .derive(&ka_path)
+                .map_err(|e| format!("Key derivation failed: {e}"))?;
+            let ka_secret =
+                Secret::generate_ed25519(None, Some(ka_derived.signing_key.as_bytes()));
             let ka_secret = ka_secret
                 .to_x25519()
                 .map_err(|e| format!("X25519 conversion failed: {e}"))?;
+
+            // Save key records
+            let signing_pub = signing_secret
+                .get_public_keymultibase()
+                .map_err(|e| format!("{e}"))?;
+            save_key_record(
+                keys_ks,
+                MEDIATOR_SIGNING_KEY_PATH,
+                SdkKeyType::Ed25519,
+                &signing_pub,
+                "Mediator signing key",
+            )
+            .await?;
+
+            let ka_pub = ka_secret
+                .get_public_keymultibase()
+                .map_err(|e| format!("{e}"))?;
+            save_key_record(
+                keys_ks,
+                MEDIATOR_KEY_AGREEMENT_PATH,
+                SdkKeyType::X25519,
+                &ka_pub,
+                "Mediator key-agreement key",
+            )
+            .await?;
 
             create_webvh_did(
                 &mut signing_secret,

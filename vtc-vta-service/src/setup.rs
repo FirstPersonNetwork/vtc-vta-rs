@@ -18,7 +18,7 @@ use url::Url;
 use uuid::Uuid;
 
 use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 
 use crate::acl::{AclEntry, Role, store_acl_entry};
 use crate::config::{
@@ -410,8 +410,7 @@ async fn create_admin_did(
             let ka_derived = root
                 .derive(&ka_path)
                 .map_err(|e| format!("Key derivation failed: {e}"))?;
-            let ka_secret =
-                Secret::generate_ed25519(None, Some(ka_derived.signing_key.as_bytes()));
+            let ka_secret = Secret::generate_ed25519(None, Some(ka_derived.signing_key.as_bytes()));
             let ka_secret = ka_secret
                 .to_x25519()
                 .map_err(|e| format!("X25519 conversion failed: {e}"))?;
@@ -593,8 +592,7 @@ async fn configure_messaging(
             let ka_derived = root
                 .derive(&ka_path)
                 .map_err(|e| format!("Key derivation failed: {e}"))?;
-            let ka_secret =
-                Secret::generate_ed25519(None, Some(ka_derived.signing_key.as_bytes()));
+            let ka_secret = Secret::generate_ed25519(None, Some(ka_derived.signing_key.as_bytes()));
             let ka_secret = ka_secret
                 .to_x25519()
                 .map_err(|e| format!("X25519 conversion failed: {e}"))?;

@@ -4,7 +4,7 @@ use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuil
 use affinidi_tdk::didcomm::{Message, PackEncryptedOptions};
 use affinidi_tdk::secrets_resolver::{SecretsResolver, ThreadedSecretsResolver, secrets::Secret};
 use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use serde::{Deserialize, Serialize};
 
 const SERVICE_NAME: &str = "cnm-cli";
@@ -167,19 +167,22 @@ pub fn status() {
 /// If no credentials are stored, returns an error prompting the user to log in.
 /// If a cached token is still valid (>30s remaining), returns it.
 /// Otherwise, performs a full challenge-response authentication.
-pub async fn ensure_authenticated(
-    base_url: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
+pub async fn ensure_authenticated(base_url: &str) -> Result<String, Box<dyn std::error::Error>> {
     let client_did = keyring_get(KEY_CLIENT_DID).ok_or(
         "Not authenticated.\n\nTo authenticate, import a credential from your VTA administrator:\n  cnm auth login <credential-string>",
     )?;
-    let private_key = keyring_get(KEY_PRIVATE_KEY).ok_or("Credential incomplete: missing private key. Re-import with: cnm auth login <credential>")?;
-    let vta_did = keyring_get(KEY_VTA_DID).ok_or("Credential incomplete: missing VTA DID. Re-import with: cnm auth login <credential>")?;
+    let private_key = keyring_get(KEY_PRIVATE_KEY).ok_or(
+        "Credential incomplete: missing private key. Re-import with: cnm auth login <credential>",
+    )?;
+    let vta_did = keyring_get(KEY_VTA_DID).ok_or(
+        "Credential incomplete: missing VTA DID. Re-import with: cnm auth login <credential>",
+    )?;
 
     // Check cached token
-    if let (Some(token), Some(expires_str)) =
-        (keyring_get(KEY_ACCESS_TOKEN), keyring_get(KEY_ACCESS_EXPIRES_AT))
-    {
+    if let (Some(token), Some(expires_str)) = (
+        keyring_get(KEY_ACCESS_TOKEN),
+        keyring_get(KEY_ACCESS_EXPIRES_AT),
+    ) {
         if let Ok(expires_at) = expires_str.parse::<u64>() {
             if now_epoch() + 30 < expires_at {
                 return Ok(token);
@@ -188,8 +191,7 @@ pub async fn ensure_authenticated(
     }
 
     // Full challenge-response
-    let result =
-        do_challenge_response(base_url, &client_did, &private_key, &vta_did).await?;
+    let result = do_challenge_response(base_url, &client_did, &private_key, &vta_did).await?;
     cache_token(&result.access_token, result.access_expires_at)?;
 
     Ok(result.access_token)

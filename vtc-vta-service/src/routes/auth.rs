@@ -3,7 +3,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use base64::Engine;
-use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -113,10 +113,14 @@ pub async fn authenticate(
         .ok_or_else(|| AppError::Authentication("JWT keys not configured".into()))?;
 
     // Unpack the DIDComm message
-    let (msg, _metadata) =
-        Message::unpack_string(&body, did_resolver, secrets_resolver.as_ref(), &UnpackOptions::default())
-            .await
-            .map_err(|e| AppError::Authentication(format!("failed to unpack message: {e}")))?;
+    let (msg, _metadata) = Message::unpack_string(
+        &body,
+        did_resolver,
+        secrets_resolver.as_ref(),
+        &UnpackOptions::default(),
+    )
+    .await
+    .map_err(|e| AppError::Authentication(format!("failed to unpack message: {e}")))?;
 
     // Validate message type
     if msg.type_ != "https://affinidi.com/atm/1.0/authenticate" {
@@ -241,10 +245,14 @@ pub async fn refresh(
         .ok_or_else(|| AppError::Authentication("JWT keys not configured".into()))?;
 
     // Unpack the DIDComm message
-    let (msg, _metadata) =
-        Message::unpack_string(&body, did_resolver, secrets_resolver.as_ref(), &UnpackOptions::default())
-            .await
-            .map_err(|e| AppError::Authentication(format!("failed to unpack message: {e}")))?;
+    let (msg, _metadata) = Message::unpack_string(
+        &body,
+        did_resolver,
+        secrets_resolver.as_ref(),
+        &UnpackOptions::default(),
+    )
+    .await
+    .map_err(|e| AppError::Authentication(format!("failed to unpack message: {e}")))?;
 
     // Validate message type
     if msg.type_ != "https://affinidi.com/atm/1.0/authenticate/refresh" {
@@ -270,9 +278,7 @@ pub async fn refresh(
         .ok_or_else(|| AppError::Authentication("session not found".into()))?;
 
     if session.state != SessionState::Authenticated {
-        return Err(AppError::Authentication(
-            "session not authenticated".into(),
-        ));
+        return Err(AppError::Authentication("session not authenticated".into()));
     }
 
     // Verify refresh token hasn't expired

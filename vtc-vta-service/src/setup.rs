@@ -252,6 +252,9 @@ pub async fn run_setup_wizard(
     store_acl_entry(&acl_ks, &admin_entry).await?;
     eprintln!("  Admin DID added to ACL: {admin_did}");
 
+    // Flush all store writes to disk before exiting
+    store.persist().await?;
+
     // 14. Save config
     let config = AppConfig {
         vta_did,

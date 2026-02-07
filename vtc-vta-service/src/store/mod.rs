@@ -131,6 +131,14 @@ impl KeyspaceHandle {
         .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))?
     }
 
+    /// Returns the approximate number of items in the keyspace.
+    pub async fn approximate_len(&self) -> Result<usize, AppError> {
+        let ks = self.keyspace.clone();
+        Ok(tokio::task::spawn_blocking(move || ks.approximate_len())
+            .await
+            .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))?)
+    }
+
     /// Atomically check that `new_key` doesn't exist, insert `value` at `new_key`,
     /// and remove `old_key` in a single blocking operation.
     pub async fn swap<V: Serialize>(
@@ -153,5 +161,158 @@ impl KeyspaceHandle {
         })
         .await
         .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))?
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keys::{KeyRecord, KeyStatus, KeyType};
+    use chrono::Utc;
+
+    fn temp_store() -> (Store, tempfile::TempDir) {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let config = StoreConfig {
+            data_dir: dir.path().to_path_buf(),
+        };
+        let store = Store::open(&config).expect("failed to open store");
+        (store, dir)
+    }
+
+    fn make_key_record(id: &str, label: &str, path: &str) -> KeyRecord {
+        let now = Utc::now();
+        KeyRecord {
+            key_id: id.to_string(),
+            derivation_path: path.to_string(),
+            key_type: KeyType::Ed25519,
+            status: KeyStatus::Active,
+            public_key: format!("z6Mk{id}"),
+            label: Some(label.to_string()),
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_prefix_iter_returns_all_keys() {
+        let (store, _dir) = temp_store();
+        let ks = store.keyspace("keys").unwrap();
+
+        // Insert 5 keys (matching typical setup)
+        let keys = vec![
+            ("id-1", "Mediator signing key", "m/44'/4'/0'"),
+            ("id-2", "Mediator key-agreement key", "m/44'/4'/1'"),
+            ("id-3", "VTA signing key", "m/44'/0'/0'"),
+            ("id-4", "VTA key-agreement key", "m/44'/0'/1'"),
+            ("id-5", "Admin did:key", "m/44'/5'/2'"),
+        ];
+
+        for (id, label, path) in &keys {
+            let record = make_key_record(id, label, path);
+            let store_key = format!("key:{id}");
+            ks.insert(store_key, &record).await.unwrap();
+        }
+
+        // Prefix scan should return all 5
+        let raw = ks.prefix_iter_raw("key:").await.unwrap();
+        assert_eq!(
+            raw.len(),
+            5,
+            "expected 5 entries from prefix scan, got {}",
+            raw.len()
+        );
+
+        // Verify each is deserializable
+        for (_key, value) in &raw {
+            let _record: KeyRecord = serde_json::from_slice(value).unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn test_prefix_iter_after_persist_and_reopen() {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let data_dir = dir.path().to_path_buf();
+
+        // Phase 1: write keys and persist (simulates setup)
+        {
+            let config = StoreConfig {
+                data_dir: data_dir.clone(),
+            };
+            let store = Store::open(&config).unwrap();
+            let ks = store.keyspace("keys").unwrap();
+
+            for i in 0..5 {
+                let id = format!("key-{i}");
+                let record = make_key_record(&id, &format!("Key {i}"), &format!("m/44'/0'/{i}'"));
+                ks.insert(format!("key:{id}"), &record).await.unwrap();
+            }
+
+            store.persist().await.unwrap();
+            // Store is dropped here
+        }
+
+        // Phase 2: reopen database and verify keys survive (simulates server start)
+        {
+            let config = StoreConfig {
+                data_dir: data_dir.clone(),
+            };
+            let store = Store::open(&config).unwrap();
+            let ks = store.keyspace("keys").unwrap();
+
+            let raw = ks.prefix_iter_raw("key:").await.unwrap();
+            assert_eq!(
+                raw.len(),
+                5,
+                "expected 5 entries after reopen, got {}",
+                raw.len()
+            );
+
+            // Verify approximate_len is reasonable
+            let approx = ks.approximate_len().await.unwrap();
+            assert!(
+                approx >= 5,
+                "approximate_len should be >= 5, got {approx}"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn test_prefix_iter_without_persist() {
+        let dir = tempfile::tempdir().expect("failed to create temp dir");
+        let data_dir = dir.path().to_path_buf();
+
+        // Phase 1: write keys WITHOUT persist (simulates old setup bug)
+        {
+            let config = StoreConfig {
+                data_dir: data_dir.clone(),
+            };
+            let store = Store::open(&config).unwrap();
+            let ks = store.keyspace("keys").unwrap();
+
+            for i in 0..5 {
+                let id = format!("key-{i}");
+                let record = make_key_record(&id, &format!("Key {i}"), &format!("m/44'/0'/{i}'"));
+                ks.insert(format!("key:{id}"), &record).await.unwrap();
+            }
+
+            // NO persist call - store is dropped
+        }
+
+        // Phase 2: reopen and check what survived
+        {
+            let config = StoreConfig {
+                data_dir: data_dir.clone(),
+            };
+            let store = Store::open(&config).unwrap();
+            let ks = store.keyspace("keys").unwrap();
+
+            let raw = ks.prefix_iter_raw("key:").await.unwrap();
+            // Without persist, some or all keys may be lost.
+            // This test documents the behavior.
+            println!(
+                "Without persist: {} of 5 keys survived reopen",
+                raw.len()
+            );
+        }
     }
 }

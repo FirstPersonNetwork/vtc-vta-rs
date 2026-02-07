@@ -5,7 +5,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use tracing::info;
+use tracing::{debug, info};
 
 use crate::auth::{AdminAuth, AuthClaims};
 use crate::error::AppError;
@@ -197,7 +197,14 @@ pub async fn list_keys(
     Query(query): Query<ListKeysQuery>,
 ) -> Result<Json<ListKeysResponse>, AppError> {
     let keys = state.store.keyspace("keys")?;
+    let approx_len = keys.approximate_len().await?;
     let raw = keys.prefix_iter_raw("key:").await?;
+
+    debug!(
+        approx_keyspace_len = approx_len,
+        prefix_scan_results = raw.len(),
+        "keys list: scanning keyspace"
+    );
 
     let mut records: Vec<KeyRecord> = Vec::with_capacity(raw.len());
     for (_key, value) in raw {

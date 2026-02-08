@@ -45,6 +45,45 @@ pub struct CreateKeyRequest {
     pub mnemonic: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_id: Option<String>,
+}
+
+// ── Context types ───────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct CreateContextRequest {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateContextRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub did: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ContextResponse {
+    pub id: String,
+    pub name: String,
+    pub did: Option<String>,
+    pub description: Option<String>,
+    pub base_path: String,
+    pub index: u32,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ContextListResponse {
+    pub contexts: Vec<ContextResponse>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -220,6 +259,76 @@ impl VtaClient {
             .json(&body);
         let resp = self.with_auth(req).send().await?;
         Self::handle_response(resp).await
+    }
+
+    // ── Context methods ──────────────────────────────────────────────
+
+    /// GET /contexts
+    pub async fn list_contexts(&self) -> Result<ContextListResponse, Box<dyn std::error::Error>> {
+        let req = self.client.get(format!("{}/contexts", self.base_url));
+        let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// GET /contexts/{id}
+    pub async fn get_context(
+        &self,
+        id: &str,
+    ) -> Result<ContextResponse, Box<dyn std::error::Error>> {
+        let req = self
+            .client
+            .get(format!("{}/contexts/{}", self.base_url, encode_path_segment(id)));
+        let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// POST /contexts
+    pub async fn create_context(
+        &self,
+        req: CreateContextRequest,
+    ) -> Result<ContextResponse, Box<dyn std::error::Error>> {
+        let r = self
+            .client
+            .post(format!("{}/contexts", self.base_url))
+            .json(&req);
+        let resp = self.with_auth(r).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// PATCH /contexts/{id}
+    pub async fn update_context(
+        &self,
+        id: &str,
+        req: UpdateContextRequest,
+    ) -> Result<ContextResponse, Box<dyn std::error::Error>> {
+        let r = self
+            .client
+            .patch(format!("{}/contexts/{}", self.base_url, encode_path_segment(id)))
+            .json(&req);
+        let resp = self.with_auth(r).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// DELETE /contexts/{id}
+    pub async fn delete_context(
+        &self,
+        id: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let req = self
+            .client
+            .delete(format!("{}/contexts/{}", self.base_url, encode_path_segment(id)));
+        let resp = self.with_auth(req).send().await?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let body = resp
+                .json::<ErrorResponse>()
+                .await
+                .map(|e| e.error)
+                .unwrap_or_else(|_| "unknown error".to_string());
+            Err(format!("{status}: {body}").into())
+        }
     }
 
     async fn handle_response<T: serde::de::DeserializeOwned>(

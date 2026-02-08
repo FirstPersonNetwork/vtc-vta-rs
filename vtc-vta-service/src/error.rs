@@ -44,6 +44,9 @@ pub enum AppError {
 
     #[error("forbidden: {0}")]
     Forbidden(String),
+
+    #[error("validation error: {0}")]
+    Validation(String),
 }
 
 impl IntoResponse for AppError {
@@ -62,6 +65,7 @@ impl IntoResponse for AppError {
             AppError::Authentication(_) => StatusCode::UNAUTHORIZED,
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
+            AppError::Validation(_) => StatusCode::BAD_REQUEST,
         };
 
         if status.is_server_error() {

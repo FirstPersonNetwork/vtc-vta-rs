@@ -10,7 +10,7 @@ use uuid::Uuid;
 use affinidi_tdk::didcomm::Message;
 use affinidi_tdk::didcomm::UnpackOptions;
 
-use crate::acl::{AclEntry, Role, check_acl, store_acl_entry};
+use crate::acl::{AclEntry, Role, check_acl, check_acl_full, store_acl_entry};
 use crate::auth::credentials::generate_did_key;
 use crate::auth::extractor::{AdminAuth, AuthClaims, ManageAuth};
 use crate::auth::jwt::JwtKeys;
@@ -167,9 +167,9 @@ pub async fn authenticate(
         return Err(AppError::Authentication("DID mismatch".into()));
     }
 
-    // Look up ACL entry to get role for the token
+    // Look up ACL entry to get role and allowed contexts for the token
     let acl = state.acl_ks.clone();
-    let role = check_acl(&acl, &session.did).await?;
+    let (role, allowed_contexts) = check_acl_full(&acl, &session.did).await?;
 
     // Generate tokens
     let config = state.config.read().await;
@@ -181,6 +181,7 @@ pub async fn authenticate(
         session.did.clone(),
         session.session_id.clone(),
         role.to_string(),
+        allowed_contexts,
         access_expiry,
     );
     let access_expires_at = claims.exp;
@@ -288,9 +289,9 @@ pub async fn refresh(
         }
     }
 
-    // Look up current ACL role (propagates role changes at refresh time)
+    // Look up current ACL role and contexts (propagates changes at refresh time)
     let acl = state.acl_ks.clone();
-    let role = check_acl(&acl, &session.did).await?;
+    let (role, allowed_contexts) = check_acl_full(&acl, &session.did).await?;
 
     // Generate new access token
     let config = state.config.read().await;
@@ -301,6 +302,7 @@ pub async fn refresh(
         session.did.clone(),
         session.session_id.clone(),
         role.to_string(),
+        allowed_contexts,
         access_expiry,
     );
     let access_expires_at = claims.exp;
@@ -323,6 +325,8 @@ pub async fn refresh(
 pub struct GenerateCredentialsRequest {
     pub role: Role,
     pub label: Option<String>,
+    #[serde(default)]
+    pub allowed_contexts: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -362,6 +366,7 @@ pub async fn generate_credentials(
         did: did.clone(),
         role: req.role.clone(),
         label: req.label,
+        allowed_contexts: req.allowed_contexts,
         created_at: now_epoch(),
         created_by: auth.0.did,
     };

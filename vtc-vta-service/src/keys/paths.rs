@@ -1,21 +1,6 @@
 use crate::error::AppError;
 use crate::store::KeyspaceHandle;
 
-/// VTA entity keys: signing, key-agreement, pre-rotation, etc.
-pub const VTA_KEY_BASE: &str = "m/26'/0'";
-
-/// Admin keys: signing, key-agreement, did:key, etc.
-pub const ADMIN_KEY_BASE: &str = "m/26'/1'";
-
-/// External applications (reserved base).
-pub const EXTERNAL_APP_BASE: &str = "m/26'/2'";
-
-/// DIDComm Messaging Mediator keys.
-pub const MEDIATOR_KEY_BASE: &str = "m/26'/2'/1'";
-
-/// Trust Registry keys (placeholder).
-pub const TRUST_REGISTRY_KEY_BASE: &str = "m/26'/2'/2'";
-
 /// Construct a full derivation path from a base and index.
 pub fn path_at(base: &str, index: u32) -> String {
     format!("{base}/{index}'")

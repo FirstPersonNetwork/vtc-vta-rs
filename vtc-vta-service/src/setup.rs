@@ -22,7 +22,8 @@ use crate::acl::{AclEntry, Role, store_acl_entry};
 use crate::config::{
     AppConfig, AuthConfig, LogConfig, LogFormat, MessagingConfig, ServerConfig, StoreConfig,
 };
-use crate::keys::paths::*;
+use crate::contexts::{ContextRecord, allocate_context_index, store_context};
+use crate::keys::paths::allocate_path;
 use crate::keys::seed_store::KeyringSeedStore;
 use crate::keys::{KeyRecord, KeyStatus, KeyType as SdkKeyType, store_key};
 use crate::store::{KeyspaceHandle, Store};
@@ -55,6 +56,7 @@ async fn save_key_record(
     key_type: SdkKeyType,
     public_key: &str,
     label: &str,
+    context_id: Option<&str>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let now = Utc::now();
     let record = KeyRecord {
@@ -64,6 +66,7 @@ async fn save_key_record(
         status: KeyStatus::Active,
         public_key: public_key.to_string(),
         label: Some(label.to_string()),
+        context_id: context_id.map(String::from),
         created_at: now,
         updated_at: now,
     };
@@ -142,6 +145,7 @@ async fn save_entity_key_records(
     did: &str,
     derived: &DerivedEntityKeys,
     keys_ks: &KeyspaceHandle,
+    context_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     save_key_record(
         keys_ks,
@@ -150,6 +154,7 @@ async fn save_entity_key_records(
         SdkKeyType::Ed25519,
         &derived.signing_pub,
         &derived.signing_label,
+        Some(context_id),
     )
     .await?;
     save_key_record(
@@ -159,21 +164,50 @@ async fn save_entity_key_records(
         SdkKeyType::X25519,
         &derived.ka_pub,
         &derived.ka_label,
+        Some(context_id),
     )
     .await?;
     Ok(())
 }
 
-/// Derive the admin did:key Ed25519 key from the BIP-32 seed using a
-/// counter-allocated path under `ADMIN_KEY_BASE`, store it as a
-/// [`KeyRecord`], and return `(did, private_key_multibase)`.
+/// Create a seed application context and store it.
+async fn create_seed_context(
+    contexts_ks: &KeyspaceHandle,
+    id: &str,
+    name: &str,
+) -> Result<ContextRecord, Box<dyn std::error::Error>> {
+    let (index, base_path) = allocate_context_index(contexts_ks)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    let now = Utc::now();
+    let record = ContextRecord {
+        id: id.to_string(),
+        name: name.to_string(),
+        did: None,
+        description: None,
+        base_path,
+        index,
+        created_at: now,
+        updated_at: now,
+    };
+    store_context(contexts_ks, &record)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    Ok(record)
+}
+
+/// Derive an admin did:key Ed25519 key from the BIP-32 seed using a
+/// counter-allocated path under `base`, store it as a [`KeyRecord`],
+/// and return `(did, private_key_multibase)`.
 ///
 /// The key_id uses the standard did:key fragment format: `{did}#{multibase_pubkey}`.
 async fn derive_and_store_did_key(
     seed: &[u8],
+    base: &str,
+    context_id: &str,
     keys_ks: &KeyspaceHandle,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
-    let dk_path = allocate_path(keys_ks, ADMIN_KEY_BASE)
+    let dk_path = allocate_path(keys_ks, base)
         .await
         .map_err(|e| format!("{e}"))?;
 
@@ -201,6 +235,7 @@ async fn derive_and_store_did_key(
         SdkKeyType::Ed25519,
         &multibase_pubkey,
         "Admin did:key",
+        Some(context_id),
     )
     .await?;
 
@@ -301,6 +336,14 @@ pub async fn run_setup_wizard(
         data_dir: PathBuf::from(&data_dir),
     })?;
     let keys_ks = store.keyspace("keys")?;
+    let contexts_ks = store.keyspace("contexts")?;
+
+    // Create seed application contexts
+    let vta_ctx = create_seed_context(&contexts_ks, "vta", "Verified Trust Agent").await?;
+    let med_ctx =
+        create_seed_context(&contexts_ks, "mediator", "DIDComm Messaging Mediator").await?;
+    let _tr_ctx = create_seed_context(&contexts_ks, "trust-registry", "Trust Registry").await?;
+    eprintln!("  Created application contexts: vta, mediator, trust-registry");
 
     // 10. BIP-39 mnemonic
     let mnemonic_options = &["Generate new 24-word mnemonic", "Import existing mnemonic"];
@@ -360,19 +403,21 @@ pub async fn run_setup_wizard(
     let jwt_signing_key = BASE64.encode(jwt_key_bytes);
 
     // 12. DIDComm messaging (with mediator DID creation)
-    let messaging = configure_messaging(&seed, &keys_ks).await?;
+    let messaging = configure_messaging(&seed, &med_ctx.base_path, &keys_ks).await?;
 
     // 13. VTA DID (after mediator so we can embed it as a service endpoint)
-    let vta_did = create_vta_did(&seed, &messaging, &keys_ks).await?;
+    let vta_did = create_vta_did(&seed, &messaging, &vta_ctx.base_path, &keys_ks).await?;
 
     // 14. Bootstrap admin DID in ACL
-    let (admin_did, admin_credential) = create_admin_did(&seed, &vta_did, &keys_ks).await?;
+    let (admin_did, admin_credential) =
+        create_admin_did(&seed, &vta_did, &vta_ctx.base_path, &keys_ks).await?;
 
     let acl_ks = store.keyspace("acl")?;
     let admin_entry = AclEntry {
         did: admin_did.clone(),
         role: Role::Admin,
         label: Some("Initial admin".into()),
+        allowed_contexts: vec![],
         created_at: std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -423,6 +468,8 @@ pub async fn run_setup_wizard(
         eprintln!("  Mediator DID: {}", msg.mediator_did);
         eprintln!("  Mediator URL: {}", msg.mediator_url);
     }
+    eprintln!("  Contexts: vta ({}), mediator ({}), trust-registry ({})",
+        vta_ctx.base_path, med_ctx.base_path, _tr_ctx.base_path);
     eprintln!("  Admin DID: {admin_did}");
     if let Some(cred) = &admin_credential {
         eprintln!();
@@ -445,6 +492,7 @@ pub async fn run_setup_wizard(
 async fn create_admin_did(
     seed: &[u8],
     vta_did: &Option<String>,
+    vta_base_path: &str,
     keys_ks: &KeyspaceHandle,
 ) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
     let admin_options = &[
@@ -460,7 +508,8 @@ async fn create_admin_did(
 
     match choice {
         0 => {
-            let (did, private_key_multibase) = derive_and_store_did_key(seed, keys_ks).await?;
+            let (did, private_key_multibase) =
+                derive_and_store_did_key(seed, vta_base_path, "vta", keys_ks).await?;
 
             // Build credential bundle (same format as POST /auth/credentials)
             let vta_did_str = vta_did.clone().unwrap_or_default();
@@ -498,7 +547,7 @@ async fn create_admin_did(
         1 => {
             let mut derived = derive_entity_keys(
                 seed,
-                ADMIN_KEY_BASE,
+                vta_base_path,
                 "Admin signing key",
                 "Admin key-agreement key",
                 keys_ks,
@@ -510,7 +559,8 @@ async fn create_admin_did(
                 "admin",
                 None,
                 seed,
-                ADMIN_KEY_BASE,
+                vta_base_path,
+                "vta",
                 keys_ks,
             )
             .await?;
@@ -523,16 +573,16 @@ async fn create_admin_did(
             // Store admin entity keys with the imported DID
             let derived = derive_entity_keys(
                 seed,
-                ADMIN_KEY_BASE,
+                vta_base_path,
                 "Admin signing key",
                 "Admin key-agreement key",
                 keys_ks,
             )
             .await?;
-            save_entity_key_records(&did, &derived, keys_ks).await?;
+            save_entity_key_records(&did, &derived, keys_ks, "vta").await?;
 
             // Also derive and store the did:key
-            let _ = derive_and_store_did_key(seed, keys_ks).await?;
+            let _ = derive_and_store_did_key(seed, vta_base_path, "vta", keys_ks).await?;
 
             Ok((did, None))
         }
@@ -548,6 +598,7 @@ async fn create_admin_did(
 async fn create_vta_did(
     seed: &[u8],
     messaging: &MessagingConfig,
+    vta_base_path: &str,
     keys_ks: &KeyspaceHandle,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
     let did_options = &[
@@ -565,16 +616,23 @@ async fn create_vta_did(
         0 => {
             let mut derived = derive_entity_keys(
                 seed,
-                VTA_KEY_BASE,
+                vta_base_path,
                 "VTA signing key",
                 "VTA key-agreement key",
                 keys_ks,
             )
             .await?;
 
-            let did =
-                create_webvh_did(&mut derived, "VTA", Some(messaging), seed, VTA_KEY_BASE, keys_ks)
-                    .await?;
+            let did = create_webvh_did(
+                &mut derived,
+                "VTA",
+                Some(messaging),
+                seed,
+                vta_base_path,
+                "vta",
+                keys_ks,
+            )
+            .await?;
             Ok(Some(did))
         }
         1 => {
@@ -582,13 +640,13 @@ async fn create_vta_did(
 
             let derived = derive_entity_keys(
                 seed,
-                VTA_KEY_BASE,
+                vta_base_path,
                 "VTA signing key",
                 "VTA key-agreement key",
                 keys_ks,
             )
             .await?;
-            save_entity_key_records(&did, &derived, keys_ks).await?;
+            save_entity_key_records(&did, &derived, keys_ks, "vta").await?;
 
             Ok(Some(did))
         }
@@ -601,6 +659,7 @@ async fn create_vta_did(
 /// Offers to create a new mediator DID or enter an existing one.
 async fn configure_messaging(
     seed: &[u8],
+    mediator_base_path: &str,
     keys_ks: &KeyspaceHandle,
 ) -> Result<MessagingConfig, Box<dyn std::error::Error>> {
     let mediator_url: String = Input::new().with_prompt("Mediator URL").interact_text()?;
@@ -619,7 +678,7 @@ async fn configure_messaging(
         0 => {
             let mut derived = derive_entity_keys(
                 seed,
-                MEDIATOR_KEY_BASE,
+                mediator_base_path,
                 "Mediator signing key",
                 "Mediator key-agreement key",
                 keys_ks,
@@ -631,7 +690,8 @@ async fn configure_messaging(
                 "mediator",
                 None,
                 seed,
-                MEDIATOR_KEY_BASE,
+                mediator_base_path,
+                "mediator",
                 keys_ks,
             )
             .await?
@@ -641,13 +701,13 @@ async fn configure_messaging(
 
             let derived = derive_entity_keys(
                 seed,
-                MEDIATOR_KEY_BASE,
+                mediator_base_path,
                 "Mediator signing key",
                 "Mediator key-agreement key",
                 keys_ks,
             )
             .await?;
-            save_entity_key_records(&did, &derived, keys_ks).await?;
+            save_entity_key_records(&did, &derived, keys_ks, "mediator").await?;
 
             did
         }
@@ -802,6 +862,7 @@ async fn create_webvh_did(
     messaging: Option<&MessagingConfig>,
     seed: &[u8],
     base: &str,
+    context_id: &str,
     keys_ks: &KeyspaceHandle,
 ) -> Result<String, Box<dyn std::error::Error>> {
     // Prompt for URL and convert to WebVHURL
@@ -913,7 +974,7 @@ async fn create_webvh_did(
     eprintln!("\x1b[1;32mCreated DID:\x1b[0m {final_did}");
 
     // Save key records now that we have the final DID
-    save_entity_key_records(&final_did, derived, keys_ks).await?;
+    save_entity_key_records(&final_did, derived, keys_ks, context_id).await?;
 
     // Save pre-rotation key records
     for (i, pk) in pre_rotation_keys.iter().enumerate() {
@@ -924,6 +985,7 @@ async fn create_webvh_did(
             SdkKeyType::Ed25519,
             &pk.public_key,
             &pk.label,
+            Some(context_id),
         )
         .await?;
     }

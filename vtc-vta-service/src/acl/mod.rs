@@ -42,6 +42,8 @@ pub struct AclEntry {
     pub did: String,
     pub role: Role,
     pub label: Option<String>,
+    #[serde(default)]
+    pub allowed_contexts: Vec<String>,
     pub created_at: u64,
     pub created_by: String,
 }
@@ -88,5 +90,18 @@ pub async fn check_acl(acl: &KeyspaceHandle, did: &str) -> Result<Role, AppError
         None => Err(AppError::Forbidden(format!(
             "DID not in ACL: {did}"
         ))),
+    }
+}
+
+/// Check whether a DID is in the ACL and return its role and allowed contexts.
+///
+/// Returns `Forbidden` if the DID is not found.
+pub async fn check_acl_full(
+    acl: &KeyspaceHandle,
+    did: &str,
+) -> Result<(Role, Vec<String>), AppError> {
+    match get_acl_entry(acl, did).await? {
+        Some(entry) => Ok((entry.role, entry.allowed_contexts)),
+        None => Err(AppError::Forbidden(format!("DID not in ACL: {did}"))),
     }
 }

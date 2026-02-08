@@ -2,7 +2,9 @@ mod auth;
 mod client;
 
 use clap::{Parser, Subcommand};
-use client::{CreateKeyRequest, UpdateConfigRequest, VtaClient};
+use client::{
+    CreateContextRequest, CreateKeyRequest, UpdateConfigRequest, UpdateContextRequest, VtaClient,
+};
 use ratatui::{
     layout::Constraint,
     style::{Color, Modifier, Style},
@@ -44,6 +46,12 @@ enum Commands {
         #[command(subcommand)]
         command: KeyCommands,
     },
+
+    /// Application context management
+    Contexts {
+        #[command(subcommand)]
+        command: ContextCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -78,6 +86,48 @@ enum ConfigCommands {
 }
 
 #[derive(Subcommand)]
+enum ContextCommands {
+    /// List all application contexts
+    List,
+    /// Get a context by ID
+    Get {
+        /// Context ID (e.g. "vta", "mediator")
+        id: String,
+    },
+    /// Create a new application context
+    Create {
+        /// Context slug (lowercase alphanumeric + hyphens)
+        #[arg(long)]
+        id: String,
+        /// Human-readable name
+        #[arg(long)]
+        name: String,
+        /// Optional description
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Update an existing context
+    Update {
+        /// Context ID
+        id: String,
+        /// New name
+        #[arg(long)]
+        name: Option<String>,
+        /// Set the DID for this context
+        #[arg(long)]
+        did: Option<String>,
+        /// New description
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Delete an application context
+    Delete {
+        /// Context ID
+        id: String,
+    },
+}
+
+#[derive(Subcommand)]
 enum KeyCommands {
     /// Create a new key
     Create {
@@ -93,6 +143,9 @@ enum KeyCommands {
         /// Human-readable label
         #[arg(long)]
         label: Option<String>,
+        /// Application context ID
+        #[arg(long)]
+        context_id: Option<String>,
     },
     /// Get a key by ID
     Get {
@@ -195,13 +248,33 @@ async fn main() {
                 cmd_config_update(&client, vta_did, community_name, community_description).await
             }
         },
+        Commands::Contexts { command } => match command {
+            ContextCommands::List => cmd_context_list(&client).await,
+            ContextCommands::Get { id } => cmd_context_get(&client, &id).await,
+            ContextCommands::Create {
+                id,
+                name,
+                description,
+            } => cmd_context_create(&client, &id, &name, description).await,
+            ContextCommands::Update {
+                id,
+                name,
+                did,
+                description,
+            } => cmd_context_update(&client, &id, name, did, description).await,
+            ContextCommands::Delete { id } => cmd_context_delete(&client, &id).await,
+        },
         Commands::Keys { command } => match command {
             KeyCommands::Create {
                 key_type,
                 derivation_path,
                 mnemonic,
                 label,
-            } => cmd_key_create(&client, &key_type, &derivation_path, mnemonic, label).await,
+                context_id,
+            } => {
+                cmd_key_create(&client, &key_type, &derivation_path, mnemonic, label, context_id)
+                    .await
+            }
             KeyCommands::Get { key_id } => cmd_key_get(&client, &key_id).await,
             KeyCommands::Revoke { key_id } => cmd_key_revoke(&client, &key_id).await,
             KeyCommands::Rename { key_id, new_key_id } => {
@@ -279,6 +352,7 @@ async fn cmd_key_create(
     derivation_path: &str,
     mnemonic: Option<String>,
     label: Option<String>,
+    context_id: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let key_type = match key_type {
         "ed25519" => KeyType::Ed25519,
@@ -291,6 +365,7 @@ async fn cmd_key_create(
         key_id: None,
         mnemonic,
         label,
+        context_id,
     };
     let resp = client.create_key(req).await?;
     println!("Key created:");
@@ -430,5 +505,151 @@ async fn cmd_key_list(
     ratatui::restore();
     println!();
 
+    Ok(())
+}
+
+// ── Context commands ────────────────────────────────────────────────
+
+async fn cmd_context_list(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>> {
+    let resp = client.list_contexts().await?;
+
+    if resp.contexts.is_empty() {
+        println!("No contexts found.");
+        return Ok(());
+    }
+
+    let header_style = Style::default()
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD);
+    let header = Row::new(vec!["ID", "Name", "DID", "Base Path", "Index", "Created"])
+        .style(header_style)
+        .bottom_margin(1);
+
+    let rows: Vec<Row> = resp
+        .contexts
+        .iter()
+        .map(|ctx| {
+            let did = ctx.did.clone().unwrap_or_else(|| "\u{2014}".into());
+            let created = ctx.created_at.format("%Y-%m-%d").to_string();
+
+            Row::new(vec![
+                Cell::from(ctx.id.clone()),
+                Cell::from(ctx.name.clone()),
+                Cell::from(did).style(Style::default().fg(Color::DarkGray)),
+                Cell::from(ctx.base_path.clone()),
+                Cell::from(ctx.index.to_string()),
+                Cell::from(created),
+            ])
+        })
+        .collect();
+
+    let title = format!(" Contexts ({}) ", resp.contexts.len());
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(16),    // ID
+            Constraint::Min(20),       // Name
+            Constraint::Length(30),     // DID
+            Constraint::Length(16),     // Base Path
+            Constraint::Length(7),      // Index
+            Constraint::Length(10),     // Created
+        ],
+    )
+    .header(header)
+    .column_spacing(2)
+    .block(
+        Block::bordered()
+            .title(title)
+            .border_style(Style::default().fg(Color::DarkGray)),
+    );
+
+    let height = resp.contexts.len() as u16 + 4;
+    let mut terminal = ratatui::init_with_options(TerminalOptions {
+        viewport: Viewport::Inline(height),
+    });
+    terminal.draw(|frame| frame.render_widget(table, frame.area()))?;
+    ratatui::restore();
+    println!();
+
+    Ok(())
+}
+
+async fn cmd_context_get(
+    client: &VtaClient,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let resp = client.get_context(id).await?;
+    println!("ID:          {}", resp.id);
+    println!("Name:        {}", resp.name);
+    println!(
+        "DID:         {}",
+        resp.did.as_deref().unwrap_or("(not set)")
+    );
+    println!(
+        "Description: {}",
+        resp.description.as_deref().unwrap_or("(not set)")
+    );
+    println!("Base Path:   {}", resp.base_path);
+    println!("Index:       {}", resp.index);
+    println!("Created At:  {}", resp.created_at);
+    println!("Updated At:  {}", resp.updated_at);
+    Ok(())
+}
+
+async fn cmd_context_create(
+    client: &VtaClient,
+    id: &str,
+    name: &str,
+    description: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let req = CreateContextRequest {
+        id: id.to_string(),
+        name: name.to_string(),
+        description,
+    };
+    let resp = client.create_context(req).await?;
+    println!("Context created:");
+    println!("  ID:        {}", resp.id);
+    println!("  Name:      {}", resp.name);
+    println!("  Base Path: {}", resp.base_path);
+    println!("  Index:     {}", resp.index);
+    Ok(())
+}
+
+async fn cmd_context_update(
+    client: &VtaClient,
+    id: &str,
+    name: Option<String>,
+    did: Option<String>,
+    description: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let req = UpdateContextRequest {
+        name,
+        did,
+        description,
+    };
+    let resp = client.update_context(id, req).await?;
+    println!("Context updated:");
+    println!("  ID:          {}", resp.id);
+    println!("  Name:        {}", resp.name);
+    println!(
+        "  DID:         {}",
+        resp.did.as_deref().unwrap_or("(not set)")
+    );
+    println!(
+        "  Description: {}",
+        resp.description.as_deref().unwrap_or("(not set)")
+    );
+    println!("  Updated At:  {}", resp.updated_at);
+    Ok(())
+}
+
+async fn cmd_context_delete(
+    client: &VtaClient,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    client.delete_context(id).await?;
+    println!("Context deleted: {id}");
     Ok(())
 }

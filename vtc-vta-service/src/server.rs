@@ -28,6 +28,7 @@ pub struct AppState {
     pub keys_ks: KeyspaceHandle,
     pub sessions_ks: KeyspaceHandle,
     pub acl_ks: KeyspaceHandle,
+    pub contexts_ks: KeyspaceHandle,
     pub config: Arc<RwLock<AppConfig>>,
     pub seed_store: Arc<KeyringSeedStore>,
     pub did_resolver: Option<DIDCacheClient>,
@@ -47,6 +48,7 @@ pub async fn run(
     let keys_ks = store.keyspace("keys")?;
     let sessions_ks = store.keyspace("sessions")?;
     let acl_ks = store.keyspace("acl")?;
+    let contexts_ks = store.keyspace("contexts")?;
 
     // Initialize auth infrastructure
     let (did_resolver, secrets_resolver, jwt_keys) =
@@ -59,6 +61,7 @@ pub async fn run(
         keys_ks,
         sessions_ks,
         acl_ks,
+        contexts_ks,
         config: Arc::new(RwLock::new(config)),
         seed_store,
         did_resolver,

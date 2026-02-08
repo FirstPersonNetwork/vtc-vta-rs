@@ -1,6 +1,7 @@
 mod acl;
 mod auth;
 mod config;
+mod contexts;
 mod health;
 pub mod keys;
 
@@ -35,6 +36,17 @@ pub fn router() -> Router<AppState> {
             get(keys::get_key)
                 .delete(keys::invalidate_key)
                 .patch(keys::rename_key),
+        )
+        // Context routes
+        .route(
+            "/contexts",
+            get(contexts::list_contexts_handler).post(contexts::create_context_handler),
+        )
+        .route(
+            "/contexts/{id}",
+            get(contexts::get_context_handler)
+                .patch(contexts::update_context_handler)
+                .delete(contexts::delete_context_handler),
         )
         // ACL routes (flattened for consistency)
         .route("/acl/", get(acl::list_acl).post(acl::create_acl))

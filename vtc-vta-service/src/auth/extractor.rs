@@ -20,6 +20,7 @@ pub struct AuthClaims {
     pub did: String,
     pub session_id: String,
     pub role: Role,
+    pub allowed_contexts: Vec<String>,
 }
 
 impl FromRequestParts<AppState> for AuthClaims {
@@ -60,7 +61,25 @@ impl FromRequestParts<AppState> for AuthClaims {
             did: claims.sub,
             session_id: claims.session_id,
             role,
+            allowed_contexts: claims.contexts,
         })
+    }
+}
+
+impl AuthClaims {
+    /// Check that the caller has access to the given context.
+    ///
+    /// Admins with an empty `allowed_contexts` list have unrestricted access.
+    pub fn require_context(&self, context_id: &str) -> Result<(), AppError> {
+        if self.role == Role::Admin && self.allowed_contexts.is_empty() {
+            return Ok(());
+        }
+        if self.allowed_contexts.contains(&context_id.to_string()) {
+            return Ok(());
+        }
+        Err(AppError::Forbidden(format!(
+            "no access to context: {context_id}"
+        )))
     }
 }
 

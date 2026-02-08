@@ -25,6 +25,7 @@ pub struct AclEntryResponse {
     pub did: String,
     pub role: Role,
     pub label: Option<String>,
+    pub allowed_contexts: Vec<String>,
     pub created_at: u64,
     pub created_by: String,
 }
@@ -35,6 +36,7 @@ impl From<AclEntry> for AclEntryResponse {
             did: e.did,
             role: e.role,
             label: e.label,
+            allowed_contexts: e.allowed_contexts,
             created_at: e.created_at,
             created_by: e.created_by,
         }
@@ -59,6 +61,8 @@ pub struct CreateAclRequest {
     pub did: String,
     pub role: Role,
     pub label: Option<String>,
+    #[serde(default)]
+    pub allowed_contexts: Vec<String>,
 }
 
 pub async fn create_acl(
@@ -80,6 +84,7 @@ pub async fn create_acl(
         did: req.did,
         role: req.role,
         label: req.label,
+        allowed_contexts: req.allowed_contexts,
         created_at: now_epoch(),
         created_by: auth.0.did,
     };
@@ -111,6 +116,7 @@ pub async fn get_acl(
 pub struct UpdateAclRequest {
     pub role: Option<Role>,
     pub label: Option<String>,
+    pub allowed_contexts: Option<Vec<String>>,
 }
 
 pub async fn update_acl(
@@ -129,6 +135,9 @@ pub async fn update_acl(
     }
     if let Some(label) = req.label {
         entry.label = Some(label);
+    }
+    if let Some(allowed_contexts) = req.allowed_contexts {
+        entry.allowed_contexts = allowed_contexts;
     }
 
     store_acl_entry(&acl, &entry).await?;

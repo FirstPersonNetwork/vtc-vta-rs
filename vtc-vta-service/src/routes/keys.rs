@@ -19,6 +19,7 @@ pub struct CreateKeyRequest {
     pub key_id: Option<String>,
     pub mnemonic: Option<String>,
     pub label: Option<String>,
+    pub context_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -78,6 +79,7 @@ pub async fn create_key(
         status: KeyStatus::Active,
         public_key: public_key.clone(),
         label: req.label.clone(),
+        context_id: req.context_id.clone(),
         created_at: now,
         updated_at: now,
     };
@@ -184,6 +186,7 @@ pub struct ListKeysQuery {
     pub offset: Option<u64>,
     pub limit: Option<u64>,
     pub status: Option<KeyStatus>,
+    pub context_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -214,6 +217,11 @@ pub async fn list_keys(
         let record: KeyRecord = serde_json::from_slice(&value)?;
         if let Some(ref status) = query.status {
             if record.status != *status {
+                continue;
+            }
+        }
+        if let Some(ref ctx) = query.context_id {
+            if record.context_id.as_deref() != Some(ctx.as_str()) {
                 continue;
             }
         }

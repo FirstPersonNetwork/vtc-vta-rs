@@ -10,52 +10,62 @@ level, which is reserved for the First Person Network.
 ```
 m/26'
   |
-  +-- 0'/N'          VTA keys
-  |
-  +-- 1'/N'          Admin keys
-  |
-  +-- 2'             External applications (reserved)
+  +-- 2'/N'/K'    Application context keys
        |
-       +-- 1'/N'     DIDComm Messaging Mediator keys
+       +-- 0'     VTA (seeded at setup)
        |
-       +-- 2'/N'     Trust Registry keys (placeholder)
+       +-- 1'     Mediator (seeded at setup)
+       |
+       +-- 2'     Trust Registry (seeded at setup)
+       |
+       +-- 3'+    User-created contexts
 ```
 
-## Path Groups
+## Application Contexts
 
-| Base Path        | Constant              | Purpose                                   |
-|------------------|-----------------------|-------------------------------------------|
-| `m/26'/0'`       | `VTA_KEY_BASE`        | VTA entity: signing, key-agreement, pre-rotation |
-| `m/26'/1'`       | `ADMIN_KEY_BASE`      | Admin: signing, key-agreement, did:key     |
-| `m/26'/2'`       | `EXTERNAL_APP_BASE`   | External applications (reserved)           |
-| `m/26'/2'/1'`    | `MEDIATOR_KEY_BASE`   | DIDComm Messaging Mediator                 |
-| `m/26'/2'/2'`    | `TRUST_REGISTRY_KEY_BASE` | Trust Registry (placeholder)           |
+Each **application context** is an isolated key group with its own DID and
+BIP-32 subtree. Three contexts are created automatically during setup:
+
+| Context ID       | Index | Base Path       | Purpose                     |
+|------------------|-------|-----------------|-----------------------------|
+| `vta`            | 0     | `m/26'/2'/0'`   | Verified Trust Agent        |
+| `mediator`       | 1     | `m/26'/2'/1'`   | DIDComm Messaging Mediator  |
+| `trust-registry` | 2     | `m/26'/2'/2'`   | Trust Registry              |
+
+Additional contexts can be created via the API or CLI and are assigned
+sequential indices starting at 3.
 
 ## Sequential Allocation
 
-Each path group maintains a **persistent counter** stored in the fjall `keys`
-keyspace under the key `path_counter:{base}`. Every key allocation:
+Each context maintains a **persistent counter** stored in the fjall `keys`
+keyspace under the key `path_counter:{base_path}`. Every key allocation:
 
 1. Reads the current counter value `N` (starting at 0)
-2. Derives the key at `{base}/{N}'`
+2. Derives the key at `{base_path}/{N}'`
 3. Stores the key record
 4. Increments the counter to `N + 1`
 
-All key types within a group (signing, key-agreement, pre-rotation) share
+All key types within a context (signing, key-agreement, pre-rotation) share
 **one counter**, so indices are unique and never reused.
 
 ```
-allocate_path(keys_ks, "m/26'/0'")   ->  m/26'/0'/0'   (counter: 0 -> 1)
-allocate_path(keys_ks, "m/26'/0'")   ->  m/26'/0'/1'   (counter: 1 -> 2)
-allocate_path(keys_ks, "m/26'/0'")   ->  m/26'/0'/2'   (counter: 2 -> 3)
+allocate_path(keys_ks, "m/26'/2'/0'")   ->  m/26'/2'/0'/0'   (counter: 0 -> 1)
+allocate_path(keys_ks, "m/26'/2'/0'")   ->  m/26'/2'/0'/1'   (counter: 1 -> 2)
+allocate_path(keys_ks, "m/26'/2'/0'")   ->  m/26'/2'/0'/2'   (counter: 2 -> 3)
 ```
+
+## Context Index Allocation
+
+The context index counter is stored in the `contexts` keyspace under
+`ctx_counter`. Each new context gets the next available index, which determines
+its base path (`m/26'/2'/N'`).
 
 ## Typical Setup Allocation
 
 During the setup wizard, keys are allocated in the order they are created. A
 typical run produces the following layout:
 
-### VTA keys (`m/26'/0'/N'`)
+### VTA keys (`m/26'/2'/0'/K'`)
 
 | Index | Key Type | Label                      |
 |-------|----------|----------------------------|
@@ -63,7 +73,7 @@ typical run produces the following layout:
 | 1     | X25519   | VTA key-agreement key      |
 | 2+    | Ed25519  | VTA pre-rotation key 0, 1, ... |
 
-### Mediator keys (`m/26'/2'/1'/N'`)
+### Mediator keys (`m/26'/2'/1'/K'`)
 
 | Index | Key Type | Label                          |
 |-------|----------|--------------------------------|
@@ -71,25 +81,18 @@ typical run produces the following layout:
 | 1     | X25519   | Mediator key-agreement key     |
 | 2+    | Ed25519  | Mediator pre-rotation key 0, 1, ... |
 
-### Admin keys (`m/26'/1'/N'`)
+### Admin keys (under VTA context: `m/26'/2'/0'/K'`)
 
-| Index | Key Type | Label                        |
-|-------|----------|------------------------------|
-| 0     | Ed25519  | Admin signing key            |
-| 1     | X25519   | Admin key-agreement key      |
-| 2     | Ed25519  | Admin did:key                |
-| 3+    | Ed25519  | Admin pre-rotation key 0, 1, ... |
-
-The exact indices depend on which options are chosen during setup. For example,
-if the admin uses `did:key` instead of `did:webvh`, only index 0 is allocated
-(the `did:key` derivation).
+Admin keys are derived under the VTA context. The exact indices depend on which
+options are chosen during setup. For example, if the admin uses `did:key`, only
+one additional index is allocated under the VTA context.
 
 ## Server Startup
 
 At startup the server does **not** assume fixed indices. Instead, it looks up
 the VTA signing and key-agreement key paths from the stored `KeyRecord` entries
-by matching on label and key type. This means the paths are always consistent
-with what the setup wizard actually allocated.
+by matching on key ID (`{did}#key-0`, `{did}#key-1`). This means the paths are
+always consistent with what the setup wizard actually allocated.
 
 ## JWT Signing Key
 
@@ -100,5 +103,5 @@ the `VTA_AUTH_JWT_SIGNING_KEY` environment variable.
 
 ## Source
 
-Path constants and allocation logic live in
-[`vtc-vta-service/src/keys/paths.rs`](../vtc-vta-service/src/keys/paths.rs).
+- Path allocation logic: [`vtc-vta-service/src/keys/paths.rs`](../vtc-vta-service/src/keys/paths.rs)
+- Context management: [`vtc-vta-service/src/contexts/mod.rs`](../vtc-vta-service/src/contexts/mod.rs)

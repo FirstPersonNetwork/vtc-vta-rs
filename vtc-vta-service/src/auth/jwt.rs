@@ -10,6 +10,8 @@ pub struct Claims {
     pub sub: String,
     pub session_id: String,
     pub role: String,
+    #[serde(default)]
+    pub contexts: Vec<String>,
     pub exp: u64,
 }
 
@@ -71,7 +73,13 @@ impl JwtKeys {
     }
 
     /// Create claims for a new access token.
-    pub fn new_claims(sub: String, session_id: String, role: String, expiry_secs: u64) -> Claims {
+    pub fn new_claims(
+        sub: String,
+        session_id: String,
+        role: String,
+        contexts: Vec<String>,
+        expiry_secs: u64,
+    ) -> Claims {
         let exp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
@@ -83,6 +91,7 @@ impl JwtKeys {
             sub,
             session_id,
             role,
+            contexts,
             exp,
         }
     }

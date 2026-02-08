@@ -1,6 +1,7 @@
 mod acl;
 mod auth;
 mod config;
+mod contexts;
 mod error;
 mod keys;
 mod routes;

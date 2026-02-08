@@ -23,6 +23,8 @@ pub struct KeyRecord {
     pub status: KeyStatus,
     pub public_key: String,
     pub label: Option<String>,
+    #[serde(default)]
+    pub context_id: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

@@ -32,10 +32,7 @@ fn refresh_key(token: &str) -> String {
 }
 
 /// Store a new session in the `sessions` keyspace.
-pub async fn store_session(
-    sessions: &KeyspaceHandle,
-    session: &Session,
-) -> Result<(), AppError> {
+pub async fn store_session(sessions: &KeyspaceHandle, session: &Session) -> Result<(), AppError> {
     sessions
         .insert(session_key(&session.session_id), session)
         .await?;
@@ -52,10 +49,7 @@ pub async fn get_session(
 }
 
 /// Update an existing session (overwrites).
-pub async fn update_session(
-    sessions: &KeyspaceHandle,
-    session: &Session,
-) -> Result<(), AppError> {
+pub async fn update_session(sessions: &KeyspaceHandle, session: &Session) -> Result<(), AppError> {
     sessions
         .insert(session_key(&session.session_id), session)
         .await
@@ -96,10 +90,7 @@ pub fn now_epoch() -> u64 {
 }
 
 /// Delete a single session and its refresh index.
-pub async fn delete_session(
-    sessions: &KeyspaceHandle,
-    session_id: &str,
-) -> Result<(), AppError> {
+pub async fn delete_session(sessions: &KeyspaceHandle, session_id: &str) -> Result<(), AppError> {
     let session: Option<Session> = sessions.get(session_key(session_id)).await?;
     if let Some(session) = session {
         if let Some(ref token) = session.refresh_token {
@@ -145,7 +136,7 @@ pub async fn cleanup_expired_sessions(
             SessionState::ChallengeSent => now.saturating_sub(session.created_at) > challenge_ttl,
             SessionState::Authenticated => session
                 .refresh_expires_at
-                .map_or(true, |expires| now > expires),
+                .is_none_or(|expires| now > expires),
         };
 
         if expired {

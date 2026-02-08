@@ -12,9 +12,9 @@ use crate::auth::jwt::JwtKeys;
 use crate::auth::session::cleanup_expired_sessions;
 use crate::config::{AppConfig, AuthConfig};
 use crate::error::AppError;
+use crate::keys::KeyRecord;
 use crate::keys::derivation::Bip32Extension;
 use crate::keys::seed_store::KeyringSeedStore;
-use crate::keys::KeyRecord;
 use crate::routes;
 use crate::store::{KeyspaceHandle, Store};
 use tokio::net::TcpListener;
@@ -24,7 +24,6 @@ use tracing::{debug, info, warn};
 
 #[derive(Clone)]
 pub struct AppState {
-    pub store: Store,
     pub keys_ks: KeyspaceHandle,
     pub sessions_ks: KeyspaceHandle,
     pub acl_ks: KeyspaceHandle,
@@ -57,7 +56,6 @@ pub async fn run(
     let auth_config = config.auth.clone();
 
     let state = AppState {
-        store,
         keys_ks,
         sessions_ks,
         acl_ks,
@@ -71,10 +69,7 @@ pub async fn run(
 
     // Spawn session cleanup background task when auth is configured
     if state.jwt_keys.is_some() {
-        tokio::spawn(session_cleanup_loop(
-            state.sessions_ks.clone(),
-            auth_config,
-        ));
+        tokio::spawn(session_cleanup_loop(state.sessions_ks.clone(), auth_config));
     }
 
     let app = routes::router()
@@ -135,14 +130,15 @@ async fn init_auth(
     };
 
     // Look up VTA key paths from stored key records
-    let (signing_path, ka_path) =
-        match find_vta_key_paths(&vta_did, keys_ks).await {
-            Ok(paths) => paths,
-            Err(e) => {
-                warn!("failed to find VTA key records: {e} — auth endpoints will not work (run setup first)");
-                return (None, None, None);
-            }
-        };
+    let (signing_path, ka_path) = match find_vta_key_paths(&vta_did, keys_ks).await {
+        Ok(paths) => paths,
+        Err(e) => {
+            warn!(
+                "failed to find VTA key records: {e} — auth endpoints will not work (run setup first)"
+            );
+            return (None, None, None);
+        }
+    };
 
     // 1. DID resolver (local mode)
     let did_resolver = match DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await {
@@ -184,7 +180,9 @@ async fn init_auth(
             }
         },
         None => {
-            warn!("auth.jwt_signing_key not configured — auth endpoints will not work (run setup first)");
+            warn!(
+                "auth.jwt_signing_key not configured — auth endpoints will not work (run setup first)"
+            );
             return (Some(did_resolver), Some(Arc::new(secrets_resolver)), None);
         }
     };

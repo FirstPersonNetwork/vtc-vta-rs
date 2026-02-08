@@ -19,7 +19,7 @@ pub fn generate_did_key() -> (String, String) {
 
     let multibase_pubkey = ed25519_multibase_pubkey(&public_key);
     let did = format!("did:key:{multibase_pubkey}");
-    let private_key_multibase = multibase::encode(Base::Base58Btc, &seed);
+    let private_key_multibase = multibase::encode(Base::Base58Btc, seed);
 
     debug!(did = %did, "did:key identity generated");
 
@@ -33,8 +33,14 @@ mod tests {
     #[test]
     fn test_generate_did_key_format() {
         let (did, priv_mb) = generate_did_key();
-        assert!(did.starts_with("did:key:z6Mk"), "DID should start with did:key:z6Mk, got: {did}");
-        assert!(priv_mb.starts_with('z'), "private key multibase should start with 'z'");
+        assert!(
+            did.starts_with("did:key:z6Mk"),
+            "DID should start with did:key:z6Mk, got: {did}"
+        );
+        assert!(
+            priv_mb.starts_with('z'),
+            "private key multibase should start with 'z'"
+        );
 
         // Decode private key to verify it's 32 bytes
         let (_, seed_bytes) = multibase::decode(&priv_mb).unwrap();

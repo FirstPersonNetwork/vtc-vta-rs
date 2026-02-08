@@ -5,6 +5,9 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tracing::info;
 
+/// A key-value pair of raw bytes from a prefix scan.
+pub type RawKvPair = (Vec<u8>, Vec<u8>);
+
 #[derive(Clone)]
 pub struct Store {
     db: fjall::Database,
@@ -80,15 +83,6 @@ impl KeyspaceHandle {
         Ok(())
     }
 
-    pub async fn contains_key(&self, key: impl Into<Vec<u8>>) -> Result<bool, AppError> {
-        let key = key.into();
-        let ks = self.keyspace.clone();
-        Ok(tokio::task::spawn_blocking(move || ks.contains_key(key))
-            .await
-            .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))??
-        )
-    }
-
     pub async fn insert_raw(
         &self,
         key: impl Into<Vec<u8>>,
@@ -116,10 +110,10 @@ impl KeyspaceHandle {
     pub async fn prefix_iter_raw(
         &self,
         prefix: impl Into<Vec<u8>>,
-    ) -> Result<Vec<(Vec<u8>, Vec<u8>)>, AppError> {
+    ) -> Result<Vec<RawKvPair>, AppError> {
         let prefix = prefix.into();
         let ks = self.keyspace.clone();
-        tokio::task::spawn_blocking(move || -> Result<Vec<(Vec<u8>, Vec<u8>)>, AppError> {
+        tokio::task::spawn_blocking(move || -> Result<Vec<RawKvPair>, AppError> {
             let mut results = Vec::new();
             for guard in ks.prefix(&prefix) {
                 let (key, value) = guard.into_inner()?;
@@ -134,9 +128,9 @@ impl KeyspaceHandle {
     /// Returns the approximate number of items in the keyspace.
     pub async fn approximate_len(&self) -> Result<usize, AppError> {
         let ks = self.keyspace.clone();
-        Ok(tokio::task::spawn_blocking(move || ks.approximate_len())
+        tokio::task::spawn_blocking(move || ks.approximate_len())
             .await
-            .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))?)
+            .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))
     }
 
     /// Atomically check that `new_key` doesn't exist, insert `value` at `new_key`,
@@ -270,10 +264,7 @@ mod tests {
 
             // Verify approximate_len is reasonable
             let approx = ks.approximate_len().await.unwrap();
-            assert!(
-                approx >= 5,
-                "approximate_len should be >= 5, got {approx}"
-            );
+            assert!(approx >= 5, "approximate_len should be >= 5, got {approx}");
         }
     }
 
@@ -310,10 +301,7 @@ mod tests {
             let raw = ks.prefix_iter_raw("key:").await.unwrap();
             // Without persist, some or all keys may be lost.
             // This test documents the behavior.
-            println!(
-                "Without persist: {} of 5 keys survived reopen",
-                raw.len()
-            );
+            println!("Without persist: {} of 5 keys survived reopen", raw.len());
         }
     }
 }

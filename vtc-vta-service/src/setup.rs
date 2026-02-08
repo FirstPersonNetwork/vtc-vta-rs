@@ -339,8 +339,8 @@ pub async fn run_setup_wizard(
     let contexts_ks = store.keyspace("contexts")?;
 
     // Create seed application contexts
-    let vta_ctx = create_seed_context(&contexts_ks, "vta", "Verified Trust Agent").await?;
-    let med_ctx =
+    let mut vta_ctx = create_seed_context(&contexts_ks, "vta", "Verified Trust Agent").await?;
+    let mut med_ctx =
         create_seed_context(&contexts_ks, "mediator", "DIDComm Messaging Mediator").await?;
     let _tr_ctx = create_seed_context(&contexts_ks, "trust-registry", "Trust Registry").await?;
     eprintln!("  Created application contexts: vta, mediator, trust-registry");
@@ -405,8 +405,20 @@ pub async fn run_setup_wizard(
     // 12. DIDComm messaging (with mediator DID creation)
     let messaging = configure_messaging(&seed, &med_ctx.base_path, &keys_ks).await?;
 
+    // Update mediator context with the DID
+    med_ctx.did = Some(messaging.mediator_did.clone());
+    med_ctx.updated_at = Utc::now();
+    store_context(&contexts_ks, &med_ctx).await.map_err(|e| format!("{e}"))?;
+
     // 13. VTA DID (after mediator so we can embed it as a service endpoint)
     let vta_did = create_vta_did(&seed, &messaging, &vta_ctx.base_path, &keys_ks).await?;
+
+    // Update VTA context with the DID
+    if let Some(ref did) = vta_did {
+        vta_ctx.did = Some(did.clone());
+        vta_ctx.updated_at = Utc::now();
+        store_context(&contexts_ks, &vta_ctx).await.map_err(|e| format!("{e}"))?;
+    }
 
     // 14. Bootstrap admin DID in ACL
     let (admin_did, admin_credential) =

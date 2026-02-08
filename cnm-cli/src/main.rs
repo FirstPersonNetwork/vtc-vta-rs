@@ -3,6 +3,12 @@ mod client;
 
 use clap::{Parser, Subcommand};
 use client::{CreateKeyRequest, UpdateConfigRequest, VtaClient};
+use ratatui::{
+    layout::Constraint,
+    style::{Color, Modifier, Style},
+    widgets::{Block, Cell, Row, Table},
+    TerminalOptions, Viewport,
+};
 use vtc_vta_sdk::keys::KeyType;
 
 #[derive(Parser)]
@@ -357,18 +363,71 @@ async fn cmd_key_list(
     }
 
     let end = (offset + resp.keys.len() as u64).min(resp.total);
-    println!("Keys (showing {}-{} of {}):", offset + 1, end, resp.total);
-    println!(
-        "  {:<36}  {:<8}  {:<8}  {:<20}  {}",
-        "ID", "Type", "Status", "Label", "Created"
+
+    let header_style = Style::default()
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD);
+    let header = Row::new(vec!["Label", "Type", "Status", "Path", "ID", "Created"])
+        .style(header_style)
+        .bottom_margin(1);
+
+    let rows: Vec<Row> = resp
+        .keys
+        .iter()
+        .map(|key| {
+            let label = key.label.clone().unwrap_or_else(|| "\u{2014}".into());
+            let created = key.created_at.format("%Y-%m-%d").to_string();
+
+            let status_cell = match key.status {
+                vtc_vta_sdk::keys::KeyStatus::Active => {
+                    Cell::from(key.status.to_string()).style(Style::default().fg(Color::Green))
+                }
+                vtc_vta_sdk::keys::KeyStatus::Revoked => {
+                    Cell::from(key.status.to_string()).style(Style::default().fg(Color::Red))
+                }
+            };
+
+            Row::new(vec![
+                Cell::from(label),
+                Cell::from(key.key_type.to_string()),
+                status_cell,
+                Cell::from(key.derivation_path.clone()),
+                Cell::from(key.key_id.clone())
+                    .style(Style::default().fg(Color::DarkGray)),
+                Cell::from(created),
+            ])
+        })
+        .collect();
+
+    let title = format!(" Keys ({}\u{2013}{} of {}) ", offset + 1, end, resp.total);
+
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Min(20),      // Label
+            Constraint::Length(9),     // Type
+            Constraint::Length(9),     // Status
+            Constraint::Length(16),    // Path
+            Constraint::Length(36),    // ID
+            Constraint::Length(10),    // Created
+        ],
+    )
+    .header(header)
+    .column_spacing(2)
+    .block(
+        Block::bordered()
+            .title(title)
+            .border_style(Style::default().fg(Color::DarkGray)),
     );
-    for key in &resp.keys {
-        let label = key.label.as_deref().unwrap_or("\u{2014}");
-        let created = key.created_at.format("%Y-%m-%d");
-        println!(
-            "  {:<36}  {:<8}  {:<8}  {:<20}  {}",
-            key.key_id, key.key_type, key.status, label, created
-        );
-    }
+
+    // +4 = top border + header + header bottom_margin + bottom border
+    let height = resp.keys.len() as u16 + 4;
+    let mut terminal = ratatui::init_with_options(TerminalOptions {
+        viewport: Viewport::Inline(height),
+    });
+    terminal.draw(|frame| frame.render_widget(table, frame.area()))?;
+    ratatui::restore();
+    println!();
+
     Ok(())
 }

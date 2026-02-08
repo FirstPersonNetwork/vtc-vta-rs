@@ -37,7 +37,6 @@ pub struct ContextResponse {
     pub did: Option<String>,
     pub description: Option<String>,
     pub base_path: String,
-    pub index: u32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
@@ -50,7 +49,6 @@ impl From<ContextRecord> for ContextResponse {
             did: r.did,
             description: r.description,
             base_path: r.base_path,
-            index: r.index,
             created_at: r.created_at,
             updated_at: r.updated_at,
         }

@@ -76,7 +76,6 @@ pub struct ContextResponse {
     pub did: Option<String>,
     pub description: Option<String>,
     pub base_path: String,
-    pub index: u32,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

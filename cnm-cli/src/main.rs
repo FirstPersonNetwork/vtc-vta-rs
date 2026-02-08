@@ -521,7 +521,7 @@ async fn cmd_context_list(client: &VtaClient) -> Result<(), Box<dyn std::error::
     let header_style = Style::default()
         .fg(Color::White)
         .add_modifier(Modifier::BOLD);
-    let header = Row::new(vec!["ID", "Name", "DID", "Base Path", "Index", "Created"])
+    let header = Row::new(vec!["ID", "Name", "DID", "Base Path", "Created"])
         .style(header_style)
         .bottom_margin(1);
 
@@ -537,7 +537,6 @@ async fn cmd_context_list(client: &VtaClient) -> Result<(), Box<dyn std::error::
                 Cell::from(ctx.name.clone()),
                 Cell::from(did).style(Style::default().fg(Color::DarkGray)),
                 Cell::from(ctx.base_path.clone()),
-                Cell::from(ctx.index.to_string()),
                 Cell::from(created),
             ])
         })
@@ -552,7 +551,6 @@ async fn cmd_context_list(client: &VtaClient) -> Result<(), Box<dyn std::error::
             Constraint::Min(20),       // Name
             Constraint::Length(30),     // DID
             Constraint::Length(16),     // Base Path
-            Constraint::Length(7),      // Index
             Constraint::Length(10),     // Created
         ],
     )
@@ -591,7 +589,6 @@ async fn cmd_context_get(
         resp.description.as_deref().unwrap_or("(not set)")
     );
     println!("Base Path:   {}", resp.base_path);
-    println!("Index:       {}", resp.index);
     println!("Created At:  {}", resp.created_at);
     println!("Updated At:  {}", resp.updated_at);
     Ok(())
@@ -613,7 +610,6 @@ async fn cmd_context_create(
     println!("  ID:        {}", resp.id);
     println!("  Name:      {}", resp.name);
     println!("  Base Path: {}", resp.base_path);
-    println!("  Index:     {}", resp.index);
     Ok(())
 }
 

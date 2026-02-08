@@ -15,8 +15,6 @@ use multibase::Base;
 use rand::RngCore;
 use serde_json::json;
 use url::Url;
-use uuid::Uuid;
-
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 
@@ -29,18 +27,38 @@ use crate::keys::seed_store::KeyringSeedStore;
 use crate::keys::{KeyRecord, KeyStatus, KeyType as SdkKeyType, store_key};
 use crate::store::{KeyspaceHandle, Store};
 
+/// Derived signing + key-agreement key data, before DID creation.
+#[allow(dead_code)]
+struct DerivedEntityKeys {
+    signing_secret: Secret,
+    signing_path: String,
+    signing_pub: String,
+    signing_label: String,
+    ka_secret: Secret,
+    ka_path: String,
+    ka_pub: String,
+    ka_label: String,
+}
+
+/// Pre-rotation key data returned from derivation (stored after DID creation).
+struct PreRotationKeyData {
+    path: String,
+    public_key: String,
+    label: String,
+}
+
 /// Persist a key as a [`KeyRecord`] in the `"keys"` keyspace.
 async fn save_key_record(
     keys_ks: &KeyspaceHandle,
+    key_id: &str,
     derivation_path: &str,
     key_type: SdkKeyType,
     public_key: &str,
     label: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
-    let key_id = Uuid::new_v4().to_string();
+) -> Result<(), Box<dyn std::error::Error>> {
     let now = Utc::now();
     let record = KeyRecord {
-        key_id: key_id.clone(),
+        key_id: key_id.to_string(),
         derivation_path: derivation_path.to_string(),
         key_type,
         status: KeyStatus::Active,
@@ -49,20 +67,22 @@ async fn save_key_record(
         created_at: now,
         updated_at: now,
     };
-    keys_ks.insert(store_key(&key_id), &record).await?;
-    Ok(key_id)
+    keys_ks.insert(store_key(key_id), &record).await?;
+    Ok(())
 }
 
 /// Derive a signing key (Ed25519) and key-agreement key (X25519) from the
-/// BIP-32 seed using counter-allocated paths under `base`, store them as
-/// [`KeyRecord`]s, and return the secrets so callers can use them.
-async fn derive_and_store_entity_keys(
+/// BIP-32 seed using counter-allocated paths under `base`.
+///
+/// Allocates derivation-path counters but does **not** store key records —
+/// callers must call [`save_entity_key_records`] after the DID is known.
+async fn derive_entity_keys(
     seed: &[u8],
     base: &str,
     signing_label: &str,
     ka_label: &str,
     keys_ks: &KeyspaceHandle,
-) -> Result<(Secret, Secret), Box<dyn std::error::Error>> {
+) -> Result<DerivedEntityKeys, Box<dyn std::error::Error>> {
     let signing_path = allocate_path(keys_ks, base)
         .await
         .map_err(|e| format!("{e}"))?;
@@ -86,14 +106,6 @@ async fn derive_and_store_entity_keys(
     let signing_pub = signing_secret
         .get_public_keymultibase()
         .map_err(|e| format!("{e}"))?;
-    save_key_record(
-        keys_ks,
-        &signing_path,
-        SdkKeyType::Ed25519,
-        &signing_pub,
-        signing_label,
-    )
-    .await?;
 
     // Key-agreement key (X25519)
     let ka_derived = root
@@ -110,14 +122,53 @@ async fn derive_and_store_entity_keys(
     let ka_pub = ka_secret
         .get_public_keymultibase()
         .map_err(|e| format!("{e}"))?;
-    save_key_record(keys_ks, &ka_path, SdkKeyType::X25519, &ka_pub, ka_label).await?;
 
-    Ok((signing_secret, ka_secret))
+    Ok(DerivedEntityKeys {
+        signing_secret,
+        signing_path,
+        signing_pub,
+        signing_label: signing_label.to_string(),
+        ka_secret,
+        ka_path,
+        ka_pub,
+        ka_label: ka_label.to_string(),
+    })
+}
+
+/// Store entity key records using DID verification method IDs as key_ids.
+///
+/// Signing key → `{did}#key-0`, key-agreement key → `{did}#key-1`.
+async fn save_entity_key_records(
+    did: &str,
+    derived: &DerivedEntityKeys,
+    keys_ks: &KeyspaceHandle,
+) -> Result<(), Box<dyn std::error::Error>> {
+    save_key_record(
+        keys_ks,
+        &format!("{did}#key-0"),
+        &derived.signing_path,
+        SdkKeyType::Ed25519,
+        &derived.signing_pub,
+        &derived.signing_label,
+    )
+    .await?;
+    save_key_record(
+        keys_ks,
+        &format!("{did}#key-1"),
+        &derived.ka_path,
+        SdkKeyType::X25519,
+        &derived.ka_pub,
+        &derived.ka_label,
+    )
+    .await?;
+    Ok(())
 }
 
 /// Derive the admin did:key Ed25519 key from the BIP-32 seed using a
 /// counter-allocated path under `ADMIN_KEY_BASE`, store it as a
 /// [`KeyRecord`], and return `(did, private_key_multibase)`.
+///
+/// The key_id uses the standard did:key fragment format: `{did}#{multibase_pubkey}`.
 async fn derive_and_store_did_key(
     seed: &[u8],
     keys_ks: &KeyspaceHandle,
@@ -139,11 +190,13 @@ async fn derive_and_store_did_key(
 
     let multibase_pubkey = crate::keys::ed25519_multibase_pubkey(&public_key);
     let did = format!("did:key:{multibase_pubkey}");
+    let key_id = format!("{did}#{multibase_pubkey}");
     let private_key_multibase =
         multibase::encode(Base::Base58Btc, dk_derived.signing_key.as_bytes());
 
     save_key_record(
         keys_ks,
+        &key_id,
         &dk_path,
         SdkKeyType::Ed25519,
         &multibase_pubkey,
@@ -443,7 +496,7 @@ async fn create_admin_did(
             Ok((did, Some(credential)))
         }
         1 => {
-            let (mut signing_secret, ka_secret) = derive_and_store_entity_keys(
+            let mut derived = derive_entity_keys(
                 seed,
                 ADMIN_KEY_BASE,
                 "Admin signing key",
@@ -453,8 +506,7 @@ async fn create_admin_did(
             .await?;
 
             let did = create_webvh_did(
-                &mut signing_secret,
-                Some(&ka_secret),
+                &mut derived,
                 "admin",
                 None,
                 seed,
@@ -468,8 +520,8 @@ async fn create_admin_did(
             // Enter existing DID
             let did: String = Input::new().with_prompt("Admin DID").interact_text()?;
 
-            // Store all admin key paths so they're visible in the key list
-            let _ = derive_and_store_entity_keys(
+            // Store admin entity keys with the imported DID
+            let derived = derive_entity_keys(
                 seed,
                 ADMIN_KEY_BASE,
                 "Admin signing key",
@@ -477,6 +529,9 @@ async fn create_admin_did(
                 keys_ks,
             )
             .await?;
+            save_entity_key_records(&did, &derived, keys_ks).await?;
+
+            // Also derive and store the did:key
             let _ = derive_and_store_did_key(seed, keys_ks).await?;
 
             Ok((did, None))
@@ -508,7 +563,7 @@ async fn create_vta_did(
 
     match choice {
         0 => {
-            let (mut signing_secret, ka_secret) = derive_and_store_entity_keys(
+            let mut derived = derive_entity_keys(
                 seed,
                 VTA_KEY_BASE,
                 "VTA signing key",
@@ -517,23 +572,15 @@ async fn create_vta_did(
             )
             .await?;
 
-            let did = create_webvh_did(
-                &mut signing_secret,
-                Some(&ka_secret),
-                "VTA",
-                Some(messaging),
-                seed,
-                VTA_KEY_BASE,
-                keys_ks,
-            )
-            .await?;
+            let did =
+                create_webvh_did(&mut derived, "VTA", Some(messaging), seed, VTA_KEY_BASE, keys_ks)
+                    .await?;
             Ok(Some(did))
         }
         1 => {
             let did: String = Input::new().with_prompt("VTA DID").interact_text()?;
 
-            // Store the keys that correspond to the imported DID
-            let _ = derive_and_store_entity_keys(
+            let derived = derive_entity_keys(
                 seed,
                 VTA_KEY_BASE,
                 "VTA signing key",
@@ -541,6 +588,7 @@ async fn create_vta_did(
                 keys_ks,
             )
             .await?;
+            save_entity_key_records(&did, &derived, keys_ks).await?;
 
             Ok(Some(did))
         }
@@ -569,7 +617,7 @@ async fn configure_messaging(
 
     let mediator_did = match mediator_choice {
         0 => {
-            let (mut signing_secret, ka_secret) = derive_and_store_entity_keys(
+            let mut derived = derive_entity_keys(
                 seed,
                 MEDIATOR_KEY_BASE,
                 "Mediator signing key",
@@ -579,8 +627,7 @@ async fn configure_messaging(
             .await?;
 
             create_webvh_did(
-                &mut signing_secret,
-                Some(&ka_secret),
+                &mut derived,
                 "mediator",
                 None,
                 seed,
@@ -592,8 +639,7 @@ async fn configure_messaging(
         _ => {
             let did: String = Input::new().with_prompt("Mediator DID").interact_text()?;
 
-            // Store the keys that correspond to the imported DID
-            let _ = derive_and_store_entity_keys(
+            let derived = derive_entity_keys(
                 seed,
                 MEDIATOR_KEY_BASE,
                 "Mediator signing key",
@@ -601,6 +647,7 @@ async fn configure_messaging(
                 keys_ks,
             )
             .await?;
+            save_entity_key_records(&did, &derived, keys_ks).await?;
 
             did
         }
@@ -665,16 +712,16 @@ fn prompt_webvh_url(label: &str) -> Result<WebVHURL, Box<dyn std::error::Error>>
 /// Prompt the user to optionally generate pre-rotation keys.
 ///
 /// Keys are derived from the BIP-32 seed using counter-allocated paths under
-/// `base` and stored as [`KeyRecord`] entries in the `"keys"` keyspace.
+/// `base`.  Key records are **not** stored here — the caller saves them after
+/// the DID is created so the key_id can use the DID verification method format.
 ///
-/// Returns the list of next-key hashes.  Returns an empty vec when the user
-/// declines.
+/// Returns `(hashes, key_data)`.  Both vecs are empty when the user declines.
 async fn prompt_pre_rotation_keys(
     seed: &[u8],
     base: &str,
     label: &str,
     keys_ks: &KeyspaceHandle,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+) -> Result<(Vec<String>, Vec<PreRotationKeyData>), Box<dyn std::error::Error>> {
     eprintln!();
     eprintln!("  Pre-rotation protects against an attacker changing your authorization keys.");
     eprintln!("  You generate future keys now and only publish their hashes.  When you later");
@@ -685,13 +732,14 @@ async fn prompt_pre_rotation_keys(
         .default(true)
         .interact()?
     {
-        return Ok(vec![]);
+        return Ok((vec![], vec![]));
     }
 
     let root = ExtendedSigningKey::from_seed(seed)
         .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
 
     let mut hashes: Vec<String> = Vec::new();
+    let mut key_data: Vec<PreRotationKeyData> = Vec::new();
 
     loop {
         let path = allocate_path(keys_ks, base)
@@ -713,20 +761,12 @@ async fn prompt_pre_rotation_keys(
             .get_public_keymultibase_hash()
             .map_err(|e| format!("{e}"))?;
 
-        // Store key record
-        let key_id = Uuid::new_v4().to_string();
-        let now = Utc::now();
-        let record = KeyRecord {
-            key_id: key_id.clone(),
-            derivation_path: path,
-            key_type: SdkKeyType::Ed25519,
-            status: KeyStatus::Active,
+        let idx = hashes.len();
+        key_data.push(PreRotationKeyData {
+            path,
             public_key: pub_mb.clone(),
-            label: Some(format!("{label} pre-rotation key {}", hashes.len())),
-            created_at: now,
-            updated_at: now,
-        };
-        keys_ks.insert(store_key(&key_id), &record).await?;
+            label: format!("{label} pre-rotation key {idx}"),
+        });
 
         eprintln!();
         eprintln!("  publicKeyMultibase: {pub_mb}");
@@ -745,20 +785,19 @@ async fn prompt_pre_rotation_keys(
         }
     }
 
-    Ok(hashes)
+    Ok((hashes, key_data))
 }
 
 /// Interactive did:webvh creation flow shared by VTA and mediator DID setup.
 ///
 /// Prompts for a URL, builds a DID document, creates the log entry,
-/// and saves the `did.jsonl` file.
+/// saves the `did.jsonl` file, and stores key records with DID-based key_ids.
 ///
 /// `label` is used in prompts (e.g. "VTA" or "mediator").
 /// When `messaging` is provided a DIDCommMessaging service endpoint is added
 /// to the DID document.
 async fn create_webvh_did(
-    signing_secret: &mut Secret,
-    ka_secret: Option<&Secret>,
+    derived: &mut DerivedEntityKeys,
     label: &str,
     messaging: Option<&MessagingConfig>,
     seed: &[u8],
@@ -769,16 +808,12 @@ async fn create_webvh_did(
     let webvh_url = prompt_webvh_url(label)?;
     let did_id = webvh_url.to_string(); // e.g. did:webvh:{SCID}:example.com
 
-    let pub_key = signing_secret
-        .get_public_keymultibase()
-        .map_err(|e| format!("Failed to get public key: {e}"))?;
-
     // Convert the Signing Key ID to be correct
-    signing_secret.id = [
+    derived.signing_secret.id = [
         "did:key:",
-        &signing_secret.get_public_keymultibase().unwrap(),
+        &derived.signing_secret.get_public_keymultibase().unwrap(),
         "#",
-        &signing_secret.get_public_keymultibase().unwrap(),
+        &derived.signing_secret.get_public_keymultibase().unwrap(),
     ]
     .concat();
 
@@ -794,31 +829,24 @@ async fn create_webvh_did(
                 "id": format!("{did_id}#key-0"),
                 "type": "Multikey",
                 "controller": &did_id,
-                "publicKeyMultibase": pub_key
+                "publicKeyMultibase": &derived.signing_pub
             }
         ],
         "authentication": [format!("{did_id}#key-0")],
         "assertionMethod": [format!("{did_id}#key-0")]
     });
 
-    // Add X25519 key agreement method if provided
-    if let Some(ka) = ka_secret {
-        let ka_pub = ka
-            .get_public_keymultibase()
-            .map_err(|e| format!("Failed to get key-agreement public key: {e}"))?;
-
-        did_document["verificationMethod"]
-            .as_array_mut()
-            .unwrap()
-            .push(json!({
-                "id": format!("{did_id}#key-1"),
-                "type": "Multikey",
-                "controller": &did_id,
-                "publicKeyMultibase": ka_pub
-            }));
-
-        did_document["keyAgreement"] = json!([format!("{did_id}#key-1")]);
-    }
+    // Add X25519 key agreement method
+    did_document["verificationMethod"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({
+            "id": format!("{did_id}#key-1"),
+            "type": "Multikey",
+            "controller": &did_id,
+            "publicKeyMultibase": &derived.ka_pub
+        }));
+    did_document["keyAgreement"] = json!([format!("{did_id}#key-1")]);
 
     // Add DIDCommMessaging service endpoint when a mediator is configured
     if let Some(msg) = messaging {
@@ -848,11 +876,12 @@ async fn create_webvh_did(
         .interact()?;
 
     // Pre-rotation keys (share the same counter/base as entity keys)
-    let next_key_hashes = prompt_pre_rotation_keys(seed, base, label, keys_ks).await?;
+    let (next_key_hashes, pre_rotation_keys) =
+        prompt_pre_rotation_keys(seed, base, label, keys_ks).await?;
 
     // Build parameters
     let parameters = WebVHParameters {
-        update_keys: Some(Arc::new(vec![pub_key])),
+        update_keys: Some(Arc::new(vec![derived.signing_pub.clone()])),
         portable: Some(portable),
         next_key_hashes: if next_key_hashes.is_empty() {
             None
@@ -865,7 +894,7 @@ async fn create_webvh_did(
     // Create the log entry
     let mut did_state = DIDWebVHState::default();
     did_state
-        .create_log_entry(None, &did_document, &parameters, signing_secret)
+        .create_log_entry(None, &did_document, &parameters, &derived.signing_secret)
         .map_err(|e| format!("Failed to create DID log entry: {e}"))?;
 
     let scid = did_state.scid.clone();
@@ -882,6 +911,22 @@ async fn create_webvh_did(
     };
 
     eprintln!("\x1b[1;32mCreated DID:\x1b[0m {final_did}");
+
+    // Save key records now that we have the final DID
+    save_entity_key_records(&final_did, derived, keys_ks).await?;
+
+    // Save pre-rotation key records
+    for (i, pk) in pre_rotation_keys.iter().enumerate() {
+        save_key_record(
+            keys_ks,
+            &format!("{final_did}#pre-rotation-{i}"),
+            &pk.path,
+            SdkKeyType::Ed25519,
+            &pk.public_key,
+            &pk.label,
+        )
+        .await?;
+    }
 
     // Save did.jsonl
     let default_file = format!("{label}-did.jsonl");

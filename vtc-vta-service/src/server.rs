@@ -14,7 +14,7 @@ use crate::config::{AppConfig, AuthConfig};
 use crate::error::AppError;
 use crate::keys::derivation::Bip32Extension;
 use crate::keys::seed_store::KeyringSeedStore;
-use crate::keys::{KeyRecord, KeyType};
+use crate::keys::KeyRecord;
 use crate::routes;
 use crate::store::{KeyspaceHandle, Store};
 use tokio::net::TcpListener;
@@ -133,7 +133,7 @@ async fn init_auth(
 
     // Look up VTA key paths from stored key records
     let (signing_path, ka_path) =
-        match find_vta_key_paths(keys_ks).await {
+        match find_vta_key_paths(&vta_did, keys_ks).await {
             Ok(paths) => paths,
             Err(e) => {
                 warn!("failed to find VTA key records: {e} — auth endpoints will not work (run setup first)");
@@ -197,40 +197,26 @@ async fn init_auth(
 
 /// Look up VTA signing and key-agreement derivation paths from stored key records.
 ///
+/// Uses direct lookups by `{vta_did}#key-0` and `{vta_did}#key-1`.
+///
 /// Returns `(signing_path, ka_path)`.
 async fn find_vta_key_paths(
+    vta_did: &str,
     keys_ks: &KeyspaceHandle,
 ) -> Result<(String, String), AppError> {
-    let entries = keys_ks.prefix_iter_raw("key:").await?;
+    let signing_key_id = format!("{vta_did}#key-0");
+    let ka_key_id = format!("{vta_did}#key-1");
 
-    let mut signing_path: Option<String> = None;
-    let mut ka_path: Option<String> = None;
+    let signing: KeyRecord = keys_ks
+        .get(crate::keys::store_key(&signing_key_id))
+        .await?
+        .ok_or_else(|| AppError::NotFound("VTA signing key not found".into()))?;
+    let ka: KeyRecord = keys_ks
+        .get(crate::keys::store_key(&ka_key_id))
+        .await?
+        .ok_or_else(|| AppError::NotFound("VTA key-agreement key not found".into()))?;
 
-    for (_key, value) in &entries {
-        let record: KeyRecord = serde_json::from_slice(value)?;
-        match record.label.as_deref() {
-            Some("VTA signing key") if record.key_type == KeyType::Ed25519 => {
-                signing_path = Some(record.derivation_path);
-            }
-            Some("VTA key-agreement key") if record.key_type == KeyType::X25519 => {
-                ka_path = Some(record.derivation_path);
-            }
-            _ => {}
-        }
-        if signing_path.is_some() && ka_path.is_some() {
-            break;
-        }
-    }
-
-    match (signing_path, ka_path) {
-        (Some(s), Some(k)) => Ok((s, k)),
-        (None, _) => Err(AppError::NotFound(
-            "VTA signing key record not found in store".into(),
-        )),
-        (_, None) => Err(AppError::NotFound(
-            "VTA key-agreement key record not found in store".into(),
-        )),
-    }
+    Ok((signing.derivation_path, ka.derivation_path))
 }
 
 /// Decode a base64url-no-pad JWT signing key and construct `JwtKeys`.

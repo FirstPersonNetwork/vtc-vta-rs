@@ -288,6 +288,7 @@ async fn cmd_key_create(
     let req = CreateKeyRequest {
         key_type,
         derivation_path: derivation_path.to_string(),
+        key_id: None,
         mnemonic,
         label,
     };

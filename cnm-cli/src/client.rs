@@ -40,6 +40,8 @@ pub struct CreateKeyRequest {
     pub key_type: KeyType,
     pub derivation_path: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub mnemonic: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -85,6 +87,17 @@ pub struct ListKeysResponse {
 #[derive(Debug, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
+}
+
+/// Percent-encode characters that are not safe in URL path segments.
+///
+/// DID verification method IDs contain `#` (fragment delimiter) and potentially
+/// `?` (query delimiter) which must be encoded when used in path segments.
+/// The `:` character is allowed in path segments per RFC 3986.
+fn encode_path_segment(s: &str) -> String {
+    s.replace('%', "%25")
+        .replace('#', "%23")
+        .replace('?', "%3F")
 }
 
 // ── Client implementation ───────────────────────────────────────────
@@ -173,7 +186,9 @@ impl VtaClient {
         &self,
         key_id: &str,
     ) -> Result<KeyRecord, Box<dyn std::error::Error>> {
-        let req = self.client.get(format!("{}/keys/{}", self.base_url, key_id));
+        let req = self
+            .client
+            .get(format!("{}/keys/{}", self.base_url, encode_path_segment(key_id)));
         let resp = self.with_auth(req).send().await?;
         Self::handle_response(resp).await
     }
@@ -183,7 +198,9 @@ impl VtaClient {
         &self,
         key_id: &str,
     ) -> Result<InvalidateKeyResponse, Box<dyn std::error::Error>> {
-        let req = self.client.delete(format!("{}/keys/{}", self.base_url, key_id));
+        let req = self
+            .client
+            .delete(format!("{}/keys/{}", self.base_url, encode_path_segment(key_id)));
         let resp = self.with_auth(req).send().await?;
         Self::handle_response(resp).await
     }
@@ -197,7 +214,10 @@ impl VtaClient {
         let body = RenameKeyRequest {
             key_id: new_key_id.to_string(),
         };
-        let req = self.client.patch(format!("{}/keys/{}", self.base_url, key_id)).json(&body);
+        let req = self
+            .client
+            .patch(format!("{}/keys/{}", self.base_url, encode_path_segment(key_id)))
+            .json(&body);
         let resp = self.with_auth(req).send().await?;
         Self::handle_response(resp).await
     }

@@ -3,7 +3,6 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
 use tracing::{debug, info};
 
@@ -17,6 +16,7 @@ use crate::server::AppState;
 pub struct CreateKeyRequest {
     pub key_type: KeyType,
     pub derivation_path: String,
+    pub key_id: Option<String>,
     pub mnemonic: Option<String>,
     pub label: Option<String>,
 }
@@ -65,7 +65,10 @@ pub async fn create_key(
     };
 
     let now = Utc::now();
-    let key_id = Uuid::new_v4().to_string();
+    let key_id = req
+        .key_id
+        .clone()
+        .unwrap_or_else(|| req.derivation_path.clone());
     let public_key = secret.get_public_keymultibase()?;
 
     let record = KeyRecord {

@@ -5,6 +5,7 @@ use affinidi_tdk::{
 };
 use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
 use rand::RngCore;
+use tracing::{debug, info};
 
 pub trait Bip32Extension {
     /// Derive an Ed25519 key pair from a seed and BIP32 derivation path.
@@ -62,6 +63,7 @@ pub async fn load_or_generate_seed(
             .map_err(|e| AppError::KeyDerivation(format!("invalid BIP-39 mnemonic: {e}")))?;
         let seed = m.to_seed("");
         seed_store.set(&seed).await?;
+        info!("master seed derived from mnemonic and stored");
         return ExtendedSigningKey::from_seed(&seed).map_err(|e| {
             AppError::KeyDerivation(format!(
                 "Couldn't create bip32 root signing key! Reason: {e}"
@@ -70,6 +72,7 @@ pub async fn load_or_generate_seed(
     }
 
     if let Some(existing) = seed_store.get().await? {
+        debug!("master seed loaded from keyring");
         return ExtendedSigningKey::from_seed(&existing).map_err(|e| {
             AppError::KeyDerivation(format!(
                 "Couldn't create bip32 root signing key! Reason: {e}"
@@ -80,6 +83,7 @@ pub async fn load_or_generate_seed(
     let mut seed = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut seed);
     seed_store.set(&seed).await?;
+    info!("new random master seed generated and stored");
     ExtendedSigningKey::from_seed(&seed).map_err(|e| {
         AppError::KeyDerivation(format!(
             "Couldn't create bip32 root signing key! Reason: {e}"

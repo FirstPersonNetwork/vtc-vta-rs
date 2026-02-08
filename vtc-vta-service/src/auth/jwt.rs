@@ -2,6 +2,7 @@ use crate::error::AppError;
 use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
+use tracing::debug;
 
 /// JWT claims for VTA access tokens.
 #[derive(Debug, Serialize, Deserialize)]
@@ -69,7 +70,10 @@ impl JwtKeys {
 
         jsonwebtoken::decode::<Claims>(token, &self.decoding, &validation)
             .map(|data| data.claims)
-            .map_err(|e| AppError::Unauthorized(format!("invalid token: {e}")))
+            .map_err(|e| {
+                debug!(error = %e, "JWT decode failed");
+                AppError::Unauthorized(format!("invalid token: {e}"))
+            })
     }
 
     /// Create claims for a new access token.

@@ -1,6 +1,7 @@
 use ed25519_dalek::SigningKey;
 use multibase::Base;
 use rand::RngCore;
+use tracing::debug;
 
 use crate::keys::ed25519_multibase_pubkey;
 
@@ -19,6 +20,8 @@ pub fn generate_did_key() -> (String, String) {
     let multibase_pubkey = ed25519_multibase_pubkey(&public_key);
     let did = format!("did:key:{multibase_pubkey}");
     let private_key_multibase = multibase::encode(Base::Base58Btc, &seed);
+
+    debug!(did = %did, "did:key identity generated");
 
     (did, private_key_multibase)
 }

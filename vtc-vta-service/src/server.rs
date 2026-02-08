@@ -20,7 +20,7 @@ use crate::store::{KeyspaceHandle, Store};
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tower_http::trace::TraceLayer;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -219,6 +219,7 @@ async fn find_vta_key_paths(
         .await?
         .ok_or_else(|| AppError::NotFound("VTA key-agreement key not found".into()))?;
 
+    debug!(signing_path = %signing.derivation_path, ka_path = %ka.derivation_path, "VTA key paths resolved");
     Ok((signing.derivation_path, ka.derivation_path))
 }
 
@@ -230,7 +231,9 @@ fn decode_jwt_key(b64: &str) -> Result<JwtKeys, AppError> {
     let key_bytes: [u8; 32] = bytes
         .try_into()
         .map_err(|_| AppError::Config("jwt_signing_key must be exactly 32 bytes".into()))?;
-    JwtKeys::from_ed25519_bytes(&key_bytes)
+    let keys = JwtKeys::from_ed25519_bytes(&key_bytes)?;
+    debug!("JWT signing key decoded successfully");
+    Ok(keys)
 }
 
 async fn session_cleanup_loop(sessions_ks: KeyspaceHandle, auth_config: AuthConfig) {

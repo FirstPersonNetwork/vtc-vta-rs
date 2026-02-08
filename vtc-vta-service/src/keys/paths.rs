@@ -1,5 +1,6 @@
 use crate::error::AppError;
 use crate::store::KeyspaceHandle;
+use tracing::debug;
 
 /// Construct a full derivation path from a base and index.
 pub fn path_at(base: &str, index: u32) -> String {
@@ -28,5 +29,6 @@ pub async fn allocate_path(
     keys_ks
         .insert_raw(counter_key, (current + 1).to_le_bytes().to_vec())
         .await?;
+    debug!(base, path = %path, "derivation path allocated");
     Ok(path)
 }

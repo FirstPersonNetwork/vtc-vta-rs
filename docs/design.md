@@ -119,30 +119,30 @@ vtc-vta-service/src/
 
 ### Configuration
 
-| Method | Path    | Auth  | Purpose          |
-|--------|---------|-------|------------------|
-| GET    | /config | Auth  | Read config      |
-| PATCH  | /config | Admin | Update config    |
+| Method | Path    | Auth        | Purpose          |
+|--------|---------|-------------|------------------|
+| GET    | /config | Auth        | Read config      |
+| PATCH  | /config | Super Admin | Update config    |
 
 ### Keys
 
-| Method | Path            | Auth  | Purpose                               |
-|--------|-----------------|-------|---------------------------------------|
-| GET    | /keys           | Auth  | List (pagination, filter by status/context) |
-| POST   | /keys           | Admin | Create via BIP-32 derivation          |
-| GET    | /keys/{key_id}  | Auth  | Get key record                        |
-| DELETE | /keys/{key_id}  | Admin | Invalidate key                        |
-| PATCH  | /keys/{key_id}  | Admin | Rename key                            |
+| Method | Path            | Auth  | Purpose                                    |
+|--------|-----------------|-------|--------------------------------------------|
+| GET    | /keys           | Auth  | List (filtered by context access)          |
+| POST   | /keys           | Admin | Create (context access checked)            |
+| GET    | /keys/{key_id}  | Auth  | Get key record (context access checked)    |
+| DELETE | /keys/{key_id}  | Admin | Invalidate key (context access checked)    |
+| PATCH  | /keys/{key_id}  | Admin | Rename key (context access checked)        |
 
 ### Contexts
 
-| Method | Path             | Auth  | Purpose           |
-|--------|------------------|-------|-------------------|
-| GET    | /contexts        | Auth  | List all contexts |
-| POST   | /contexts        | Admin | Create context    |
-| GET    | /contexts/{id}   | Auth  | Get context       |
-| PATCH  | /contexts/{id}   | Admin | Update context    |
-| DELETE | /contexts/{id}   | Admin | Delete context    |
+| Method | Path             | Auth        | Purpose                         |
+|--------|------------------|-------------|---------------------------------|
+| GET    | /contexts        | Auth        | List contexts (filtered by access) |
+| POST   | /contexts        | Super Admin | Create context                  |
+| GET    | /contexts/{id}   | Auth        | Get context (access checked)    |
+| PATCH  | /contexts/{id}   | Super Admin | Update context                  |
+| DELETE | /contexts/{id}   | Super Admin | Delete context                  |
 
 ### ACL
 
@@ -155,7 +155,8 @@ vtc-vta-service/src/
 | DELETE | /acl/{did}   | Manage | Delete entry     |
 
 Auth levels: **Auth** = any valid JWT, **Manage** = Admin or Initiator,
-**Admin** = Admin role only.
+**Admin** = Admin role only, **Super Admin** = Admin with empty
+`allowed_contexts`.
 
 ## Authentication
 
@@ -226,12 +227,53 @@ expired sessions from both states.
 | Initiator   | Can manage ACL entries and view resources        |
 | Application | Read-only access to keys, contexts, config       |
 
+### Admin Types
+
+The Admin role has two tiers based on `allowed_contexts`:
+
+| Type          | `allowed_contexts` | Access                                         |
+|---------------|--------------------|-------------------------------------------------|
+| Super admin   | `[]` (empty)       | Unrestricted: config, contexts, all keys and ACL |
+| Context admin | `["vta", ...]`     | Keys and ACL within assigned contexts only       |
+
+No additional role enum values are needed. The distinction is purely based
+on whether `allowed_contexts` is empty.
+
+### Super Admin Requirements
+
+The following operations require super admin:
+
+- **Contexts:** create, update, delete (`POST/PATCH/DELETE /contexts/{id}`)
+- **Config:** update (`PATCH /config`)
+- **Keys:** create or manage keys without a `context_id`
+- **ACL:** create entries with empty `allowed_contexts`
+
 ### Context-Scoped Access
 
 Each ACL entry carries an `allowed_contexts` list. When non-empty, the
 holder can only access resources within those contexts. An Admin with an
-empty list has unrestricted access. The list propagates into JWT claims and
-is re-evaluated on token refresh.
+empty list has unrestricted access (super admin). The list propagates into
+JWT claims and is re-evaluated on token refresh.
+
+**List filtering:** Context-scoped users only see resources that belong to
+their assigned contexts:
+
+- `GET /contexts` — only contexts in `allowed_contexts`
+- `GET /keys` — only keys whose `context_id` is in `allowed_contexts`
+- `GET /acl/` — only entries whose `allowed_contexts` overlap with the caller's
+
+**Single-resource access:** `GET /contexts/{id}`, `GET /keys/{key_id}`, and
+`GET /acl/{did}` validate that the caller has access to the resource's context.
+
+### Privilege Escalation Prevention
+
+Context admins cannot:
+
+- Create or modify ACL entries with empty `allowed_contexts` (would grant
+  super admin access).
+- Grant access to contexts they don't have access to themselves.
+- Generate credentials (`POST /auth/credentials`) with broader context
+  access than their own.
 
 ## Key Management
 

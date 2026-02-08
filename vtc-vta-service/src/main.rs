@@ -13,9 +13,14 @@ mod store;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use clap::{Parser, Subcommand};
 use config::{AppConfig, LogFormat};
+use ed25519_dalek::SigningKey;
+use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
 use keys::seed_store::KeyringSeedStore;
+use multibase::Base;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -33,6 +38,8 @@ struct Cli {
 enum Commands {
     /// Run the interactive setup wizard
     Setup,
+    /// Export admin DID and credential
+    ExportAdmin,
 }
 
 #[tokio::main]
@@ -53,6 +60,12 @@ async fn main() {
             #[cfg(not(feature = "setup"))]
             {
                 eprintln!("Setup wizard not available (compiled without 'setup' feature)");
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::ExportAdmin) => {
+            if let Err(e) = export_admin(cli.config).await {
+                eprintln!("Error: {e}");
                 std::process::exit(1);
             }
         }
@@ -115,4 +128,107 @@ fn init_tracing(config: &AppConfig) {
         LogFormat::Json => subscriber.json().init(),
         LogFormat::Text => subscriber.init(),
     }
+}
+
+async fn export_admin(
+    config_path: Option<PathBuf>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = AppConfig::load(config_path)?;
+    let store = store::Store::open(&config.store)?;
+    let acl_ks = store.keyspace("acl")?;
+    let keys_ks = store.keyspace("keys")?;
+    let seed_store = KeyringSeedStore::new("vtc-vta", "master_seed");
+
+    let vta_did = config.vta_did.as_deref().unwrap_or("(not set)");
+
+    // Find admin ACL entries
+    let entries = acl::list_acl_entries(&acl_ks).await?;
+    let admins: Vec<_> = entries
+        .iter()
+        .filter(|e| e.role == acl::Role::Admin)
+        .collect();
+
+    if admins.is_empty() {
+        eprintln!("No admin entries found in ACL.");
+        return Ok(());
+    }
+
+    eprintln!("VTA DID: {vta_did}");
+    if let Some(msg) = &config.messaging {
+        eprintln!("Mediator DID: {}", msg.mediator_did);
+    }
+    eprintln!();
+
+    // Load seed for credential reconstruction
+    let seed = seed_store.get().await?;
+
+    for admin in &admins {
+        eprintln!("Admin DID: {}", admin.did);
+        if let Some(label) = &admin.label {
+            eprintln!("  Label: {label}");
+        }
+
+        // For did:key admins, reconstruct the credential
+        if admin.did.starts_with("did:key:") {
+            if let Some(ref seed) = seed {
+                match reconstruct_credential(
+                    seed,
+                    &admin.did,
+                    vta_did,
+                    &keys_ks,
+                ).await {
+                    Ok(credential) => {
+                        eprintln!();
+                        eprintln!("  Credential:");
+                        eprintln!("  {credential}");
+                    }
+                    Err(e) => {
+                        eprintln!("  Could not reconstruct credential: {e}");
+                    }
+                }
+            } else {
+                eprintln!("  No seed in keyring — cannot reconstruct credential");
+            }
+        }
+        eprintln!();
+    }
+
+    Ok(())
+}
+
+/// Re-derive the admin private key from BIP-32 seed and build the credential bundle.
+async fn reconstruct_credential(
+    seed: &[u8],
+    admin_did: &str,
+    vta_did: &str,
+    keys_ks: &store::KeyspaceHandle,
+) -> Result<String, Box<dyn std::error::Error>> {
+    // The did:key fragment is {did}#{multibase_pubkey}
+    let multibase_pubkey = admin_did.strip_prefix("did:key:").unwrap();
+    let key_id = format!("{admin_did}#{multibase_pubkey}");
+
+    // Look up the key record to get the derivation path
+    let record: keys::KeyRecord = keys_ks
+        .get(keys::store_key(&key_id))
+        .await?
+        .ok_or("admin key record not found in store")?;
+
+    // Re-derive the private key
+    let root = ExtendedSigningKey::from_seed(seed)
+        .map_err(|e| format!("failed to create BIP-32 root key: {e}"))?;
+    let derivation_path: DerivationPath = record.derivation_path.parse()
+        .map_err(|e| format!("invalid derivation path: {e}"))?;
+    let derived = root.derive(&derivation_path)
+        .map_err(|e| format!("key derivation failed: {e}"))?;
+
+    let signing_key = SigningKey::from_bytes(derived.signing_key.as_bytes());
+    let private_key_multibase = multibase::encode(Base::Base58Btc, signing_key.as_bytes());
+
+    let bundle = serde_json::json!({
+        "did": admin_did,
+        "privateKeyMultibase": private_key_multibase,
+        "vtaDid": vta_did,
+    });
+    let bundle_json = serde_json::to_string(&bundle)?;
+    Ok(BASE64.encode(bundle_json.as_bytes()))
 }

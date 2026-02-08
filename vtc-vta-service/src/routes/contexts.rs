@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use tracing::info;
 
-use crate::auth::{AdminAuth, AuthClaims};
+use crate::auth::{AuthClaims, SuperAdminAuth};
 use crate::contexts::{
     ContextRecord, allocate_context_index, delete_context, get_context, list_contexts,
     store_context,
@@ -90,19 +90,23 @@ fn validate_slug(id: &str) -> Result<(), AppError> {
 // ---------- GET /contexts ----------
 
 pub async fn list_contexts_handler(
-    _auth: AuthClaims,
+    auth: AuthClaims,
     State(state): State<AppState>,
 ) -> Result<Json<ContextListResponse>, AppError> {
     let records = list_contexts(&state.contexts_ks).await?;
-    let contexts: Vec<ContextResponse> = records.into_iter().map(ContextResponse::from).collect();
-    info!(count = contexts.len(), "contexts listed");
+    let contexts: Vec<ContextResponse> = records
+        .into_iter()
+        .filter(|r| auth.has_context_access(&r.id))
+        .map(ContextResponse::from)
+        .collect();
+    info!(caller = %auth.did, count = contexts.len(), "contexts listed");
     Ok(Json(ContextListResponse { contexts }))
 }
 
 // ---------- POST /contexts ----------
 
 pub async fn create_context_handler(
-    _auth: AdminAuth,
+    _auth: SuperAdminAuth,
     State(state): State<AppState>,
     Json(req): Json<CreateContextRequest>,
 ) -> Result<(StatusCode, Json<ContextResponse>), AppError> {
@@ -139,10 +143,11 @@ pub async fn create_context_handler(
 // ---------- GET /contexts/{id} ----------
 
 pub async fn get_context_handler(
-    _auth: AuthClaims,
+    auth: AuthClaims,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<Json<ContextResponse>, AppError> {
+    auth.require_context(&id)?;
     let record = get_context(&state.contexts_ks, &id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("context not found: {id}")))?;
@@ -153,7 +158,7 @@ pub async fn get_context_handler(
 // ---------- PATCH /contexts/{id} ----------
 
 pub async fn update_context_handler(
-    _auth: AdminAuth,
+    _auth: SuperAdminAuth,
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(req): Json<UpdateContextRequest>,
@@ -182,7 +187,7 @@ pub async fn update_context_handler(
 // ---------- DELETE /contexts/{id} ----------
 
 pub async fn delete_context_handler(
-    _auth: AdminAuth,
+    _auth: SuperAdminAuth,
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Result<StatusCode, AppError> {

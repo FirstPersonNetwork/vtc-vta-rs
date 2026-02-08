@@ -3,6 +3,7 @@ use axum::http::request::Parts;
 use axum_extra::TypedHeader;
 use axum_extra::headers::Authorization;
 use axum_extra::headers::authorization::Bearer;
+use tracing::warn;
 
 use crate::acl::Role;
 use crate::auth::session::{SessionState, get_session};
@@ -34,7 +35,10 @@ impl FromRequestParts<AppState> for AuthClaims {
         let TypedHeader(auth) =
             TypedHeader::<Authorization<Bearer>>::from_request_parts(parts, state)
                 .await
-                .map_err(|_| AppError::Unauthorized("missing or invalid Authorization header".into()))?;
+                .map_err(|_| {
+                    warn!("auth rejected: missing or invalid Authorization header");
+                    AppError::Unauthorized("missing or invalid Authorization header".into())
+                })?;
 
         let token = auth.token();
 
@@ -49,9 +53,13 @@ impl FromRequestParts<AppState> for AuthClaims {
         // Verify session exists and is authenticated
         let session = get_session(&state.sessions_ks, &claims.session_id)
             .await?
-            .ok_or_else(|| AppError::Unauthorized("session not found".into()))?;
+            .ok_or_else(|| {
+                warn!(session_id = %claims.session_id, "auth rejected: session not found");
+                AppError::Unauthorized("session not found".into())
+            })?;
 
         if session.state != SessionState::Authenticated {
+            warn!(session_id = %claims.session_id, "auth rejected: session not in authenticated state");
             return Err(AppError::Unauthorized("session not authenticated".into()));
         }
 
@@ -67,14 +75,23 @@ impl FromRequestParts<AppState> for AuthClaims {
 }
 
 impl AuthClaims {
+    /// Returns `true` if the caller is an admin with unrestricted access
+    /// (empty `allowed_contexts`).
+    pub fn is_super_admin(&self) -> bool {
+        self.role == Role::Admin && self.allowed_contexts.is_empty()
+    }
+
+    /// Returns `true` if the caller has access to the given context,
+    /// either as a super admin or by explicit context assignment.
+    pub fn has_context_access(&self, context_id: &str) -> bool {
+        self.is_super_admin() || self.allowed_contexts.contains(&context_id.to_string())
+    }
+
     /// Check that the caller has access to the given context.
     ///
     /// Admins with an empty `allowed_contexts` list have unrestricted access.
     pub fn require_context(&self, context_id: &str) -> Result<(), AppError> {
-        if self.role == Role::Admin && self.allowed_contexts.is_empty() {
-            return Ok(());
-        }
-        if self.allowed_contexts.contains(&context_id.to_string()) {
+        if self.has_context_access(context_id) {
             return Ok(());
         }
         Err(AppError::Forbidden(format!(
@@ -103,9 +120,12 @@ impl FromRequestParts<AppState> for ManageAuth {
 
         match claims.role {
             Role::Admin | Role::Initiator => Ok(ManageAuth(claims)),
-            _ => Err(AppError::Forbidden(
-                "admin or initiator role required".into(),
-            )),
+            _ => {
+                warn!(did = %claims.did, role = %claims.role, "auth rejected: admin or initiator role required");
+                Err(AppError::Forbidden(
+                    "admin or initiator role required".into(),
+                ))
+            }
         }
     }
 }
@@ -130,7 +150,39 @@ impl FromRequestParts<AppState> for AdminAuth {
 
         match claims.role {
             Role::Admin => Ok(AdminAuth(claims)),
-            _ => Err(AppError::Forbidden("admin role required".into())),
+            _ => {
+                warn!(did = %claims.did, role = %claims.role, "auth rejected: admin role required");
+                Err(AppError::Forbidden("admin role required".into()))
+            }
         }
+    }
+}
+
+/// Extractor that requires the caller to be a super admin (Admin role with
+/// empty `allowed_contexts`).
+///
+/// Use on endpoints that only unrestricted administrators should access,
+/// such as creating/deleting contexts or modifying global configuration:
+/// ```ignore
+/// async fn handler(auth: SuperAdminAuth, ...) { }
+/// ```
+#[derive(Debug, Clone)]
+pub struct SuperAdminAuth(pub AuthClaims);
+
+impl FromRequestParts<AppState> for SuperAdminAuth {
+    type Rejection = AppError;
+
+    async fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
+        let claims = AuthClaims::from_request_parts(parts, state).await?;
+
+        if !claims.is_super_admin() {
+            warn!(did = %claims.did, "auth rejected: super admin required");
+            return Err(AppError::Forbidden("super admin required".into()));
+        }
+
+        Ok(SuperAdminAuth(claims))
     }
 }

@@ -2,6 +2,7 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
+use crate::auth::extractor::AuthClaims;
 use crate::error::AppError;
 use crate::store::KeyspaceHandle;
 
@@ -104,4 +105,43 @@ pub async fn check_acl_full(
         Some(entry) => Ok((entry.role, entry.allowed_contexts)),
         None => Err(AppError::Forbidden(format!("DID not in ACL: {did}"))),
     }
+}
+
+/// Validate that the caller is allowed to create or modify an ACL entry
+/// with the given `target_contexts`.
+///
+/// - Super admins can do anything.
+/// - Context admins cannot create entries with empty `allowed_contexts`
+///   (that would grant super admin access) and can only assign contexts
+///   they themselves have access to.
+pub fn validate_acl_modification(
+    caller: &AuthClaims,
+    target_contexts: &[String],
+) -> Result<(), AppError> {
+    if caller.is_super_admin() {
+        return Ok(());
+    }
+    if target_contexts.is_empty() {
+        return Err(AppError::Forbidden(
+            "only super admin can create unrestricted accounts".into(),
+        ));
+    }
+    for ctx in target_contexts {
+        caller.require_context(ctx)?;
+    }
+    Ok(())
+}
+
+/// Check whether an ACL entry is visible to the caller.
+///
+/// Super admins see all entries. Context admins only see entries whose
+/// `allowed_contexts` overlap with their own.
+pub fn is_acl_entry_visible(caller: &AuthClaims, entry: &AclEntry) -> bool {
+    if caller.is_super_admin() {
+        return true;
+    }
+    entry
+        .allowed_contexts
+        .iter()
+        .any(|ctx| caller.has_context_access(ctx))
 }

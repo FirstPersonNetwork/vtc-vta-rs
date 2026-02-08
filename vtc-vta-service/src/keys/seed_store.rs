@@ -1,4 +1,5 @@
 use crate::error::AppError;
+use tracing::debug;
 
 pub struct KeyringSeedStore {
     service: String,
@@ -25,9 +26,13 @@ impl KeyringSeedStore {
                     let bytes = hex::decode(&hex_seed).map_err(|e| {
                         AppError::Keyring(format!("failed to decode seed: {e}"))
                     })?;
+                    debug!("seed loaded from keyring");
                     Ok(Some(bytes))
                 }
-                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(keyring::Error::NoEntry) => {
+                    debug!("no seed found in keyring");
+                    Ok(None)
+                }
                 Err(e) => Err(AppError::Keyring(format!("failed to read seed: {e}"))),
             }
         })
@@ -45,7 +50,9 @@ impl KeyringSeedStore {
             })?;
             entry
                 .set_password(&hex_seed)
-                .map_err(|e| AppError::Keyring(format!("failed to store seed: {e}")))
+                .map_err(|e| AppError::Keyring(format!("failed to store seed: {e}")))?;
+            debug!("seed stored in keyring");
+            Ok(())
         })
         .await
         .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))?

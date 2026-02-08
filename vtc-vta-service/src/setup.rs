@@ -295,7 +295,18 @@ pub async fn run_setup_wizard(
         Some(community_description)
     };
 
-    // 4. Server host
+    // 4. Public URL
+    let public_url: String = Input::new()
+        .with_prompt("Public URL for this VTA (leave empty to skip)")
+        .allow_empty(true)
+        .interact_text()?;
+    let public_url = if public_url.is_empty() {
+        None
+    } else {
+        Some(public_url)
+    };
+
+    // 5. Server host
     let host: String = Input::new()
         .with_prompt("Server host")
         .default("0.0.0.0".into())
@@ -422,7 +433,7 @@ pub async fn run_setup_wizard(
 
     // 14. Bootstrap admin DID in ACL
     let (admin_did, admin_credential) =
-        create_admin_did(&seed, &vta_did, &vta_ctx.base_path, &keys_ks).await?;
+        create_admin_did(&seed, &vta_did, &public_url, &vta_ctx.base_path, &keys_ks).await?;
 
     let acl_ks = store.keyspace("acl")?;
     let admin_entry = AclEntry {
@@ -447,7 +458,7 @@ pub async fn run_setup_wizard(
         vta_did,
         community_name,
         community_description,
-        public_url: None,
+        public_url: public_url.clone(),
         server: ServerConfig { host, port },
         log: LogConfig {
             level: log_level,
@@ -472,6 +483,9 @@ pub async fn run_setup_wizard(
     eprintln!("  Seed stored in OS keyring (service: vtc-vta, user: master_seed)");
     if let Some(name) = &config.community_name {
         eprintln!("  Community: {name}");
+    }
+    if let Some(url) = &config.public_url {
+        eprintln!("  Public URL: {url}");
     }
     if let Some(did) = &config.vta_did {
         eprintln!("  VTA DID: {did}");
@@ -505,6 +519,7 @@ pub async fn run_setup_wizard(
 async fn create_admin_did(
     seed: &[u8],
     vta_did: &Option<String>,
+    public_url: &Option<String>,
     vta_base_path: &str,
     keys_ks: &KeyspaceHandle,
 ) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
@@ -526,11 +541,14 @@ async fn create_admin_did(
 
             // Build credential bundle (same format as POST /auth/credentials)
             let vta_did_str = vta_did.clone().unwrap_or_default();
-            let bundle = serde_json::json!({
+            let mut bundle = serde_json::json!({
                 "did": did,
                 "privateKeyMultibase": private_key_multibase,
                 "vtaDid": vta_did_str,
             });
+            if let Some(url) = public_url {
+                bundle["vtaUrl"] = serde_json::json!(url);
+            }
             let bundle_json = serde_json::to_string(&bundle)?;
             let credential = BASE64.encode(bundle_json.as_bytes());
 

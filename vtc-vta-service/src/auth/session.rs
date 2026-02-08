@@ -38,7 +38,9 @@ pub async fn store_session(
 ) -> Result<(), AppError> {
     sessions
         .insert(session_key(&session.session_id), session)
-        .await
+        .await?;
+    debug!(session_id = %session.session_id, did = %session.did, "session stored");
+    Ok(())
 }
 
 /// Load a session by session_id.
@@ -104,6 +106,7 @@ pub async fn delete_session(
             sessions.remove(refresh_key(token)).await?;
         }
         sessions.remove(session_key(session_id)).await?;
+        debug!(session_id, "session deleted");
     }
     Ok(())
 }
@@ -154,9 +157,7 @@ pub async fn cleanup_expired_sessions(
         }
     }
 
-    if removed > 0 {
-        debug!("session cleanup: removed {removed} expired sessions");
-    }
+    debug!(removed, "session cleanup complete");
 
     Ok(())
 }

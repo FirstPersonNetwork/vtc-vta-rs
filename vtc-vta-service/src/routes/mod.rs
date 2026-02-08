@@ -49,7 +49,7 @@ pub fn router() -> Router<AppState> {
                 .delete(contexts::delete_context_handler),
         )
         // ACL routes (flattened for consistency)
-        .route("/acl/", get(acl::list_acl).post(acl::create_acl))
+        .route("/acl", get(acl::list_acl).post(acl::create_acl))
         .route(
             "/acl/{did}",
             get(acl::get_acl)

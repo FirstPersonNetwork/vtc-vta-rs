@@ -1,20 +1,222 @@
 # Verified Trust Communities - Verified Trust Agent
 
-[![Rust](https://img.shields.io/badge/rust-1.90.0%2B-blue.svg?maxAge=3600)](https://github.com/FirstPersonNetwork/ostc-ostc-rs)
+[![Rust](https://img.shields.io/badge/rust-1.91.0%2B-blue.svg?maxAge=3600)](https://github.com/FirstPersonNetwork/vtc-vta-rs)
 
-A Community built on trust requires an always-on Trust Agent to manage keys and
-policies relating to the community.
-
-Contained in this workspace are various services and tools that help create a
-Verified Trust Community and corresponding Verified Trust Agents for the community.
+A Verified Trust Agent (VTA) is an always-on service that manages cryptographic
+keys, DIDs, and access-control policies for a
+[Verified Trust Community](https://www.firstperson.network/white-paper). This
+repository contains the VTA service, a shared SDK, and the Community Network
+Manager (CNM) CLI.
 
 ## Table of Contents
 
+- [Overview](#overview)
+- [Architecture](#architecture)
+- [Prerequisites](#prerequisites)
+- [Getting Started](#getting-started)
+- [Example: Creating a New Application Context](#example-creating-a-new-application-context)
+- [CLI Reference](#cli-reference)
 - [Additional Resources](#additional-resources)
+
+## Overview
+
+The repository is a Rust workspace with three crates:
+
+| Crate | Description |
+|---|---|
+| **vtc-vta-service** | Axum HTTP service -- the VTA itself. Manages keys, contexts, ACL, sessions, and DIDComm authentication. |
+| **vtc-vta-sdk** | Shared types (`KeyRecord`, `ContextRecord`, protocol constants) used by both the service and CLI. |
+| **cnm-cli** | Community Network Manager CLI -- the primary client for operating a VTA. |
+
+## Architecture
+
+The VTA is built on Axum with an embedded fjall key-value store for
+persistence. Cryptographic keys derive from a single BIP-39 mnemonic via
+BIP-32 Ed25519 derivation, and the master seed is stored in the OS keyring
+(never on disk). Authentication uses a DIDComm v2 challenge-response flow
+that issues short-lived EdDSA JWTs.
+
+| Layer | Technology |
+|---|---|
+| Web framework | Axum 0.8 |
+| Async runtime | Tokio |
+| Storage | fjall (embedded LSM key-value store) |
+| Cryptography | ed25519-dalek, ed25519-dalek-bip32 |
+| DID resolution | affinidi-did-resolver-cache-sdk |
+| DIDComm | affinidi-tdk (didcomm, secrets_resolver) |
+| JWT | jsonwebtoken (EdDSA / Ed25519) |
+| Seed storage | OS keyring (keyring crate) |
+
+See [docs/design.md](docs/design.md) for the full design document.
+
+## Prerequisites
+
+- **Rust 1.91.0+** (edition 2024)
+- **OS keyring support** -- the master seed is stored in your platform's
+  credential manager:
+  - macOS: Keychain
+  - Linux: secret-service (e.g. GNOME Keyring)
+  - Windows: Credential Manager
+
+## Getting Started
+
+### Build
+
+```sh
+cargo build --workspace
+```
+
+### Run the Setup Wizard
+
+The setup wizard bootstraps a new VTA instance. It is behind the `setup`
+feature flag:
+
+```sh
+cargo run --package vtc-vta-service --features setup -- setup
+```
+
+The wizard walks through these steps:
+
+1. **Server configuration** -- host, port, log level, data directory.
+2. **Seed contexts** -- creates the built-in `vta`, `mediator`, and
+   `trust-registry` contexts.
+3. **Mnemonic** -- generate a new BIP-39 mnemonic or import an existing one.
+   The derived seed is stored in the OS keyring.
+4. **JWT signing key** -- a random Ed25519 key for signing access tokens.
+5. **Mediator DID** -- creates a `did:webvh` with signing and key-agreement
+   keys.
+6. **VTA DID** -- creates a `did:webvh` with a DIDComm service endpoint
+   pointing to the mediator.
+7. **Admin credential** -- generates a `did:key` credential for the first
+   administrator.
+8. **ACL bootstrap** -- registers the admin in the access-control list.
+9. **Persist** -- writes `config.toml` and flushes the store.
+
+> **Save the mnemonic and admin credential.** The mnemonic is the root of all
+> key material; the admin credential is required to authenticate the CLI.
+
+### Start the VTA Service
+
+```sh
+cargo run --package vtc-vta-service
+```
+
+The service listens on the host and port configured during setup (default
+`127.0.0.1:3000`). Verify it is running:
+
+```sh
+cargo run --package cnm-cli -- health
+```
+
+### Authenticate the CLI
+
+Use the admin credential printed during setup:
+
+```sh
+cargo run --package cnm-cli -- auth login <credential>
+```
+
+This imports the credential into the OS keyring, performs a DIDComm
+challenge-response handshake, and caches the resulting tokens. Subsequent
+commands authenticate automatically.
+
+## Example: Creating a New Application Context
+
+The `contexts bootstrap` command creates a context and generates credentials
+for its first admin in a single step:
+
+```sh
+cargo run --package cnm-cli -- contexts bootstrap \
+  --id myapp \
+  --name "My Application" \
+  --admin-label "MyApp Admin"
+```
+
+This outputs a credential string. Give it to the context administrator so they
+can authenticate:
+
+```sh
+cargo run --package cnm-cli -- auth login <context-admin-credential>
+```
+
+Follow-up commands the context admin can now run:
+
+```sh
+# List all contexts visible to this credential
+cargo run --package cnm-cli -- contexts list
+
+# Create an Ed25519 signing key in the new context
+cargo run --package cnm-cli -- keys create --key-type ed25519 --context-id myapp --label "Signing Key"
+
+# List keys
+cargo run --package cnm-cli -- keys list
+```
+
+## CLI Reference
+
+The CLI binary is `cnm`. All commands below use `cargo run --package cnm-cli --`
+during development; in a release build, replace that prefix with `cnm`.
+
+### General
+
+| Command | Description |
+|---|---|
+| `health` | Check VTA service health and version |
+
+### Authentication
+
+| Command | Description |
+|---|---|
+| `auth login <credential>` | Import credential and authenticate |
+| `auth logout` | Clear stored credentials and tokens |
+| `auth status` | Show current authentication status |
+
+### Configuration
+
+| Command | Description |
+|---|---|
+| `config get` | Show current VTA configuration |
+| `config update [--community-name ...] [--community-description ...] [--public-url ...]` | Update configuration fields |
+
+### Keys
+
+| Command | Description |
+|---|---|
+| `keys list [--status active\|revoked] [--limit N] [--offset N]` | List keys |
+| `keys create --key-type ed25519\|x25519 [--context-id ID] [--label LABEL]` | Create a key |
+| `keys get <key_id>` | Get a key by ID |
+| `keys revoke <key_id>` | Revoke (invalidate) a key |
+| `keys rename <key_id> <new_key_id>` | Rename a key |
+
+### Contexts
+
+| Command | Description |
+|---|---|
+| `contexts list` | List application contexts |
+| `contexts get <id>` | Get a context by ID |
+| `contexts create --id ID --name NAME [--description DESC]` | Create a context |
+| `contexts update <id> [--name ...] [--did ...] [--description ...]` | Update a context |
+| `contexts delete <id>` | Delete a context |
+| `contexts bootstrap --id ID --name NAME [--admin-label LABEL]` | Create a context and generate its first admin credential |
+
+### ACL
+
+| Command | Description |
+|---|---|
+| `acl list [--context ID]` | List ACL entries |
+| `acl get <did>` | Get an ACL entry by DID |
+| `acl create --did DID --role ROLE [--label LABEL] [--contexts ctx1,ctx2]` | Create an ACL entry |
+| `acl update <did> [--role ROLE] [--label LABEL] [--contexts ctx1,ctx2]` | Update an ACL entry |
+| `acl delete <did>` | Delete an ACL entry |
+
+### Auth Credentials
+
+| Command | Description |
+|---|---|
+| `auth-credential create --role ROLE [--label LABEL] [--contexts ctx1,ctx2]` | Generate a did:key credential with an ACL entry |
 
 ## Additional Resources
 
-Additional resources to learn more about Verified Trust Communities and Verified
-Trust Agents:
-
 - [First Person Project White Paper](https://www.firstperson.network/white-paper)
+- [Design Document](docs/design.md)
+- [BIP-32 Path Specification](docs/bip32_paths.md)

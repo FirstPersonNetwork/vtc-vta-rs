@@ -12,7 +12,7 @@ The repository is a Rust workspace with three crates:
 ```
 vtc-vta-rs/
   vtc-vta-sdk/       Shared types (KeyRecord, ContextRecord, protocol constants)
-  vtc-vta-service/    Axum HTTP service (this document's focus)
+  vta-service/        Axum HTTP service (this document's focus)
   cnm-cli/            Community Network Manager CLI
 ```
 
@@ -60,7 +60,7 @@ Keyspace handles wrap fjall partitions and expose async CRUD via
 ## Module Map
 
 ```
-vtc-vta-service/src/
+vta-service/src/
   main.rs          CLI entry (run server or setup wizard)
   server.rs        Router construction, AppState init, graceful shutdown
   config.rs        TOML config with env var overrides

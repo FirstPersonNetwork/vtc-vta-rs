@@ -24,7 +24,7 @@ The repository is a Rust workspace with three crates:
 
 | Crate | Description |
 |---|---|
-| **vtc-vta-service** | Axum HTTP service -- the VTA itself. Manages keys, contexts, ACL, sessions, and DIDComm authentication. |
+| **vta-service** | Axum HTTP service -- the VTA itself. Manages keys, contexts, ACL, sessions, and DIDComm authentication. |
 | **vtc-vta-sdk** | Shared types (`KeyRecord`, `ContextRecord`, protocol constants) used by both the service and CLI. |
 | **cnm-cli** | Community Network Manager CLI -- the primary client for operating a VTA. |
 
@@ -72,7 +72,7 @@ The setup wizard bootstraps a new VTA instance. It is behind the `setup`
 feature flag:
 
 ```sh
-cargo run --package vtc-vta-service --features setup -- setup
+cargo run --package vta-service --features setup -- setup
 ```
 
 The wizard walks through these steps:
@@ -98,7 +98,7 @@ The wizard walks through these steps:
 ### Start the VTA Service
 
 ```sh
-cargo run --package vtc-vta-service
+cargo run --package vta-service
 ```
 
 The service listens on the host and port configured during setup (default

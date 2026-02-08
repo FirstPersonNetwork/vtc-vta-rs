@@ -8,10 +8,10 @@ Rust workspace for **Verified Trust Communities (VTC) - Verified Trust Agent (VT
 
 ## Workspace Structure
 
-This repo lives at `vtc-vta-rs/vtc-vta-service/` within a two-crate workspace:
+This repo lives at `vtc-vta-rs/vta-service/` within a two-crate workspace:
 
 - **vtc-vta-sdk** (`../vtc-vta-sdk/`) — Library crate providing the SDK for Verified Trust Agents
-- **vtc-vta-service** (this crate) — Binary service application
+- **vta-service** (this crate) — Binary service application
 
 Both crates share configuration via `workspace.package` in the root `Cargo.toml`.
 
@@ -27,13 +27,13 @@ cargo build
 cargo check
 
 # Run the service
-cargo run --package vtc-vta-service
+cargo run --package vta-service
 
 # Run all tests
 cargo test
 
 # Run tests for a single crate
-cargo test --package vtc-vta-service
+cargo test --package vta-service
 cargo test --package vtc-vta-sdk
 
 # Run a single test by name

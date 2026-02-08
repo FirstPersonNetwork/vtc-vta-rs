@@ -1,5 +1,5 @@
 [package]
-name = "vtc-vta-service"
+name = "vta-service"
 description = "Service for Verified Trust Agents operating in Verified Trust Communities"
 version.workspace = true
 edition.workspace = true

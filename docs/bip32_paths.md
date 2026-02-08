@@ -103,5 +103,5 @@ the `VTA_AUTH_JWT_SIGNING_KEY` environment variable.
 
 ## Source
 
-- Path allocation logic: [`vtc-vta-service/src/keys/paths.rs`](../vtc-vta-service/src/keys/paths.rs)
-- Context management: [`vtc-vta-service/src/contexts/mod.rs`](../vtc-vta-service/src/contexts/mod.rs)
+- Path allocation logic: [`vta-service/src/keys/paths.rs`](../vta-service/src/keys/paths.rs)
+- Context management: [`vta-service/src/contexts/mod.rs`](../vta-service/src/contexts/mod.rs)

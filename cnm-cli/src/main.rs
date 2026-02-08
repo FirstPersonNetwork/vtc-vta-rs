@@ -7,10 +7,10 @@ use client::{
     UpdateAclRequest, UpdateConfigRequest, UpdateContextRequest, VtaClient,
 };
 use ratatui::{
+    TerminalOptions, Viewport,
     layout::Constraint,
     style::{Color, Modifier, Style},
     widgets::{Block, Cell, Row, Table},
-    TerminalOptions, Viewport,
 };
 use vtc_vta_sdk::keys::KeyType;
 
@@ -308,7 +308,7 @@ async fn main() {
 
     let url = cli
         .url
-        .or_else(|| auth::stored_url())
+        .or_else(auth::stored_url)
         .unwrap_or_else(|| "http://localhost:3000".to_string());
     let mut client = VtaClient::new(&url);
 
@@ -326,9 +326,7 @@ async fn main() {
     let result = match cli.command {
         Commands::Health => cmd_health(&client).await,
         Commands::Auth { command } => match command {
-            AuthCommands::Login { credential } => {
-                auth::login(&credential, client.base_url()).await
-            }
+            AuthCommands::Login { credential } => auth::login(&credential, client.base_url()).await,
             AuthCommands::Logout => {
                 auth::logout();
                 Ok(())
@@ -410,8 +408,15 @@ async fn main() {
                 label,
                 context_id,
             } => {
-                cmd_key_create(&client, &key_type, derivation_path, mnemonic, label, context_id)
-                    .await
+                cmd_key_create(
+                    &client,
+                    &key_type,
+                    derivation_path,
+                    mnemonic,
+                    label,
+                    context_id,
+                )
+                .await
             }
             KeyCommands::Get { key_id } => cmd_key_get(&client, &key_id).await,
             KeyCommands::Revoke { key_id } => cmd_key_revoke(&client, &key_id).await,
@@ -505,7 +510,9 @@ async fn cmd_key_create(
     let key_type = match key_type {
         "ed25519" => KeyType::Ed25519,
         "x25519" => KeyType::X25519,
-        other => return Err(format!("unknown key type '{other}', expected ed25519 or x25519").into()),
+        other => {
+            return Err(format!("unknown key type '{other}', expected ed25519 or x25519").into());
+        }
     };
     let req = CreateKeyRequest {
         key_type,
@@ -529,10 +536,7 @@ async fn cmd_key_create(
     Ok(())
 }
 
-async fn cmd_key_get(
-    client: &VtaClient,
-    key_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn cmd_key_get(client: &VtaClient, key_id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let resp = client.get_key(key_id).await?;
     println!("Key ID:          {}", resp.key_id);
     println!("Key Type:        {}", resp.key_type);
@@ -577,9 +581,7 @@ async fn cmd_key_list(
     limit: u64,
     status: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let resp = client
-        .list_keys(offset, limit, status.as_deref())
-        .await?;
+    let resp = client.list_keys(offset, limit, status.as_deref()).await?;
 
     if resp.keys.is_empty() {
         println!("No keys found.");
@@ -595,45 +597,43 @@ async fn cmd_key_list(
         .style(header_style)
         .bottom_margin(1);
 
-    let rows: Vec<Row> = resp
-        .keys
-        .iter()
-        .map(|key| {
-            let label = key.label.clone().unwrap_or_else(|| "\u{2014}".into());
-            let created = key.created_at.format("%Y-%m-%d").to_string();
+    let rows: Vec<Row> =
+        resp.keys
+            .iter()
+            .map(|key| {
+                let label = key.label.clone().unwrap_or_else(|| "\u{2014}".into());
+                let created = key.created_at.format("%Y-%m-%d").to_string();
 
-            let status_cell = match key.status {
-                vtc_vta_sdk::keys::KeyStatus::Active => {
-                    Cell::from(key.status.to_string()).style(Style::default().fg(Color::Green))
-                }
-                vtc_vta_sdk::keys::KeyStatus::Revoked => {
-                    Cell::from(key.status.to_string()).style(Style::default().fg(Color::Red))
-                }
-            };
+                let status_cell =
+                    match key.status {
+                        vtc_vta_sdk::keys::KeyStatus::Active => Cell::from(key.status.to_string())
+                            .style(Style::default().fg(Color::Green)),
+                        vtc_vta_sdk::keys::KeyStatus::Revoked => Cell::from(key.status.to_string())
+                            .style(Style::default().fg(Color::Red)),
+                    };
 
-            Row::new(vec![
-                Cell::from(label),
-                Cell::from(key.key_type.to_string()),
-                status_cell,
-                Cell::from(key.derivation_path.clone()),
-                Cell::from(key.key_id.clone())
-                    .style(Style::default().fg(Color::DarkGray)),
-                Cell::from(created),
-            ])
-        })
-        .collect();
+                Row::new(vec![
+                    Cell::from(label),
+                    Cell::from(key.key_type.to_string()),
+                    status_cell,
+                    Cell::from(key.derivation_path.clone()),
+                    Cell::from(key.key_id.clone()).style(Style::default().fg(Color::DarkGray)),
+                    Cell::from(created),
+                ])
+            })
+            .collect();
 
     let title = format!(" Keys ({}\u{2013}{} of {}) ", offset + 1, end, resp.total);
 
     let table = Table::new(
         rows,
         [
-            Constraint::Min(20),      // Label
-            Constraint::Length(9),     // Type
-            Constraint::Length(9),     // Status
-            Constraint::Length(16),    // Path
-            Constraint::Length(36),    // ID
-            Constraint::Length(10),    // Created
+            Constraint::Min(20),    // Label
+            Constraint::Length(9),  // Type
+            Constraint::Length(9),  // Status
+            Constraint::Length(16), // Path
+            Constraint::Length(36), // ID
+            Constraint::Length(10), // Created
         ],
     )
     .header(header)
@@ -677,10 +677,9 @@ fn format_role(role: &str, contexts: &[String]) -> String {
 fn validate_role(role: &str) -> Result<(), Box<dyn std::error::Error>> {
     match role {
         "admin" | "initiator" | "application" => Ok(()),
-        _ => Err(format!(
-            "invalid role '{role}', expected: admin, initiator, or application"
-        )
-        .into()),
+        _ => {
+            Err(format!("invalid role '{role}', expected: admin, initiator, or application").into())
+        }
     }
 }
 
@@ -714,8 +713,7 @@ async fn cmd_acl_list(
                 Cell::from(format_role(&entry.role, &entry.allowed_contexts)),
                 Cell::from(label),
                 Cell::from(contexts),
-                Cell::from(entry.created_by.clone())
-                    .style(Style::default().fg(Color::DarkGray)),
+                Cell::from(entry.created_by.clone()).style(Style::default().fg(Color::DarkGray)),
             ])
         })
         .collect();
@@ -725,11 +723,11 @@ async fn cmd_acl_list(
     let table = Table::new(
         rows,
         [
-            Constraint::Length(52),    // DID
-            Constraint::Length(12),    // Role
-            Constraint::Min(16),       // Label
-            Constraint::Length(24),    // Contexts
-            Constraint::Length(52),    // Created By
+            Constraint::Length(52), // DID
+            Constraint::Length(12), // Role
+            Constraint::Min(16),    // Label
+            Constraint::Length(24), // Contexts
+            Constraint::Length(52), // Created By
         ],
     )
     .header(header)
@@ -751,18 +749,21 @@ async fn cmd_acl_list(
     Ok(())
 }
 
-async fn cmd_acl_get(
-    client: &VtaClient,
-    did: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn cmd_acl_get(client: &VtaClient, did: &str) -> Result<(), Box<dyn std::error::Error>> {
     let entry = client.get_acl(did).await?;
     println!("DID:              {}", entry.did);
-    println!("Role:             {}", format_role(&entry.role, &entry.allowed_contexts));
+    println!(
+        "Role:             {}",
+        format_role(&entry.role, &entry.allowed_contexts)
+    );
     println!(
         "Label:            {}",
         entry.label.as_deref().unwrap_or("(not set)")
     );
-    println!("Contexts:         {}", format_contexts(&entry.allowed_contexts));
+    println!(
+        "Contexts:         {}",
+        format_contexts(&entry.allowed_contexts)
+    );
     println!("Created At:       {}", entry.created_at);
     println!("Created By:       {}", entry.created_by);
     Ok(())
@@ -785,7 +786,10 @@ async fn cmd_acl_create(
     let entry = client.create_acl(req).await?;
     println!("ACL entry created:");
     println!("  DID:      {}", entry.did);
-    println!("  Role:     {}", format_role(&entry.role, &entry.allowed_contexts));
+    println!(
+        "  Role:     {}",
+        format_role(&entry.role, &entry.allowed_contexts)
+    );
     if let Some(label) = &entry.label {
         println!("  Label:    {label}");
     }
@@ -811,7 +815,10 @@ async fn cmd_acl_update(
     let entry = client.update_acl(did, req).await?;
     println!("ACL entry updated:");
     println!("  DID:      {}", entry.did);
-    println!("  Role:     {}", format_role(&entry.role, &entry.allowed_contexts));
+    println!(
+        "  Role:     {}",
+        format_role(&entry.role, &entry.allowed_contexts)
+    );
     if let Some(label) = &entry.label {
         println!("  Label:    {label}");
     }
@@ -819,10 +826,7 @@ async fn cmd_acl_update(
     Ok(())
 }
 
-async fn cmd_acl_delete(
-    client: &VtaClient,
-    did: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn cmd_acl_delete(client: &VtaClient, did: &str) -> Result<(), Box<dyn std::error::Error>> {
     client.delete_acl(did).await?;
     println!("ACL entry deleted: {did}");
     Ok(())
@@ -928,11 +932,11 @@ async fn cmd_context_list(client: &VtaClient) -> Result<(), Box<dyn std::error::
     let table = Table::new(
         rows,
         [
-            Constraint::Length(16),    // ID
-            Constraint::Min(20),       // Name
-            Constraint::Length(30),     // DID
-            Constraint::Length(16),     // Base Path
-            Constraint::Length(10),     // Created
+            Constraint::Length(16), // ID
+            Constraint::Min(20),    // Name
+            Constraint::Length(30), // DID
+            Constraint::Length(16), // Base Path
+            Constraint::Length(10), // Created
         ],
     )
     .header(header)
@@ -954,10 +958,7 @@ async fn cmd_context_list(client: &VtaClient) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
-async fn cmd_context_get(
-    client: &VtaClient,
-    id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn cmd_context_get(client: &VtaClient, id: &str) -> Result<(), Box<dyn std::error::Error>> {
     let resp = client.get_context(id).await?;
     println!("ID:          {}", resp.id);
     println!("Name:        {}", resp.name);
@@ -1029,4 +1030,133 @@ async fn cmd_context_delete(
     client.delete_context(id).await?;
     println!("Context deleted: {id}");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── format_contexts ────────────────────────────────────────────
+
+    #[test]
+    fn test_format_contexts_empty_shows_unrestricted() {
+        assert_eq!(format_contexts(&[]), "(unrestricted)");
+    }
+
+    #[test]
+    fn test_format_contexts_single() {
+        let ctx = vec!["vta".to_string()];
+        assert_eq!(format_contexts(&ctx), "vta");
+    }
+
+    #[test]
+    fn test_format_contexts_multiple() {
+        let ctx = vec!["vta".to_string(), "mediator".to_string()];
+        assert_eq!(format_contexts(&ctx), "vta, mediator");
+    }
+
+    // ── format_role ────────────────────────────────────────────────
+
+    #[test]
+    fn test_format_role_admin_no_contexts_is_super_admin() {
+        assert_eq!(format_role("admin", &[]), "super admin");
+    }
+
+    #[test]
+    fn test_format_role_admin_with_contexts_stays_admin() {
+        let ctx = vec!["vta".to_string()];
+        assert_eq!(format_role("admin", &ctx), "admin");
+    }
+
+    #[test]
+    fn test_format_role_initiator_unchanged() {
+        assert_eq!(format_role("initiator", &[]), "initiator");
+    }
+
+    #[test]
+    fn test_format_role_application_unchanged() {
+        let ctx = vec!["app".to_string()];
+        assert_eq!(format_role("application", &ctx), "application");
+    }
+
+    // ── validate_role ──────────────────────────────────────────────
+
+    #[test]
+    fn test_validate_role_admin_ok() {
+        assert!(validate_role("admin").is_ok());
+    }
+
+    #[test]
+    fn test_validate_role_initiator_ok() {
+        assert!(validate_role("initiator").is_ok());
+    }
+
+    #[test]
+    fn test_validate_role_application_ok() {
+        assert!(validate_role("application").is_ok());
+    }
+
+    #[test]
+    fn test_validate_role_unknown_fails() {
+        let err = validate_role("superuser").unwrap_err();
+        assert!(err.to_string().contains("invalid role 'superuser'"));
+    }
+
+    #[test]
+    fn test_validate_role_empty_fails() {
+        assert!(validate_role("").is_err());
+    }
+
+    // ── requires_auth ──────────────────────────────────────────────
+
+    #[test]
+    fn test_requires_auth_health_false() {
+        assert!(!requires_auth(&Commands::Health));
+    }
+
+    #[test]
+    fn test_requires_auth_auth_login_false() {
+        let cmd = Commands::Auth {
+            command: AuthCommands::Login {
+                credential: "test".into(),
+            },
+        };
+        assert!(!requires_auth(&cmd));
+    }
+
+    #[test]
+    fn test_requires_auth_keys_true() {
+        let cmd = Commands::Keys {
+            command: KeyCommands::List {
+                limit: 50,
+                offset: 0,
+                status: None,
+            },
+        };
+        assert!(requires_auth(&cmd));
+    }
+
+    #[test]
+    fn test_requires_auth_config_true() {
+        let cmd = Commands::Config {
+            command: ConfigCommands::Get,
+        };
+        assert!(requires_auth(&cmd));
+    }
+
+    #[test]
+    fn test_requires_auth_acl_true() {
+        let cmd = Commands::Acl {
+            command: AclCommands::List { context: None },
+        };
+        assert!(requires_auth(&cmd));
+    }
+
+    #[test]
+    fn test_requires_auth_contexts_true() {
+        let cmd = Commands::Contexts {
+            command: ContextCommands::List,
+        };
+        assert!(requires_auth(&cmd));
+    }
 }

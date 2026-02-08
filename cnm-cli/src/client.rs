@@ -122,8 +122,6 @@ pub struct RenameKeyResponse {
 pub struct ListKeysResponse {
     pub keys: Vec<KeyRecord>,
     pub total: u64,
-    pub offset: u64,
-    pub limit: u64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -245,7 +243,10 @@ impl VtaClient {
         &self,
         req: UpdateConfigRequest,
     ) -> Result<ConfigResponse, Box<dyn std::error::Error>> {
-        let r = self.client.patch(format!("{}/config", self.base_url)).json(&req);
+        let r = self
+            .client
+            .patch(format!("{}/config", self.base_url))
+            .json(&req);
         let resp = self.with_auth(r).send().await?;
         Self::handle_response(resp).await
     }
@@ -255,7 +256,10 @@ impl VtaClient {
         &self,
         req: CreateKeyRequest,
     ) -> Result<CreateKeyResponse, Box<dyn std::error::Error>> {
-        let r = self.client.post(format!("{}/keys", self.base_url)).json(&req);
+        let r = self
+            .client
+            .post(format!("{}/keys", self.base_url))
+            .json(&req);
         let resp = self.with_auth(r).send().await?;
         Self::handle_response(resp).await
     }
@@ -277,13 +281,12 @@ impl VtaClient {
     }
 
     /// GET /keys/{key_id}
-    pub async fn get_key(
-        &self,
-        key_id: &str,
-    ) -> Result<KeyRecord, Box<dyn std::error::Error>> {
-        let req = self
-            .client
-            .get(format!("{}/keys/{}", self.base_url, encode_path_segment(key_id)));
+    pub async fn get_key(&self, key_id: &str) -> Result<KeyRecord, Box<dyn std::error::Error>> {
+        let req = self.client.get(format!(
+            "{}/keys/{}",
+            self.base_url,
+            encode_path_segment(key_id)
+        ));
         let resp = self.with_auth(req).send().await?;
         Self::handle_response(resp).await
     }
@@ -293,9 +296,11 @@ impl VtaClient {
         &self,
         key_id: &str,
     ) -> Result<InvalidateKeyResponse, Box<dyn std::error::Error>> {
-        let req = self
-            .client
-            .delete(format!("{}/keys/{}", self.base_url, encode_path_segment(key_id)));
+        let req = self.client.delete(format!(
+            "{}/keys/{}",
+            self.base_url,
+            encode_path_segment(key_id)
+        ));
         let resp = self.with_auth(req).send().await?;
         Self::handle_response(resp).await
     }
@@ -311,7 +316,11 @@ impl VtaClient {
         };
         let req = self
             .client
-            .patch(format!("{}/keys/{}", self.base_url, encode_path_segment(key_id)))
+            .patch(format!(
+                "{}/keys/{}",
+                self.base_url,
+                encode_path_segment(key_id)
+            ))
             .json(&body);
         let resp = self.with_auth(req).send().await?;
         Self::handle_response(resp).await
@@ -334,13 +343,12 @@ impl VtaClient {
     }
 
     /// GET /acl/{did}
-    pub async fn get_acl(
-        &self,
-        did: &str,
-    ) -> Result<AclEntryResponse, Box<dyn std::error::Error>> {
-        let req = self
-            .client
-            .get(format!("{}/acl/{}", self.base_url, encode_path_segment(did)));
+    pub async fn get_acl(&self, did: &str) -> Result<AclEntryResponse, Box<dyn std::error::Error>> {
+        let req = self.client.get(format!(
+            "{}/acl/{}",
+            self.base_url,
+            encode_path_segment(did)
+        ));
         let resp = self.with_auth(req).send().await?;
         Self::handle_response(resp).await
     }
@@ -366,20 +374,23 @@ impl VtaClient {
     ) -> Result<AclEntryResponse, Box<dyn std::error::Error>> {
         let r = self
             .client
-            .patch(format!("{}/acl/{}", self.base_url, encode_path_segment(did)))
+            .patch(format!(
+                "{}/acl/{}",
+                self.base_url,
+                encode_path_segment(did)
+            ))
             .json(&req);
         let resp = self.with_auth(r).send().await?;
         Self::handle_response(resp).await
     }
 
     /// DELETE /acl/{did}
-    pub async fn delete_acl(
-        &self,
-        did: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let req = self
-            .client
-            .delete(format!("{}/acl/{}", self.base_url, encode_path_segment(did)));
+    pub async fn delete_acl(&self, did: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let req = self.client.delete(format!(
+            "{}/acl/{}",
+            self.base_url,
+            encode_path_segment(did)
+        ));
         let resp = self.with_auth(req).send().await?;
         if resp.status().is_success() {
             Ok(())
@@ -423,9 +434,11 @@ impl VtaClient {
         &self,
         id: &str,
     ) -> Result<ContextResponse, Box<dyn std::error::Error>> {
-        let req = self
-            .client
-            .get(format!("{}/contexts/{}", self.base_url, encode_path_segment(id)));
+        let req = self.client.get(format!(
+            "{}/contexts/{}",
+            self.base_url,
+            encode_path_segment(id)
+        ));
         let resp = self.with_auth(req).send().await?;
         Self::handle_response(resp).await
     }
@@ -451,20 +464,23 @@ impl VtaClient {
     ) -> Result<ContextResponse, Box<dyn std::error::Error>> {
         let r = self
             .client
-            .patch(format!("{}/contexts/{}", self.base_url, encode_path_segment(id)))
+            .patch(format!(
+                "{}/contexts/{}",
+                self.base_url,
+                encode_path_segment(id)
+            ))
             .json(&req);
         let resp = self.with_auth(r).send().await?;
         Self::handle_response(resp).await
     }
 
     /// DELETE /contexts/{id}
-    pub async fn delete_context(
-        &self,
-        id: &str,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let req = self
-            .client
-            .delete(format!("{}/contexts/{}", self.base_url, encode_path_segment(id)));
+    pub async fn delete_context(&self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let req = self.client.delete(format!(
+            "{}/contexts/{}",
+            self.base_url,
+            encode_path_segment(id)
+        ));
         let resp = self.with_auth(req).send().await?;
         if resp.status().is_success() {
             Ok(())
@@ -493,5 +509,195 @@ impl VtaClient {
                 .unwrap_or_else(|_| "unknown error".to_string());
             Err(format!("{status}: {body}").into())
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── encode_path_segment ─────────────────────────────────────────
+
+    #[test]
+    fn test_encode_hash_in_did_fragment() {
+        // DID verification method IDs use # as fragment delimiter
+        assert_eq!(
+            encode_path_segment("did:key:z6Mk123#z6Mk123"),
+            "did:key:z6Mk123%23z6Mk123"
+        );
+    }
+
+    #[test]
+    fn test_encode_question_mark() {
+        assert_eq!(encode_path_segment("foo?bar"), "foo%3Fbar");
+    }
+
+    #[test]
+    fn test_encode_percent_is_escaped_first() {
+        // % must be encoded before other replacements to avoid double-encoding
+        assert_eq!(encode_path_segment("100%#done"), "100%25%23done");
+    }
+
+    #[test]
+    fn test_encode_colon_preserved() {
+        // Colons are allowed in path segments per RFC 3986
+        assert_eq!(encode_path_segment("did:key:z6Mk"), "did:key:z6Mk");
+    }
+
+    #[test]
+    fn test_encode_plain_string_unchanged() {
+        assert_eq!(encode_path_segment("simple-id"), "simple-id");
+    }
+
+    #[test]
+    fn test_encode_multiple_hashes() {
+        assert_eq!(encode_path_segment("a#b#c"), "a%23b%23c");
+    }
+
+    // ── VtaClient::new ──────────────────────────────────────────────
+
+    #[test]
+    fn test_new_strips_trailing_slash() {
+        let client = VtaClient::new("http://localhost:3000/");
+        assert_eq!(client.base_url(), "http://localhost:3000");
+    }
+
+    #[test]
+    fn test_new_strips_multiple_trailing_slashes() {
+        let client = VtaClient::new("http://localhost:3000///");
+        assert_eq!(client.base_url(), "http://localhost:3000");
+    }
+
+    #[test]
+    fn test_new_no_trailing_slash_unchanged() {
+        let client = VtaClient::new("http://localhost:3000");
+        assert_eq!(client.base_url(), "http://localhost:3000");
+    }
+
+    #[test]
+    fn test_new_token_initially_none() {
+        let client = VtaClient::new("http://example.com");
+        assert!(client.token.is_none());
+    }
+
+    #[test]
+    fn test_set_token() {
+        let mut client = VtaClient::new("http://example.com");
+        client.set_token("my-jwt".to_string());
+        assert_eq!(client.token.as_deref(), Some("my-jwt"));
+    }
+
+    // ── Request/Response serialization ──────────────────────────────
+
+    #[test]
+    fn test_update_config_skips_none_fields() {
+        let req = UpdateConfigRequest {
+            vta_did: None,
+            community_name: Some("Test".into()),
+            community_description: None,
+            public_url: None,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert!(!json.as_object().unwrap().contains_key("vta_did"));
+        assert_eq!(json["community_name"], "Test");
+        assert!(!json.as_object().unwrap().contains_key("community_description"));
+        assert!(!json.as_object().unwrap().contains_key("public_url"));
+    }
+
+    #[test]
+    fn test_create_key_request_serialization() {
+        let req = CreateKeyRequest {
+            key_type: KeyType::Ed25519,
+            derivation_path: None,
+            key_id: None,
+            mnemonic: None,
+            label: Some("test key".into()),
+            context_id: Some("vta".into()),
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert!(!json.as_object().unwrap().contains_key("derivation_path"));
+        assert!(!json.as_object().unwrap().contains_key("key_id"));
+        assert!(!json.as_object().unwrap().contains_key("mnemonic"));
+        assert_eq!(json["label"], "test key");
+        assert_eq!(json["context_id"], "vta");
+    }
+
+    #[test]
+    fn test_create_acl_request_serialization() {
+        let req = CreateAclRequest {
+            did: "did:key:z6Mk123".into(),
+            role: "admin".into(),
+            label: None,
+            allowed_contexts: vec!["vta".into()],
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        assert_eq!(json["did"], "did:key:z6Mk123");
+        assert_eq!(json["role"], "admin");
+        assert!(!json.as_object().unwrap().contains_key("label"));
+        assert_eq!(json["allowed_contexts"], serde_json::json!(["vta"]));
+    }
+
+    #[test]
+    fn test_update_acl_request_all_none() {
+        let req = UpdateAclRequest {
+            role: None,
+            label: None,
+            allowed_contexts: None,
+        };
+        let json = serde_json::to_value(&req).unwrap();
+        let obj = json.as_object().unwrap();
+        assert!(obj.is_empty(), "all-None request should serialize to {{}}");
+    }
+
+    #[test]
+    fn test_health_response_deserialization() {
+        let json = r#"{"status":"ok","version":"0.1.0"}"#;
+        let resp: HealthResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.status, "ok");
+        assert_eq!(resp.version, "0.1.0");
+    }
+
+    #[test]
+    fn test_error_response_deserialization() {
+        let json = r#"{"error":"not found"}"#;
+        let resp: ErrorResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.error, "not found");
+    }
+
+    #[test]
+    fn test_list_keys_response_deserialization() {
+        let json = r#"{"keys":[],"total":0}"#;
+        let resp: ListKeysResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.keys.is_empty());
+        assert_eq!(resp.total, 0);
+    }
+
+    #[test]
+    fn test_generate_credentials_response_deserialization() {
+        let json = r#"{"did":"did:key:z6Mk123","credential":"abc123","role":"admin"}"#;
+        let resp: GenerateCredentialsResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.did, "did:key:z6Mk123");
+        assert_eq!(resp.credential, "abc123");
+        assert_eq!(resp.role, "admin");
+    }
+
+    #[test]
+    fn test_acl_list_response_deserialization() {
+        let json = r#"{"entries":[{"did":"did:key:z6Mk1","role":"admin","label":null,"allowed_contexts":[],"created_at":1700000000,"created_by":"setup"}]}"#;
+        let resp: AclListResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.entries.len(), 1);
+        assert_eq!(resp.entries[0].did, "did:key:z6Mk1");
+        assert_eq!(resp.entries[0].role, "admin");
+        assert!(resp.entries[0].allowed_contexts.is_empty());
+    }
+
+    #[test]
+    fn test_context_response_deserialization() {
+        let json = r#"{"id":"vta","name":"Verified Trust Agent","did":null,"description":null,"base_path":"m/26'/2'/0'","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}"#;
+        let resp: ContextResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.id, "vta");
+        assert_eq!(resp.name, "Verified Trust Agent");
+        assert!(resp.did.is_none());
+        assert_eq!(resp.base_path, "m/26'/2'/0'");
     }
 }

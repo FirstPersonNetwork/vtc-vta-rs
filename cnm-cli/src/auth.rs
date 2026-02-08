@@ -187,12 +187,10 @@ pub async fn ensure_authenticated(base_url: &str) -> Result<String, Box<dyn std:
     )?;
 
     // Check cached token
-    if let (Some(token), Some(expires_at)) =
-        (&session.access_token, session.access_expires_at)
+    if let (Some(token), Some(expires_at)) = (&session.access_token, session.access_expires_at)
+        && now_epoch() + 30 < expires_at
     {
-        if now_epoch() + 30 < expires_at {
-            return Ok(token.clone());
-        }
+        return Ok(token.clone());
     }
 
     // Full challenge-response
@@ -326,4 +324,120 @@ fn now_epoch() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ── CredentialBundle deserialization ────────────────────────────
+
+    #[test]
+    fn test_credential_bundle_full() {
+        let json = r#"{
+            "did": "did:key:z6Mk123",
+            "privateKeyMultibase": "z1234567890",
+            "vtaDid": "did:key:z6MkVTA",
+            "vtaUrl": "https://vta.example.com"
+        }"#;
+        let bundle: CredentialBundle = serde_json::from_str(json).unwrap();
+        assert_eq!(bundle.did, "did:key:z6Mk123");
+        assert_eq!(bundle.private_key_multibase, "z1234567890");
+        assert_eq!(bundle.vta_did, "did:key:z6MkVTA");
+        assert_eq!(bundle.vta_url.as_deref(), Some("https://vta.example.com"));
+    }
+
+    #[test]
+    fn test_credential_bundle_without_url() {
+        let json = r#"{
+            "did": "did:key:z6Mk123",
+            "privateKeyMultibase": "z1234567890",
+            "vtaDid": "did:key:z6MkVTA"
+        }"#;
+        let bundle: CredentialBundle = serde_json::from_str(json).unwrap();
+        assert!(bundle.vta_url.is_none());
+    }
+
+    #[test]
+    fn test_credential_bundle_missing_did_fails() {
+        let json = r#"{
+            "privateKeyMultibase": "z1234567890",
+            "vtaDid": "did:key:z6MkVTA"
+        }"#;
+        assert!(serde_json::from_str::<CredentialBundle>(json).is_err());
+    }
+
+    // ── Session serialization round-trip ───────────────────────────
+
+    #[test]
+    fn test_session_round_trip() {
+        let session = Session {
+            client_did: "did:key:z6Mk1".into(),
+            private_key: "z_seed".into(),
+            vta_did: "did:key:z6MkVTA".into(),
+            vta_url: Some("https://vta.example.com".into()),
+            access_token: Some("tok123".into()),
+            access_expires_at: Some(1700000000),
+        };
+        let json = serde_json::to_string(&session).unwrap();
+        let restored: Session = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.client_did, session.client_did);
+        assert_eq!(restored.private_key, session.private_key);
+        assert_eq!(restored.vta_did, session.vta_did);
+        assert_eq!(restored.vta_url, session.vta_url);
+        assert_eq!(restored.access_token, session.access_token);
+        assert_eq!(restored.access_expires_at, session.access_expires_at);
+    }
+
+    #[test]
+    fn test_session_vta_url_defaults_to_none() {
+        // Older sessions stored without vta_url should deserialize with None
+        let json = r#"{
+            "client_did": "did:key:z6Mk1",
+            "private_key": "z_seed",
+            "vta_did": "did:key:z6MkVTA",
+            "access_token": null,
+            "access_expires_at": null
+        }"#;
+        let session: Session = serde_json::from_str(json).unwrap();
+        assert!(session.vta_url.is_none());
+    }
+
+    // ── ChallengeResponse deserialization ──────────────────────────
+
+    #[test]
+    fn test_challenge_response_camel_case() {
+        let json = r#"{
+            "sessionId": "sess-abc",
+            "data": { "challenge": "nonce123" }
+        }"#;
+        let resp: ChallengeResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.session_id, "sess-abc");
+        assert_eq!(resp.data.challenge, "nonce123");
+    }
+
+    // ── AuthenticateResponse deserialization ───────────────────────
+
+    #[test]
+    fn test_authenticate_response_camel_case() {
+        let json = r#"{
+            "data": {
+                "accessToken": "jwt.token.here",
+                "accessExpiresAt": 1700001000
+            }
+        }"#;
+        let resp: AuthenticateResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.data.access_token, "jwt.token.here");
+        assert_eq!(resp.data.access_expires_at, 1700001000);
+    }
+
+    // ── now_epoch ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_now_epoch_is_recent() {
+        let epoch = now_epoch();
+        // Should be after 2024-01-01 (1704067200) and before 2100-01-01
+        assert!(epoch > 1704067200, "epoch {epoch} should be after 2024");
+        assert!(epoch < 4102444800, "epoch {epoch} should be before 2100");
+    }
 }

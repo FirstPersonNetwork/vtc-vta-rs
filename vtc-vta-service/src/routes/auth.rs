@@ -10,7 +10,9 @@ use uuid::Uuid;
 use affinidi_tdk::didcomm::Message;
 use affinidi_tdk::didcomm::UnpackOptions;
 
-use crate::acl::{AclEntry, Role, check_acl, check_acl_full, store_acl_entry, validate_acl_modification};
+use crate::acl::{
+    AclEntry, Role, check_acl, check_acl_full, store_acl_entry, validate_acl_modification,
+};
 use crate::auth::credentials::generate_did_key;
 use crate::auth::extractor::{AdminAuth, AuthClaims, ManageAuth};
 use crate::auth::jwt::JwtKeys;
@@ -294,10 +296,10 @@ pub async fn refresh(
     }
 
     // Verify refresh token hasn't expired
-    if let Some(expires_at) = session.refresh_expires_at {
-        if now_epoch() > expires_at {
-            return Err(AppError::Authentication("refresh token expired".into()));
-        }
+    if let Some(expires_at) = session.refresh_expires_at
+        && now_epoch() > expires_at
+    {
+        return Err(AppError::Authentication("refresh token expired".into()));
     }
 
     // Look up current ACL role and contexts (propagates changes at refresh time)

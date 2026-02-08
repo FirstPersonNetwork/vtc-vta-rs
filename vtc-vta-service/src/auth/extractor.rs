@@ -19,7 +19,6 @@ use crate::server::AppState;
 #[derive(Debug, Clone)]
 pub struct AuthClaims {
     pub did: String,
-    pub session_id: String,
     pub role: Role,
     pub allowed_contexts: Vec<String>,
 }
@@ -67,7 +66,6 @@ impl FromRequestParts<AppState> for AuthClaims {
 
         Ok(AuthClaims {
             did: claims.sub,
-            session_id: claims.session_id,
             role,
             allowed_contexts: claims.contexts,
         })

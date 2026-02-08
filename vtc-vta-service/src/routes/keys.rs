@@ -266,15 +266,15 @@ pub async fn list_keys(
     let mut records: Vec<KeyRecord> = Vec::with_capacity(raw.len());
     for (_key, value) in raw {
         let record: KeyRecord = serde_json::from_slice(&value)?;
-        if let Some(ref status) = query.status {
-            if record.status != *status {
-                continue;
-            }
+        if let Some(ref status) = query.status
+            && record.status != *status
+        {
+            continue;
         }
-        if let Some(ref ctx) = query.context_id {
-            if record.context_id.as_deref() != Some(ctx.as_str()) {
-                continue;
-            }
+        if let Some(ref ctx) = query.context_id
+            && record.context_id.as_deref() != Some(ctx.as_str())
+        {
+            continue;
         }
         // Context admins can only see keys within their assigned contexts
         if !auth.is_super_admin() {

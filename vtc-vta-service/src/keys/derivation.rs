@@ -81,7 +81,7 @@ pub async fn load_or_generate_seed(
     }
 
     let mut seed = [0u8; 32];
-    rand::thread_rng().fill_bytes(&mut seed);
+    rand::rng().fill_bytes(&mut seed);
     seed_store.set(&seed).await?;
     info!("new random master seed generated and stored");
     ExtendedSigningKey::from_seed(&seed).map_err(|e| {

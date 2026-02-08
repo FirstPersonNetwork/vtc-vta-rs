@@ -1,12 +1,13 @@
 use axum::Json;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
 
 use tracing::info;
 
 use crate::acl::{
-    AclEntry, Role, check_acl, delete_acl_entry, get_acl_entry, list_acl_entries, store_acl_entry,
+    AclEntry, Role, delete_acl_entry, get_acl_entry, is_acl_entry_visible, list_acl_entries,
+    store_acl_entry, validate_acl_modification,
 };
 use crate::auth::ManageAuth;
 use crate::auth::session::now_epoch;
@@ -43,14 +44,28 @@ impl From<AclEntry> for AclEntryResponse {
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ListAclQuery {
+    pub context: Option<String>,
+}
+
 pub async fn list_acl(
-    _auth: ManageAuth,
+    auth: ManageAuth,
     State(state): State<AppState>,
+    Query(query): Query<ListAclQuery>,
 ) -> Result<Json<AclListResponse>, AppError> {
     let acl = state.acl_ks.clone();
-    let entries = list_acl_entries(&acl).await?;
-    let entries: Vec<AclEntryResponse> = entries.into_iter().map(AclEntryResponse::from).collect();
-    info!(caller = %_auth.0.did, count = entries.len(), "ACL listed");
+    let all_entries = list_acl_entries(&acl).await?;
+    let entries: Vec<AclEntryResponse> = all_entries
+        .into_iter()
+        .filter(|e| is_acl_entry_visible(&auth.0, e))
+        .filter(|e| match &query.context {
+            Some(ctx) => e.allowed_contexts.contains(ctx),
+            None => true,
+        })
+        .map(AclEntryResponse::from)
+        .collect();
+    info!(caller = %auth.0.did, count = entries.len(), "ACL listed");
     Ok(Json(AclListResponse { entries }))
 }
 
@@ -70,6 +85,8 @@ pub async fn create_acl(
     State(state): State<AppState>,
     Json(req): Json<CreateAclRequest>,
 ) -> Result<(StatusCode, Json<AclEntryResponse>), AppError> {
+    validate_acl_modification(&auth.0, &req.allowed_contexts)?;
+
     let acl = state.acl_ks.clone();
 
     // Check if entry already exists
@@ -98,7 +115,7 @@ pub async fn create_acl(
 // ---------- GET /acl/{did} ----------
 
 pub async fn get_acl(
-    _auth: ManageAuth,
+    auth: ManageAuth,
     State(state): State<AppState>,
     Path(did): Path<String>,
 ) -> Result<Json<AclEntryResponse>, AppError> {
@@ -106,6 +123,11 @@ pub async fn get_acl(
     let entry = get_acl_entry(&acl, &did)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("ACL entry not found for DID: {did}")))?;
+    if !is_acl_entry_visible(&auth.0, &entry) {
+        return Err(AppError::NotFound(format!(
+            "ACL entry not found for DID: {did}"
+        )));
+    }
     info!(did = %did, "ACL entry retrieved");
     Ok(Json(AclEntryResponse::from(entry)))
 }
@@ -120,7 +142,7 @@ pub struct UpdateAclRequest {
 }
 
 pub async fn update_acl(
-    _auth: ManageAuth,
+    auth: ManageAuth,
     State(state): State<AppState>,
     Path(did): Path<String>,
     Json(req): Json<UpdateAclRequest>,
@@ -130,6 +152,13 @@ pub async fn update_acl(
         .await?
         .ok_or_else(|| AppError::NotFound(format!("ACL entry not found for DID: {did}")))?;
 
+    // Context admins can only modify entries they can see
+    if !is_acl_entry_visible(&auth.0, &entry) {
+        return Err(AppError::NotFound(format!(
+            "ACL entry not found for DID: {did}"
+        )));
+    }
+
     if let Some(role) = req.role {
         entry.role = role;
     }
@@ -137,6 +166,8 @@ pub async fn update_acl(
         entry.label = Some(label);
     }
     if let Some(allowed_contexts) = req.allowed_contexts {
+        // Validate the new contexts before applying
+        validate_acl_modification(&auth.0, &allowed_contexts)?;
         entry.allowed_contexts = allowed_contexts;
     }
 
@@ -162,10 +193,15 @@ pub async fn delete_acl(
 
     let acl = state.acl_ks.clone();
 
-    // Verify entry exists
-    check_acl(&acl, &did).await.map_err(|_| {
-        AppError::NotFound(format!("ACL entry not found for DID: {did}"))
-    })?;
+    // Verify entry exists and is visible to the caller
+    let entry = get_acl_entry(&acl, &did)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("ACL entry not found for DID: {did}")))?;
+    if !is_acl_entry_visible(&auth.0, &entry) {
+        return Err(AppError::NotFound(format!(
+            "ACL entry not found for DID: {did}"
+        )));
+    }
 
     delete_acl_entry(&acl, &did).await?;
 

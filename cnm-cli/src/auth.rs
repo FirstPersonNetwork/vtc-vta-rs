@@ -15,6 +15,8 @@ struct Session {
     client_did: String,
     private_key: String,
     vta_did: String,
+    #[serde(default)]
+    vta_url: Option<String>,
     access_token: Option<String>,
     access_expires_at: Option<u64>,
 }
@@ -55,6 +57,8 @@ struct CredentialBundle {
     private_key_multibase: String,
     #[serde(rename = "vtaDid")]
     vta_did: String,
+    #[serde(rename = "vtaUrl", default)]
+    vta_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -99,6 +103,7 @@ pub async fn login(credential_b64: &str, base_url: &str) -> Result<(), Box<dyn s
         client_did: bundle.did.clone(),
         private_key: bundle.private_key_multibase.clone(),
         vta_did: bundle.vta_did.clone(),
+        vta_url: bundle.vta_url.clone(),
         access_token: None,
         access_expires_at: None,
     };
@@ -107,6 +112,9 @@ pub async fn login(credential_b64: &str, base_url: &str) -> Result<(), Box<dyn s
     println!("Credential imported:");
     println!("  Client DID: {}", bundle.did);
     println!("  VTA DID:    {}", bundle.vta_did);
+    if let Some(ref url) = bundle.vta_url {
+        println!("  VTA URL:    {url}");
+    }
 
     // Test authentication
     println!("\nAuthenticating...");
@@ -132,12 +140,21 @@ pub fn logout() {
     println!("Logged out. Credentials and tokens removed.");
 }
 
+/// Return the stored VTA URL from the session, if any.
+pub fn stored_url() -> Option<String> {
+    load_session().and_then(|s| s.vta_url)
+}
+
 /// Show current authentication status.
 pub fn status() {
     match load_session() {
         Some(session) => {
             println!("Client DID: {}", session.client_did);
             println!("VTA DID:    {}", session.vta_did);
+            println!(
+                "VTA URL:    {}",
+                session.vta_url.as_deref().unwrap_or("(not set)")
+            );
 
             match (session.access_token, session.access_expires_at) {
                 (Some(_), Some(exp)) => {

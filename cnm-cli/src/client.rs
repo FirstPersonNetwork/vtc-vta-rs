@@ -23,6 +23,7 @@ pub struct ConfigResponse {
     pub vta_did: Option<String>,
     pub community_name: Option<String>,
     pub community_description: Option<String>,
+    pub public_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -33,12 +34,15 @@ pub struct UpdateConfigRequest {
     pub community_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub community_description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
 pub struct CreateKeyRequest {
     pub key_type: KeyType,
-    pub derivation_path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub derivation_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub key_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -125,6 +129,59 @@ pub struct ListKeysResponse {
 #[derive(Debug, Deserialize)]
 pub struct ErrorResponse {
     pub error: String,
+}
+
+// ── ACL types ───────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct AclEntryResponse {
+    pub did: String,
+    pub role: String,
+    pub label: Option<String>,
+    pub allowed_contexts: Vec<String>,
+    pub created_at: u64,
+    pub created_by: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AclListResponse {
+    pub entries: Vec<AclEntryResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CreateAclRequest {
+    pub did: String,
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub allowed_contexts: Vec<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateAclRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub allowed_contexts: Option<Vec<String>>,
+}
+
+// ── Credential types ────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct GenerateCredentialsRequest {
+    pub role: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub allowed_contexts: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct GenerateCredentialsResponse {
+    pub did: String,
+    pub credential: String,
+    pub role: String,
 }
 
 /// Percent-encode characters that are not safe in URL path segments.
@@ -257,6 +314,98 @@ impl VtaClient {
             .patch(format!("{}/keys/{}", self.base_url, encode_path_segment(key_id)))
             .json(&body);
         let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    // ── ACL methods ─────────────────────────────────────────────────
+
+    /// GET /acl
+    pub async fn list_acl(
+        &self,
+        context: Option<&str>,
+    ) -> Result<AclListResponse, Box<dyn std::error::Error>> {
+        let mut url = format!("{}/acl", self.base_url);
+        if let Some(ctx) = context {
+            url.push_str(&format!("?context={ctx}"));
+        }
+        let req = self.client.get(url);
+        let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// GET /acl/{did}
+    pub async fn get_acl(
+        &self,
+        did: &str,
+    ) -> Result<AclEntryResponse, Box<dyn std::error::Error>> {
+        let req = self
+            .client
+            .get(format!("{}/acl/{}", self.base_url, encode_path_segment(did)));
+        let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// POST /acl
+    pub async fn create_acl(
+        &self,
+        req: CreateAclRequest,
+    ) -> Result<AclEntryResponse, Box<dyn std::error::Error>> {
+        let r = self
+            .client
+            .post(format!("{}/acl", self.base_url))
+            .json(&req);
+        let resp = self.with_auth(r).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// PATCH /acl/{did}
+    pub async fn update_acl(
+        &self,
+        did: &str,
+        req: UpdateAclRequest,
+    ) -> Result<AclEntryResponse, Box<dyn std::error::Error>> {
+        let r = self
+            .client
+            .patch(format!("{}/acl/{}", self.base_url, encode_path_segment(did)))
+            .json(&req);
+        let resp = self.with_auth(r).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// DELETE /acl/{did}
+    pub async fn delete_acl(
+        &self,
+        did: &str,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let req = self
+            .client
+            .delete(format!("{}/acl/{}", self.base_url, encode_path_segment(did)));
+        let resp = self.with_auth(req).send().await?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let body = resp
+                .json::<ErrorResponse>()
+                .await
+                .map(|e| e.error)
+                .unwrap_or_else(|_| "unknown error".to_string());
+            Err(format!("{status}: {body}").into())
+        }
+    }
+
+    // ── Credential methods ──────────────────────────────────────────
+
+    /// POST /auth/credentials
+    pub async fn generate_credentials(
+        &self,
+        req: GenerateCredentialsRequest,
+    ) -> Result<GenerateCredentialsResponse, Box<dyn std::error::Error>> {
+        let r = self
+            .client
+            .post(format!("{}/auth/credentials", self.base_url))
+            .json(&req);
+        let resp = self.with_auth(r).send().await?;
         Self::handle_response(resp).await
     }
 

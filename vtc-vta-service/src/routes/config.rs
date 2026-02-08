@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use tracing::info;
 
-use crate::auth::{AdminAuth, AuthClaims};
+use crate::auth::{AuthClaims, SuperAdminAuth};
 use crate::error::AppError;
 use crate::server::AppState;
 
@@ -13,6 +13,8 @@ pub struct ConfigResponse {
     pub vta_did: Option<String>,
     pub community_name: Option<String>,
     pub community_description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -20,6 +22,7 @@ pub struct UpdateConfigRequest {
     pub vta_did: Option<String>,
     pub community_name: Option<String>,
     pub community_description: Option<String>,
+    pub public_url: Option<String>,
 }
 
 pub async fn get_config(
@@ -32,11 +35,12 @@ pub async fn get_config(
         vta_did: config.vta_did.clone(),
         community_name: config.community_name.clone(),
         community_description: config.community_description.clone(),
+        public_url: config.public_url.clone(),
     }))
 }
 
 pub async fn update_config(
-    _auth: AdminAuth,
+    _auth: SuperAdminAuth,
     State(state): State<AppState>,
     Json(req): Json<UpdateConfigRequest>,
 ) -> Result<Json<ConfigResponse>, AppError> {
@@ -52,11 +56,15 @@ pub async fn update_config(
         if let Some(community_description) = req.community_description {
             config.community_description = Some(community_description);
         }
+        if let Some(public_url) = req.public_url {
+            config.public_url = Some(public_url);
+        }
 
         let response = ConfigResponse {
             vta_did: config.vta_did.clone(),
             community_name: config.community_name.clone(),
             community_description: config.community_description.clone(),
+            public_url: config.public_url.clone(),
         };
         let contents = toml::to_string_pretty(&*config)
             .map_err(|e| AppError::Config(format!("failed to serialize config: {e}")))?;

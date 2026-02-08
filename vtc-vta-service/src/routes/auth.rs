@@ -10,7 +10,7 @@ use uuid::Uuid;
 use affinidi_tdk::didcomm::Message;
 use affinidi_tdk::didcomm::UnpackOptions;
 
-use crate::acl::{AclEntry, Role, check_acl, check_acl_full, store_acl_entry};
+use crate::acl::{AclEntry, Role, check_acl, check_acl_full, store_acl_entry, validate_acl_modification};
 use crate::auth::credentials::generate_did_key;
 use crate::auth::extractor::{AdminAuth, AuthClaims, ManageAuth};
 use crate::auth::jwt::JwtKeys;
@@ -165,6 +165,17 @@ pub async fn authenticate(
     if session.did != sender_base {
         warn!(session_id, sender = %sender_base, expected = %session.did, "authentication rejected: DID mismatch");
         return Err(AppError::Authentication("DID mismatch".into()));
+    }
+
+    // Check challenge TTL
+    {
+        let config = state.config.read().await;
+        let challenge_ttl = config.auth.challenge_ttl;
+        drop(config);
+        if now_epoch().saturating_sub(session.created_at) > challenge_ttl {
+            warn!(session_id, "authentication rejected: challenge expired");
+            return Err(AppError::Authentication("challenge expired".into()));
+        }
     }
 
     // Look up ACL entry to get role and allowed contexts for the token
@@ -343,6 +354,8 @@ struct CredentialBundle {
     private_key_multibase: String,
     #[serde(rename = "vtaDid")]
     vta_did: String,
+    #[serde(rename = "vtaUrl", skip_serializing_if = "Option::is_none")]
+    vta_url: Option<String>,
 }
 
 pub async fn generate_credentials(
@@ -350,12 +363,15 @@ pub async fn generate_credentials(
     State(state): State<AppState>,
     Json(req): Json<GenerateCredentialsRequest>,
 ) -> Result<(StatusCode, Json<GenerateCredentialsResponse>), AppError> {
+    validate_acl_modification(&auth.0, &req.allowed_contexts)?;
+
     let config = state.config.read().await;
     let vta_did = config
         .vta_did
         .as_ref()
         .ok_or_else(|| AppError::Internal("VTA DID not configured".into()))?
         .clone();
+    let vta_url = config.public_url.clone();
     drop(config);
 
     let (did, private_key_multibase) = generate_did_key();
@@ -377,6 +393,7 @@ pub async fn generate_credentials(
         did: did.clone(),
         private_key_multibase,
         vta_did,
+        vta_url,
     };
     let bundle_json = serde_json::to_string(&bundle)?;
     let credential = BASE64.encode(bundle_json.as_bytes());

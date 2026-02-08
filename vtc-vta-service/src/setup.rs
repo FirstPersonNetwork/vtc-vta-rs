@@ -447,6 +447,7 @@ pub async fn run_setup_wizard(
         vta_did,
         community_name,
         community_description,
+        public_url: None,
         server: ServerConfig { host, port },
         log: LogConfig {
             level: log_level,

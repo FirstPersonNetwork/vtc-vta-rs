@@ -7,6 +7,7 @@ pub struct AppConfig {
     pub vta_did: Option<String>,
     pub community_name: Option<String>,
     pub community_description: Option<String>,
+    pub public_url: Option<String>,
     #[serde(default)]
     pub server: ServerConfig,
     #[serde(default)]
@@ -184,6 +185,9 @@ impl AppConfig {
                     )));
                 }
             };
+        }
+        if let Ok(public_url) = std::env::var("VTA_PUBLIC_URL") {
+            config.public_url = Some(public_url);
         }
         if let Ok(data_dir) = std::env::var("VTA_STORE_DATA_DIR") {
             config.store.data_dir = PathBuf::from(data_dir);

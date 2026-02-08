@@ -60,10 +60,10 @@ enum Commands {
         command: AclCommands,
     },
 
-    /// Identity management
-    Identity {
+    /// Generate auth credentials for applications and services
+    AuthCredential {
         #[command(subcommand)]
-        command: IdentityCommands,
+        command: AuthCredentialCommands,
     },
 }
 
@@ -208,8 +208,8 @@ enum AclCommands {
 }
 
 #[derive(Subcommand)]
-enum IdentityCommands {
-    /// Generate a new did:key credential and ACL entry
+enum AuthCredentialCommands {
+    /// Generate a new auth credential (did:key + ACL entry) for a service or application
     Create {
         /// Role: admin, initiator, or application
         #[arg(long)]
@@ -395,12 +395,12 @@ async fn main() {
             } => cmd_acl_update(&client, &did, role, label, contexts).await,
             AclCommands::Delete { did } => cmd_acl_delete(&client, &did).await,
         },
-        Commands::Identity { command } => match command {
-            IdentityCommands::Create {
+        Commands::AuthCredential { command } => match command {
+            AuthCredentialCommands::Create {
                 role,
                 label,
                 contexts,
-            } => cmd_identity_create(&client, role, label, contexts).await,
+            } => cmd_auth_credential_create(&client, role, label, contexts).await,
         },
         Commands::Keys { command } => match command {
             KeyCommands::Create {
@@ -828,9 +828,9 @@ async fn cmd_acl_delete(
     Ok(())
 }
 
-// ── Identity commands ────────────────────────────────────────────────
+// ── Auth credential commands ─────────────────────────────────────────
 
-async fn cmd_identity_create(
+async fn cmd_auth_credential_create(
     client: &VtaClient,
     role: String,
     label: Option<String>,
@@ -881,7 +881,7 @@ async fn cmd_context_bootstrap(
     };
     let resp = client.generate_credentials(cred_req).await?;
     println!();
-    println!("Admin identity created:");
+    println!("Admin credential created:");
     println!("  DID:  {}", resp.did);
     println!("  Role: admin");
     println!();

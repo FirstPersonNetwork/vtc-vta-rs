@@ -8,6 +8,7 @@ mod routes;
 mod server;
 #[cfg(feature = "setup")]
 mod setup;
+mod status;
 mod store;
 
 use std::path::PathBuf;
@@ -40,6 +41,8 @@ enum Commands {
     Setup,
     /// Export admin DID and credential
     ExportAdmin,
+    /// Show VTA status and statistics
+    Status,
 }
 
 #[tokio::main]
@@ -65,6 +68,12 @@ async fn main() {
         }
         Some(Commands::ExportAdmin) => {
             if let Err(e) = export_admin(cli.config).await {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::Status) => {
+            if let Err(e) = status::run_status(cli.config).await {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }

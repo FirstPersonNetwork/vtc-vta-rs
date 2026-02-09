@@ -1,4 +1,4 @@
-pub use vtc_vta_sdk::contexts::ContextRecord;
+pub use vta_sdk::contexts::ContextRecord;
 
 use crate::error::AppError;
 use crate::store::KeyspaceHandle;

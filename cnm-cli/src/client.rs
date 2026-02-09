@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use reqwest::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
-use vtc_vta_sdk::keys::{KeyRecord, KeyStatus, KeyType};
+use vta_sdk::keys::{KeyRecord, KeyStatus, KeyType};
 
 /// HTTP client for the VTC-VTA service API.
 pub struct VtaClient {

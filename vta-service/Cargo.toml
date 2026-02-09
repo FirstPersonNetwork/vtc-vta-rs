@@ -15,7 +15,7 @@ default = ["setup"]
 setup = ["dep:dialoguer", "dep:didwebvh-rs", "dep:url"]
 
 [dependencies]
-vtc-vta-sdk = { path = "../vtc-vta-sdk" }
+vta-sdk = { path = "../vta-sdk" }
 affinidi-tdk = { workspace = true }
 affinidi-did-resolver-cache-sdk = "0.7"
 base64 = { workspace = true }

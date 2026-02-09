@@ -11,12 +11,12 @@ The repository is a Rust workspace with three crates:
 
 ```
 vtc-vta-rs/
-  vtc-vta-sdk/       Shared types (KeyRecord, ContextRecord, protocol constants)
+  vta-sdk/           Shared types (KeyRecord, ContextRecord, protocol constants)
   vta-service/        Axum HTTP service (this document's focus)
   cnm-cli/            Community Network Manager CLI
 ```
 
-`vtc-vta-sdk` defines the data model. Both the service and CLI depend on it so
+`vta-sdk` defines the data model. Both the service and CLI depend on it so
 request/response types stay in sync.
 
 ## Technology Stack

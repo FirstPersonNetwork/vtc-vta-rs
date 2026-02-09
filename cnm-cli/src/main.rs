@@ -12,7 +12,7 @@ use ratatui::{
     style::{Color, Modifier, Style},
     widgets::{Block, Cell, Row, Table},
 };
-use vtc_vta_sdk::keys::KeyType;
+use vta_sdk::keys::KeyType;
 
 #[derive(Parser)]
 #[command(name = "cnm-cli", about = "CLI for VTC Verified Trust Agents")]
@@ -606,9 +606,9 @@ async fn cmd_key_list(
 
                 let status_cell =
                     match key.status {
-                        vtc_vta_sdk::keys::KeyStatus::Active => Cell::from(key.status.to_string())
+                        vta_sdk::keys::KeyStatus::Active => Cell::from(key.status.to_string())
                             .style(Style::default().fg(Color::Green)),
-                        vtc_vta_sdk::keys::KeyStatus::Revoked => Cell::from(key.status.to_string())
+                        vta_sdk::keys::KeyStatus::Revoked => Cell::from(key.status.to_string())
                             .style(Style::default().fg(Color::Red)),
                     };
 

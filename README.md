@@ -25,7 +25,7 @@ The repository is a Rust workspace with three crates:
 | Crate | Description |
 |---|---|
 | **vta-service** | Axum HTTP service -- the VTA itself. Manages keys, contexts, ACL, sessions, and DIDComm authentication. |
-| **vtc-vta-sdk** | Shared types (`KeyRecord`, `ContextRecord`, protocol constants) used by both the service and CLI. |
+| **vta-sdk** | Shared types (`KeyRecord`, `ContextRecord`, protocol constants) used by both the service and CLI. |
 | **cnm-cli** | Community Network Manager CLI -- the primary client for operating a VTA. |
 
 ## Architecture

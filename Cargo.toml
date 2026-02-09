@@ -1,6 +1,6 @@
 
 [workspace]
-members = ["cnm-cli", "vtc-vta-sdk", "vta-service"]
+members = ["cnm-cli", "vta-sdk", "vta-service"]
 resolver = "3"
 
 [workspace.package]

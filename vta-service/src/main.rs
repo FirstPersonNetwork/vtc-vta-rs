@@ -51,9 +51,6 @@ enum Commands {
         /// Target context ID
         #[arg(long)]
         context: String,
-        /// Create the context with this name if it doesn't exist
-        #[arg(long)]
-        context_name: Option<String>,
         /// Also create an ACL entry with Admin role for the new DID
         #[arg(long)]
         admin: bool,
@@ -107,14 +104,12 @@ async fn main() {
         }
         Some(Commands::CreateDidKey {
             context,
-            context_name,
             admin,
             label,
         }) => {
             let args = did_key::CreateDidKeyArgs {
                 config_path: cli.config,
                 context,
-                context_name,
                 admin,
                 label,
             };

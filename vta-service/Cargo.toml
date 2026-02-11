@@ -16,6 +16,7 @@ setup = ["dep:dialoguer", "dep:didwebvh-rs", "dep:url"]
 
 [[bin]]
 name = "vta"
+path = "src/main.rs"
 
 [dependencies]
 vta-sdk = { path = "../vta-sdk" }

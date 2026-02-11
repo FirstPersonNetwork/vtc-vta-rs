@@ -16,7 +16,11 @@ setup = ["dep:dialoguer", "dep:didwebvh-rs", "dep:url"]
 keyring = ["dep:keyring"]
 config-seed = []
 aws-secrets = ["dep:aws-sdk-secretsmanager", "dep:aws-config"]
-gcp-secrets = ["dep:google-cloud-secretmanager-v1", "dep:google-cloud-auth", "dep:bytes"]
+gcp-secrets = [
+  "dep:google-cloud-secretmanager-v1",
+  "dep:google-cloud-auth",
+  "dep:bytes",
+]
 
 [[bin]]
 name = "vta"

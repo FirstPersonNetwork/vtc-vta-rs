@@ -89,12 +89,12 @@ enum ConfigCommands {
         /// VTA DID
         #[arg(long)]
         vta_did: Option<String>,
-        /// Community name
+        /// VTA name
         #[arg(long)]
-        community_name: Option<String>,
-        /// Community description
+        vta_name: Option<String>,
+        /// VTA description
         #[arg(long)]
-        community_description: Option<String>,
+        vta_description: Option<String>,
         /// Public URL for this VTA
         #[arg(long)]
         public_url: Option<String>,
@@ -309,7 +309,7 @@ async fn main() {
     let url = cli
         .url
         .or_else(auth::stored_url)
-        .unwrap_or_else(|| "http://localhost:3000".to_string());
+        .unwrap_or_else(|| "http://localhost:8100".to_string());
     let mut client = VtaClient::new(&url);
 
     // Transparent authentication for protected commands
@@ -340,15 +340,15 @@ async fn main() {
             ConfigCommands::Get => cmd_config_get(&client).await,
             ConfigCommands::Update {
                 vta_did,
-                community_name,
-                community_description,
+                vta_name,
+                vta_description,
                 public_url,
             } => {
                 cmd_config_update(
                     &client,
                     vta_did,
-                    community_name,
-                    community_description,
+                    vta_name,
+                    vta_description,
                     public_url,
                 )
                 .await
@@ -447,19 +447,19 @@ async fn cmd_health(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>
 async fn cmd_config_get(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>> {
     let resp = client.get_config().await?;
     println!(
-        "VTA DID:               {}",
+        "VTA DID:         {}",
         resp.vta_did.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "Community Name:        {}",
-        resp.community_name.as_deref().unwrap_or("(not set)")
+        "VTA Name:        {}",
+        resp.vta_name.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "Community Description: {}",
-        resp.community_description.as_deref().unwrap_or("(not set)")
+        "VTA Description: {}",
+        resp.vta_description.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "Public URL:            {}",
+        "Public URL:      {}",
         resp.public_url.as_deref().unwrap_or("(not set)")
     );
     Ok(())
@@ -468,32 +468,32 @@ async fn cmd_config_get(client: &VtaClient) -> Result<(), Box<dyn std::error::Er
 async fn cmd_config_update(
     client: &VtaClient,
     vta_did: Option<String>,
-    community_name: Option<String>,
-    community_description: Option<String>,
+    vta_name: Option<String>,
+    vta_description: Option<String>,
     public_url: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let req = UpdateConfigRequest {
         vta_did,
-        community_name,
-        community_description,
+        vta_name,
+        vta_description,
         public_url,
     };
     let resp = client.update_config(req).await?;
     println!("Configuration updated:");
     println!(
-        "  VTA DID:               {}",
+        "  VTA DID:         {}",
         resp.vta_did.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "  Community Name:        {}",
-        resp.community_name.as_deref().unwrap_or("(not set)")
+        "  VTA Name:        {}",
+        resp.vta_name.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "  Community Description: {}",
-        resp.community_description.as_deref().unwrap_or("(not set)")
+        "  VTA Description: {}",
+        resp.vta_description.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "  Public URL:            {}",
+        "  Public URL:      {}",
         resp.public_url.as_deref().unwrap_or("(not set)")
     );
     Ok(())

@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use affinidi_tdk::secrets_resolver::secrets::Secret;
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use bip39::Mnemonic;
 use chrono::Utc;
 use dialoguer::{Confirm, Input, Select};
@@ -9,166 +11,22 @@ use didwebvh_rs::DIDWebVHState;
 use didwebvh_rs::log_entry::LogEntryMethods;
 use didwebvh_rs::parameters::Parameters as WebVHParameters;
 use didwebvh_rs::url::WebVHURL;
-use ed25519_dalek::SigningKey;
 use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
-use multibase::Base;
 use rand::RngCore;
 use serde_json::json;
 use url::Url;
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 
 use crate::acl::{AclEntry, Role, store_acl_entry};
+use vta_sdk::did_secrets::{DidSecretsBundle, SecretEntry};
+
 use crate::config::{
     AppConfig, AuthConfig, LogConfig, LogFormat, MessagingConfig, ServerConfig, StoreConfig,
 };
-use crate::contexts::{ContextRecord, allocate_context_index, store_context};
+use crate::contexts::{self, ContextRecord, store_context};
 use crate::keys::paths::allocate_path;
 use crate::keys::seed_store::KeyringSeedStore;
-use crate::keys::{KeyRecord, KeyStatus, KeyType as SdkKeyType, store_key};
+use crate::keys::{self, DerivedEntityKeys, KeyType as SdkKeyType, PreRotationKeyData};
 use crate::store::{KeyspaceHandle, Store};
-
-/// Derived signing + key-agreement key data, before DID creation.
-#[allow(dead_code)]
-struct DerivedEntityKeys {
-    signing_secret: Secret,
-    signing_path: String,
-    signing_pub: String,
-    signing_label: String,
-    ka_secret: Secret,
-    ka_path: String,
-    ka_pub: String,
-    ka_label: String,
-}
-
-/// Pre-rotation key data returned from derivation (stored after DID creation).
-struct PreRotationKeyData {
-    path: String,
-    public_key: String,
-    label: String,
-}
-
-/// Persist a key as a [`KeyRecord`] in the `"keys"` keyspace.
-async fn save_key_record(
-    keys_ks: &KeyspaceHandle,
-    key_id: &str,
-    derivation_path: &str,
-    key_type: SdkKeyType,
-    public_key: &str,
-    label: &str,
-    context_id: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let now = Utc::now();
-    let record = KeyRecord {
-        key_id: key_id.to_string(),
-        derivation_path: derivation_path.to_string(),
-        key_type,
-        status: KeyStatus::Active,
-        public_key: public_key.to_string(),
-        label: Some(label.to_string()),
-        context_id: context_id.map(String::from),
-        created_at: now,
-        updated_at: now,
-    };
-    keys_ks.insert(store_key(key_id), &record).await?;
-    Ok(())
-}
-
-/// Derive a signing key (Ed25519) and key-agreement key (X25519) from the
-/// BIP-32 seed using counter-allocated paths under `base`.
-///
-/// Allocates derivation-path counters but does **not** store key records —
-/// callers must call [`save_entity_key_records`] after the DID is known.
-async fn derive_entity_keys(
-    seed: &[u8],
-    base: &str,
-    signing_label: &str,
-    ka_label: &str,
-    keys_ks: &KeyspaceHandle,
-) -> Result<DerivedEntityKeys, Box<dyn std::error::Error>> {
-    let signing_path = allocate_path(keys_ks, base)
-        .await
-        .map_err(|e| format!("{e}"))?;
-    let ka_path = allocate_path(keys_ks, base)
-        .await
-        .map_err(|e| format!("{e}"))?;
-
-    let root = ExtendedSigningKey::from_seed(seed)
-        .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
-
-    // Signing key (Ed25519)
-    let signing_derived = root
-        .derive(
-            &signing_path
-                .parse::<DerivationPath>()
-                .map_err(|e| format!("Invalid derivation path: {e}"))?,
-        )
-        .map_err(|e| format!("Key derivation failed: {e}"))?;
-    let signing_secret =
-        Secret::generate_ed25519(None, Some(signing_derived.signing_key.as_bytes()));
-    let signing_pub = signing_secret
-        .get_public_keymultibase()
-        .map_err(|e| format!("{e}"))?;
-
-    // Key-agreement key (X25519)
-    let ka_derived = root
-        .derive(
-            &ka_path
-                .parse::<DerivationPath>()
-                .map_err(|e| format!("Invalid derivation path: {e}"))?,
-        )
-        .map_err(|e| format!("Key derivation failed: {e}"))?;
-    let ka_secret = Secret::generate_ed25519(None, Some(ka_derived.signing_key.as_bytes()));
-    let ka_secret = ka_secret
-        .to_x25519()
-        .map_err(|e| format!("X25519 conversion failed: {e}"))?;
-    let ka_pub = ka_secret
-        .get_public_keymultibase()
-        .map_err(|e| format!("{e}"))?;
-
-    Ok(DerivedEntityKeys {
-        signing_secret,
-        signing_path,
-        signing_pub,
-        signing_label: signing_label.to_string(),
-        ka_secret,
-        ka_path,
-        ka_pub,
-        ka_label: ka_label.to_string(),
-    })
-}
-
-/// Store entity key records using DID verification method IDs as key_ids.
-///
-/// Signing key → `{did}#key-0`, key-agreement key → `{did}#key-1`.
-async fn save_entity_key_records(
-    did: &str,
-    derived: &DerivedEntityKeys,
-    keys_ks: &KeyspaceHandle,
-    context_id: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    save_key_record(
-        keys_ks,
-        &format!("{did}#key-0"),
-        &derived.signing_path,
-        SdkKeyType::Ed25519,
-        &derived.signing_pub,
-        &derived.signing_label,
-        Some(context_id),
-    )
-    .await?;
-    save_key_record(
-        keys_ks,
-        &format!("{did}#key-1"),
-        &derived.ka_path,
-        SdkKeyType::X25519,
-        &derived.ka_pub,
-        &derived.ka_label,
-        Some(context_id),
-    )
-    .await?;
-    Ok(())
-}
 
 /// Create a seed application context and store it.
 async fn create_seed_context(
@@ -176,24 +34,7 @@ async fn create_seed_context(
     id: &str,
     name: &str,
 ) -> Result<ContextRecord, Box<dyn std::error::Error>> {
-    let (index, base_path) = allocate_context_index(contexts_ks)
-        .await
-        .map_err(|e| format!("{e}"))?;
-    let now = Utc::now();
-    let record = ContextRecord {
-        id: id.to_string(),
-        name: name.to_string(),
-        did: None,
-        description: None,
-        base_path,
-        index,
-        created_at: now,
-        updated_at: now,
-    };
-    store_context(contexts_ks, &record)
-        .await
-        .map_err(|e| format!("{e}"))?;
-    Ok(record)
+    contexts::create_context(contexts_ks, id, name).await
 }
 
 /// Derive an admin did:key Ed25519 key from the BIP-32 seed using a
@@ -207,39 +48,7 @@ async fn derive_and_store_did_key(
     context_id: &str,
     keys_ks: &KeyspaceHandle,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
-    let dk_path = allocate_path(keys_ks, base)
-        .await
-        .map_err(|e| format!("{e}"))?;
-
-    let root = ExtendedSigningKey::from_seed(seed)
-        .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
-    let derivation_path: DerivationPath = dk_path
-        .parse()
-        .map_err(|e| format!("Invalid derivation path: {e}"))?;
-    let dk_derived = root
-        .derive(&derivation_path)
-        .map_err(|e| format!("Key derivation failed: {e}"))?;
-    let signing_key = SigningKey::from_bytes(dk_derived.signing_key.as_bytes());
-    let public_key = signing_key.verifying_key().to_bytes();
-
-    let multibase_pubkey = crate::keys::ed25519_multibase_pubkey(&public_key);
-    let did = format!("did:key:{multibase_pubkey}");
-    let key_id = format!("{did}#{multibase_pubkey}");
-    let private_key_multibase =
-        multibase::encode(Base::Base58Btc, dk_derived.signing_key.as_bytes());
-
-    save_key_record(
-        keys_ks,
-        &key_id,
-        &dk_path,
-        SdkKeyType::Ed25519,
-        &multibase_pubkey,
-        "Admin did:key",
-        Some(context_id),
-    )
-    .await?;
-
-    Ok((did, private_key_multibase))
+    keys::derive_and_store_did_key(seed, base, context_id, "Admin did:key", keys_ks).await
 }
 
 pub async fn run_setup_wizard(
@@ -273,26 +82,26 @@ pub async fn run_setup_wizard(
         }
     }
 
-    // 2. Community name
-    let community_name: String = Input::new()
-        .with_prompt("Community name (leave empty to skip)")
+    // 2. VTA name
+    let vta_name: String = Input::new()
+        .with_prompt("VTA name (leave empty to skip)")
         .allow_empty(true)
         .interact_text()?;
-    let community_name = if community_name.is_empty() {
+    let vta_name = if vta_name.is_empty() {
         None
     } else {
-        Some(community_name)
+        Some(vta_name)
     };
 
-    // 3. Community description
-    let community_description: String = Input::new()
-        .with_prompt("Community description (leave empty to skip)")
+    // 3. VTA description
+    let vta_description: String = Input::new()
+        .with_prompt("VTA description (leave empty to skip)")
         .allow_empty(true)
         .interact_text()?;
-    let community_description = if community_description.is_empty() {
+    let vta_description = if vta_description.is_empty() {
         None
     } else {
-        Some(community_description)
+        Some(vta_description)
     };
 
     // 4. Public URL
@@ -315,7 +124,7 @@ pub async fn run_setup_wizard(
     // 5. Server port
     let port: u16 = Input::new()
         .with_prompt("Server port")
-        .default(3000u16)
+        .default(8100u16)
         .interact_text()?;
 
     // 6. Log level
@@ -456,8 +265,8 @@ pub async fn run_setup_wizard(
     // 15. Save config
     let config = AppConfig {
         vta_did,
-        community_name,
-        community_description,
+        vta_name,
+        vta_description,
         public_url: public_url.clone(),
         server: ServerConfig { host, port },
         log: LogConfig {
@@ -481,8 +290,8 @@ pub async fn run_setup_wizard(
     eprintln!("\x1b[1;32mSetup complete!\x1b[0m");
     eprintln!("  Config saved to: {}", config_path.display());
     eprintln!("  Seed stored in OS keyring (service: vtc-vta, user: master_seed)");
-    if let Some(name) = &config.community_name {
-        eprintln!("  Community: {name}");
+    if let Some(name) = &config.vta_name {
+        eprintln!("  VTA Name: {name}");
     }
     if let Some(url) = &config.public_url {
         eprintln!("  Public URL: {url}");
@@ -576,7 +385,7 @@ async fn create_admin_did(
             Ok((did, Some(credential)))
         }
         1 => {
-            let mut derived = derive_entity_keys(
+            let mut derived = keys::derive_entity_keys(
                 seed,
                 vta_base_path,
                 "Admin signing key",
@@ -588,6 +397,7 @@ async fn create_admin_did(
             let did = create_webvh_did(
                 &mut derived,
                 "admin",
+                None,
                 None,
                 seed,
                 vta_base_path,
@@ -602,7 +412,7 @@ async fn create_admin_did(
             let did: String = Input::new().with_prompt("Admin DID").interact_text()?;
 
             // Store admin entity keys with the imported DID
-            let derived = derive_entity_keys(
+            let derived = keys::derive_entity_keys(
                 seed,
                 vta_base_path,
                 "Admin signing key",
@@ -610,7 +420,7 @@ async fn create_admin_did(
                 keys_ks,
             )
             .await?;
-            save_entity_key_records(&did, &derived, keys_ks, "vta").await?;
+            keys::save_entity_key_records(&did, &derived, keys_ks, "vta").await?;
 
             // Also derive and store the did:key
             let _ = derive_and_store_did_key(seed, vta_base_path, "vta", keys_ks).await?;
@@ -645,7 +455,7 @@ async fn create_vta_did(
 
     match choice {
         0 => {
-            let mut derived = derive_entity_keys(
+            let mut derived = keys::derive_entity_keys(
                 seed,
                 vta_base_path,
                 "VTA signing key",
@@ -657,6 +467,7 @@ async fn create_vta_did(
             let did = create_webvh_did(
                 &mut derived,
                 "VTA",
+                None,
                 Some(messaging),
                 seed,
                 vta_base_path,
@@ -669,7 +480,7 @@ async fn create_vta_did(
         1 => {
             let did: String = Input::new().with_prompt("VTA DID").interact_text()?;
 
-            let derived = derive_entity_keys(
+            let derived = keys::derive_entity_keys(
                 seed,
                 vta_base_path,
                 "VTA signing key",
@@ -677,7 +488,7 @@ async fn create_vta_did(
                 keys_ks,
             )
             .await?;
-            save_entity_key_records(&did, &derived, keys_ks, "vta").await?;
+            keys::save_entity_key_records(&did, &derived, keys_ks, "vta").await?;
 
             Ok(Some(did))
         }
@@ -707,7 +518,7 @@ async fn configure_messaging(
 
     let mediator_did = match mediator_choice {
         0 => {
-            let mut derived = derive_entity_keys(
+            let mut derived = keys::derive_entity_keys(
                 seed,
                 mediator_base_path,
                 "Mediator signing key",
@@ -719,6 +530,7 @@ async fn configure_messaging(
             create_webvh_did(
                 &mut derived,
                 "mediator",
+                Some(&mediator_url),
                 None,
                 seed,
                 mediator_base_path,
@@ -730,7 +542,7 @@ async fn configure_messaging(
         _ => {
             let did: String = Input::new().with_prompt("Mediator DID").interact_text()?;
 
-            let derived = derive_entity_keys(
+            let derived = keys::derive_entity_keys(
                 seed,
                 mediator_base_path,
                 "Mediator signing key",
@@ -738,7 +550,7 @@ async fn configure_messaging(
                 keys_ks,
             )
             .await?;
-            save_entity_key_records(&did, &derived, keys_ks, "mediator").await?;
+            keys::save_entity_key_records(&did, &derived, keys_ks, "mediator").await?;
 
             did
         }
@@ -752,7 +564,7 @@ async fn configure_messaging(
 
 /// Prompt the user for a URL (e.g. `https://example.com/dids/vta`) and convert
 /// it to a [`WebVHURL`].  Re-prompts on invalid input.
-fn prompt_webvh_url(label: &str) -> Result<WebVHURL, Box<dyn std::error::Error>> {
+pub(crate) fn prompt_webvh_url(label: &str) -> Result<WebVHURL, Box<dyn std::error::Error>> {
     eprintln!();
     eprintln!("  Enter the URL where the {label} DID document will be hosted.");
     eprintln!("  Examples:");
@@ -807,7 +619,7 @@ fn prompt_webvh_url(label: &str) -> Result<WebVHURL, Box<dyn std::error::Error>>
 /// the DID is created so the key_id can use the DID verification method format.
 ///
 /// Returns `(hashes, key_data)`.  Both vecs are empty when the user declines.
-async fn prompt_pre_rotation_keys(
+pub(crate) async fn prompt_pre_rotation_keys(
     seed: &[u8],
     base: &str,
     label: &str,
@@ -885,11 +697,17 @@ async fn prompt_pre_rotation_keys(
 /// saves the `did.jsonl` file, and stores key records with DID-based key_ids.
 ///
 /// `label` is used in prompts (e.g. "VTA" or "mediator").
-/// When `messaging` is provided a DIDCommMessaging service endpoint is added
-/// to the DID document.
+///
+/// Service endpoints are added based on the optional parameters:
+/// - `mediator_url`: when set, adds `#didcomm` (HTTPS + WSS) and `#auth`
+///   service endpoints for a mediator DID document.
+/// - `messaging`: when set, adds a `#didcomm` service referencing the
+///   mediator DID for routing (used for the VTA DID document).
+#[allow(clippy::too_many_arguments)]
 async fn create_webvh_did(
     derived: &mut DerivedEntityKeys,
     label: &str,
+    mediator_url: Option<&str>,
     messaging: Option<&MessagingConfig>,
     seed: &[u8],
     base: &str,
@@ -940,18 +758,47 @@ async fn create_webvh_did(
         }));
     did_document["keyAgreement"] = json!([format!("{did_id}#key-1")]);
 
-    // Add DIDCommMessaging service endpoint when a mediator is configured
-    if let Some(msg) = messaging {
-        did_document["service"] = json!([
-            {
-                "id": format!("{did_id}#didcomm"),
-                "type": "DIDCommMessaging",
-                "serviceEndpoint": [{
+    // Add service endpoints
+    let mut services = Vec::new();
+
+    if let Some(url) = mediator_url {
+        // Mediator DID: add #didcomm with HTTPS + WSS endpoints, and #auth
+        let wss_url = url
+            .replace("https://", "wss://")
+            .replace("http://", "ws://");
+        services.push(json!({
+            "id": format!("{did_id}#didcomm"),
+            "type": "DIDCommMessaging",
+            "serviceEndpoint": [
+                {
                     "accept": ["didcomm/v2"],
-                    "routingKeys": [msg.mediator_did]
-                }]
-            }
-        ]);
+                    "uri": url
+                },
+                {
+                    "accept": ["didcomm/v2"],
+                    "uri": format!("{wss_url}/ws")
+                }
+            ]
+        }));
+        services.push(json!({
+            "id": format!("{did_id}#auth"),
+            "type": "Authentication",
+            "serviceEndpoint": format!("{url}/authenticate")
+        }));
+    } else if let Some(msg) = messaging {
+        // VTA DID: add #didcomm referencing the mediator DID
+        services.push(json!({
+            "id": format!("{did_id}#didcomm"),
+            "type": "DIDCommMessaging",
+            "serviceEndpoint": [{
+                "accept": ["didcomm/v2"],
+                "uri": msg.mediator_did
+            }]
+        }));
+    }
+
+    if !services.is_empty() {
+        did_document["service"] = serde_json::Value::Array(services);
     }
 
     eprintln!();
@@ -1005,11 +852,11 @@ async fn create_webvh_did(
     eprintln!("\x1b[1;32mCreated DID:\x1b[0m {final_did}");
 
     // Save key records now that we have the final DID
-    save_entity_key_records(&final_did, derived, keys_ks, context_id).await?;
+    keys::save_entity_key_records(&final_did, derived, keys_ks, context_id).await?;
 
     // Save pre-rotation key records
     for (i, pk) in pre_rotation_keys.iter().enumerate() {
-        save_key_record(
+        keys::save_key_record(
             keys_ks,
             &format!("{final_did}#pre-rotation-{i}"),
             &pk.path,
@@ -1034,6 +881,38 @@ async fn create_webvh_did(
         .map_err(|e| format!("Failed to save DID log file: {e}"))?;
 
     eprintln!("  DID log saved to: {did_file}");
+
+    // Optionally export secrets bundle
+    if Confirm::new()
+        .with_prompt("Export DID secrets bundle?")
+        .default(false)
+        .interact()?
+    {
+        let bundle = DidSecretsBundle {
+            did: final_did.clone(),
+            secrets: vec![
+                SecretEntry {
+                    key_id: format!("{final_did}#key-0"),
+                    key_type: SdkKeyType::Ed25519,
+                    private_key_multibase: derived.signing_priv.clone(),
+                },
+                SecretEntry {
+                    key_id: format!("{final_did}#key-1"),
+                    key_type: SdkKeyType::X25519,
+                    private_key_multibase: derived.ka_priv.clone(),
+                },
+            ],
+        };
+        let encoded = bundle.encode().map_err(|e| format!("{e}"))?;
+        eprintln!();
+        eprintln!("\x1b[1;33m╔══════════════════════════════════════════════════════════╗");
+        eprintln!("║  WARNING: The secrets bundle contains private keys.      ║");
+        eprintln!("║  Store it securely and do not share it publicly.         ║");
+        eprintln!("╚══════════════════════════════════════════════════════════╝\x1b[0m");
+        eprintln!();
+        println!("{encoded}");
+        eprintln!();
+    }
 
     Ok(final_did)
 }

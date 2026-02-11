@@ -21,8 +21,8 @@ pub struct HealthResponse {
 #[derive(Debug, Deserialize)]
 pub struct ConfigResponse {
     pub vta_did: Option<String>,
-    pub community_name: Option<String>,
-    pub community_description: Option<String>,
+    pub vta_name: Option<String>,
+    pub vta_description: Option<String>,
     pub public_url: Option<String>,
 }
 
@@ -31,9 +31,9 @@ pub struct UpdateConfigRequest {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vta_did: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub community_name: Option<String>,
+    pub vta_name: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub community_description: Option<String>,
+    pub vta_description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
 }
@@ -593,14 +593,14 @@ mod tests {
     fn test_update_config_skips_none_fields() {
         let req = UpdateConfigRequest {
             vta_did: None,
-            community_name: Some("Test".into()),
-            community_description: None,
+            vta_name: Some("Test".into()),
+            vta_description: None,
             public_url: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert!(!json.as_object().unwrap().contains_key("vta_did"));
-        assert_eq!(json["community_name"], "Test");
-        assert!(!json.as_object().unwrap().contains_key("community_description"));
+        assert_eq!(json["vta_name"], "Test");
+        assert!(!json.as_object().unwrap().contains_key("vta_description"));
         assert!(!json.as_object().unwrap().contains_key("public_url"));
     }
 

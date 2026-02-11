@@ -1,5 +1,7 @@
 pub use vta_sdk::contexts::ContextRecord;
 
+use chrono::Utc;
+
 use crate::error::AppError;
 use crate::store::KeyspaceHandle;
 
@@ -58,6 +60,32 @@ pub async fn allocate_context_index(
     ks.insert_raw(counter_key, (current + 1).to_le_bytes().to_vec())
         .await?;
     Ok((current, base_path))
+}
+
+/// Create a new application context and store it.
+pub async fn create_context(
+    contexts_ks: &KeyspaceHandle,
+    id: &str,
+    name: &str,
+) -> Result<ContextRecord, Box<dyn std::error::Error>> {
+    let (index, base_path) = allocate_context_index(contexts_ks)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    let now = Utc::now();
+    let record = ContextRecord {
+        id: id.to_string(),
+        name: name.to_string(),
+        did: None,
+        description: None,
+        base_path,
+        index,
+        created_at: now,
+        updated_at: now,
+    };
+    store_context(contexts_ks, &record)
+        .await
+        .map_err(|e| format!("{e}"))?;
+    Ok(record)
 }
 
 /// Base path for application context keys.

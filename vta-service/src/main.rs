@@ -2,6 +2,9 @@ mod acl;
 mod auth;
 mod config;
 mod contexts;
+mod did_key;
+#[cfg(feature = "setup")]
+mod did_webvh;
 mod error;
 mod keys;
 mod routes;
@@ -43,6 +46,33 @@ enum Commands {
     ExportAdmin,
     /// Show VTA status and statistics
     Status,
+    /// Create a did:key in a context (offline, no server required)
+    CreateDidKey {
+        /// Target context ID
+        #[arg(long)]
+        context: String,
+        /// Create the context with this name if it doesn't exist
+        #[arg(long)]
+        context_name: Option<String>,
+        /// Also create an ACL entry with Admin role for the new DID
+        #[arg(long)]
+        admin: bool,
+        /// Human-readable label for the key record and ACL entry
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Create a did:webvh DID for a context (interactive wizard, no server required)
+    CreateDidWebvh {
+        /// Target context ID
+        #[arg(long)]
+        context: String,
+        /// Create the context with this name if it doesn't exist
+        #[arg(long)]
+        context_name: Option<String>,
+        /// Human-readable label prefix for key records (default: context id)
+        #[arg(long)]
+        label: Option<String>,
+    },
 }
 
 #[tokio::main]
@@ -75,6 +105,49 @@ async fn main() {
         Some(Commands::Status) => {
             if let Err(e) = status::run_status(cli.config).await {
                 eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::CreateDidKey {
+            context,
+            context_name,
+            admin,
+            label,
+        }) => {
+            let args = did_key::CreateDidKeyArgs {
+                config_path: cli.config,
+                context,
+                context_name,
+                admin,
+                label,
+            };
+            if let Err(e) = did_key::run_create_did_key(args).await {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::CreateDidWebvh {
+            context,
+            context_name,
+            label,
+        }) => {
+            #[cfg(feature = "setup")]
+            {
+                let args = did_webvh::CreateDidWebvhArgs {
+                    config_path: cli.config,
+                    context,
+                    context_name,
+                    label,
+                };
+                if let Err(e) = did_webvh::run_create_did_webvh(args).await {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
+            }
+            #[cfg(not(feature = "setup"))]
+            {
+                let _ = (context, context_name, label);
+                eprintln!("create-did-webvh is not available (compiled without 'setup' feature)");
                 std::process::exit(1);
             }
         }

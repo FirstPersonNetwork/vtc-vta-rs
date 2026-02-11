@@ -5,8 +5,10 @@ use std::path::PathBuf;
 #[derive(Debug, Deserialize, Serialize)]
 pub struct AppConfig {
     pub vta_did: Option<String>,
-    pub community_name: Option<String>,
-    pub community_description: Option<String>,
+    #[serde(alias = "community_name")]
+    pub vta_name: Option<String>,
+    #[serde(alias = "community_description")]
+    pub vta_description: Option<String>,
     pub public_url: Option<String>,
     #[serde(default)]
     pub server: ServerConfig,
@@ -104,7 +106,7 @@ fn default_host() -> String {
 }
 
 fn default_port() -> u16 {
-    3000
+    8100
 }
 
 fn default_log_level() -> String {

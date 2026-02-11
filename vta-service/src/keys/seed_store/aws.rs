@@ -4,6 +4,17 @@ use std::pin::Pin;
 use crate::error::AppError;
 use tracing::debug;
 
+/// Format an AWS SDK service error with its full source chain for troubleshooting.
+fn format_aws_error<E: std::error::Error>(context: &str, err: E) -> AppError {
+    let mut msg = format!("{context}: {err}");
+    let mut source = std::error::Error::source(&err);
+    while let Some(cause) = source {
+        msg.push_str(&format!("\n  caused by: {cause}"));
+        source = cause.source();
+    }
+    AppError::SeedStore(msg)
+}
+
 /// Seed store backed by AWS Secrets Manager.
 ///
 /// The seed is stored as a hex-encoded string in the named secret.
@@ -59,9 +70,10 @@ impl super::SeedStore for AwsSeedStore {
                         debug!(secret_name = %self.secret_name, "secret not found in AWS Secrets Manager");
                         Ok(None)
                     } else {
-                        Err(AppError::SeedStore(format!(
-                            "AWS Secrets Manager error: {service_error}"
-                        )))
+                        Err(format_aws_error(
+                        "failed to read seed from AWS Secrets Manager",
+                        service_error,
+                    ))
                     }
                 }
             }
@@ -97,17 +109,18 @@ impl super::SeedStore for AwsSeedStore {
                             .send()
                             .await
                             .map_err(|e| {
-                                AppError::SeedStore(format!(
-                                    "failed to create AWS secret: {}",
-                                    e.into_service_error()
-                                ))
+                                format_aws_error(
+                                    "failed to create secret in AWS Secrets Manager",
+                                    e.into_service_error(),
+                                )
                             })?;
                         debug!(secret_name = %self.secret_name, "seed created in AWS Secrets Manager");
                         Ok(())
                     } else {
-                        Err(AppError::SeedStore(format!(
-                            "failed to store seed in AWS: {service_error}"
-                        )))
+                        Err(format_aws_error(
+                            "failed to store seed in AWS Secrets Manager",
+                            service_error,
+                        ))
                     }
                 }
             }

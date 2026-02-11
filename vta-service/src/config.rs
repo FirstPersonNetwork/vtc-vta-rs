@@ -25,7 +25,7 @@ pub struct AppConfig {
     pub config_path: PathBuf,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
+#[derive(Debug, Default, Clone, Deserialize, Serialize)]
 pub struct SecretsConfig {
     /// Hex-encoded BIP-32 seed (config-seed feature)
     pub seed: Option<String>,

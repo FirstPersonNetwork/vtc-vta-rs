@@ -20,7 +20,8 @@ use crate::acl::{AclEntry, Role, store_acl_entry};
 use vta_sdk::did_secrets::{DidSecretsBundle, SecretEntry};
 
 use crate::config::{
-    AppConfig, AuthConfig, LogConfig, LogFormat, MessagingConfig, ServerConfig, StoreConfig,
+    AppConfig, AuthConfig, LogConfig, LogFormat, MessagingConfig, SecretsConfig, ServerConfig,
+    StoreConfig,
 };
 use crate::contexts::{self, ContextRecord, store_context};
 use crate::keys::paths::allocate_path;
@@ -49,6 +50,93 @@ async fn derive_and_store_did_key(
     keys_ks: &KeyspaceHandle,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
     keys::derive_and_store_did_key(seed, base, context_id, "Admin did:key", keys_ks).await
+}
+
+/// Prompt for cloud seed store configuration when a cloud backend feature is compiled.
+///
+/// - **aws-secrets only**: asks for AWS secret name and region.
+/// - **gcp-secrets only**: asks for GCP project ID and secret name.
+/// - **both**: shows a selector first.
+/// - **neither**: returns `SecretsConfig::default()` with no prompts.
+fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
+    // Both aws-secrets AND gcp-secrets compiled — let the user choose.
+    #[cfg(all(feature = "aws-secrets", feature = "gcp-secrets"))]
+    {
+        let backends = &[
+            "AWS Secrets Manager",
+            "GCP Secret Manager",
+            "OS keyring (default)",
+        ];
+        let choice = Select::new()
+            .with_prompt("Seed storage backend")
+            .items(backends)
+            .default(0)
+            .interact()?;
+
+        return match choice {
+            0 => prompt_aws_secrets(),
+            1 => prompt_gcp_secrets(),
+            _ => Ok(SecretsConfig::default()),
+        };
+    }
+
+    // Only aws-secrets compiled.
+    #[cfg(all(feature = "aws-secrets", not(feature = "gcp-secrets")))]
+    {
+        return prompt_aws_secrets();
+    }
+
+    // Only gcp-secrets compiled.
+    #[cfg(all(feature = "gcp-secrets", not(feature = "aws-secrets")))]
+    {
+        return prompt_gcp_secrets();
+    }
+
+    // Neither cloud backend compiled — nothing to configure.
+    #[allow(unreachable_code)]
+    Ok(SecretsConfig::default())
+}
+
+#[cfg(feature = "aws-secrets")]
+fn prompt_aws_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
+    let secret_name: String = Input::new()
+        .with_prompt("AWS Secrets Manager secret name")
+        .default("vta-master-seed".into())
+        .interact_text()?;
+
+    let region: String = Input::new()
+        .with_prompt("AWS region (leave empty for SDK default)")
+        .allow_empty(true)
+        .interact_text()?;
+    let region = if region.is_empty() {
+        None
+    } else {
+        Some(region)
+    };
+
+    Ok(SecretsConfig {
+        aws_secret_name: Some(secret_name),
+        aws_region: region,
+        ..Default::default()
+    })
+}
+
+#[cfg(feature = "gcp-secrets")]
+fn prompt_gcp_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
+    let project: String = Input::new()
+        .with_prompt("GCP project ID")
+        .interact_text()?;
+
+    let secret_name: String = Input::new()
+        .with_prompt("GCP Secret Manager secret name")
+        .default("vta-master-seed".into())
+        .interact_text()?;
+
+    Ok(SecretsConfig {
+        gcp_project: Some(project),
+        gcp_secret_name: Some(secret_name),
+        ..Default::default()
+    })
 }
 
 pub async fn run_setup_wizard(
@@ -212,6 +300,9 @@ pub async fn run_setup_wizard(
         }
     };
 
+    // Prompt for cloud seed store configuration (if a cloud feature is compiled)
+    let secrets_config = configure_secrets()?;
+
     // Store seed via configured backend (defaults to OS keyring)
     let seed = mnemonic.to_seed("");
     let seed_store = create_seed_store(&AppConfig {
@@ -224,7 +315,7 @@ pub async fn run_setup_wizard(
         store: StoreConfig::default(),
         messaging: None,
         auth: AuthConfig::default(),
-        secrets: Default::default(),
+        secrets: secrets_config.clone(),
         config_path: config_path.clone(),
     })
     .map_err(|e| format!("{e}"))?;
@@ -298,7 +389,7 @@ pub async fn run_setup_wizard(
             jwt_signing_key: Some(jwt_signing_key),
             ..AuthConfig::default()
         },
-        secrets: Default::default(),
+        secrets: secrets_config,
         config_path: config_path.clone(),
     };
     config.save()?;
@@ -308,6 +399,27 @@ pub async fn run_setup_wizard(
     eprintln!("\x1b[1;32mSetup complete!\x1b[0m");
     eprintln!("  Config saved to: {}", config_path.display());
     eprintln!("  Seed stored in configured backend");
+    // Print which seed backend was chosen
+    #[cfg(feature = "aws-secrets")]
+    if let Some(ref name) = config.secrets.aws_secret_name {
+        let region = config
+            .secrets
+            .aws_region
+            .as_deref()
+            .unwrap_or("SDK default");
+        eprintln!("  Seed backend: AWS Secrets Manager ({name} in {region})");
+    }
+    #[cfg(feature = "gcp-secrets")]
+    if let Some(ref name) = config.secrets.gcp_secret_name {
+        let project = config.secrets.gcp_project.as_deref().unwrap_or("unknown");
+        eprintln!("  Seed backend: GCP Secret Manager ({project}/{name})");
+    }
+    #[cfg(all(
+        not(feature = "aws-secrets"),
+        not(feature = "gcp-secrets"),
+        feature = "keyring"
+    ))]
+    eprintln!("  Seed backend: OS keyring");
     if let Some(name) = &config.vta_name {
         eprintln!("  VTA Name: {name}");
     }

@@ -21,16 +21,16 @@ request/response types stay in sync.
 
 ## Technology Stack
 
-| Layer          | Choice                                  |
-|----------------|-----------------------------------------|
-| Web framework  | Axum 0.8                                |
-| Async runtime  | Tokio                                   |
-| Storage        | fjall (embedded LSM key-value store)    |
-| Cryptography   | ed25519-dalek, ed25519-dalek-bip32      |
-| DID resolution | affinidi-did-resolver-cache-sdk         |
-| DIDComm        | affinidi-tdk (didcomm, secrets_resolver)|
-| JWT            | jsonwebtoken (EdDSA / Ed25519)          |
-| Seed storage   | OS keyring (keyring crate)              |
+| Layer          | Choice                                   |
+| -------------- | ---------------------------------------- |
+| Web framework  | Axum 0.8                                 |
+| Async runtime  | Tokio                                    |
+| Storage        | fjall (embedded LSM key-value store)     |
+| Cryptography   | ed25519-dalek, ed25519-dalek-bip32       |
+| DID resolution | affinidi-did-resolver-cache-sdk          |
+| DIDComm        | affinidi-tdk (didcomm, secrets_resolver) |
+| JWT            | jsonwebtoken (EdDSA / Ed25519)           |
+| Seed storage   | OS keyring (keyring crate)               |
 
 ## Application State
 
@@ -102,57 +102,57 @@ vta-service/src/
 ### Public
 
 | Method | Path    | Purpose          |
-|--------|---------|------------------|
+| ------ | ------- | ---------------- |
 | GET    | /health | Status + version |
 
 ### Authentication
 
-| Method | Path                      | Auth       | Purpose                              |
-|--------|---------------------------|------------|--------------------------------------|
-| POST   | /auth/challenge           | None (ACL) | Request DIDComm challenge            |
-| POST   | /auth/                    | None       | Submit signed challenge, get tokens  |
-| POST   | /auth/refresh             | None       | Refresh access token                 |
-| POST   | /auth/credentials         | Manage     | Generate did:key credential          |
-| GET    | /auth/sessions            | Manage     | List sessions                        |
-| DELETE | /auth/sessions/{id}       | Auth       | Revoke session                       |
-| DELETE | /auth/sessions?did=X      | Admin      | Revoke all sessions for a DID        |
+| Method | Path                 | Auth       | Purpose                             |
+| ------ | -------------------- | ---------- | ----------------------------------- |
+| POST   | /auth/challenge      | None (ACL) | Request DIDComm challenge           |
+| POST   | /auth/               | None       | Submit signed challenge, get tokens |
+| POST   | /auth/refresh        | None       | Refresh access token                |
+| POST   | /auth/credentials    | Manage     | Generate did:key credential         |
+| GET    | /auth/sessions       | Manage     | List sessions                       |
+| DELETE | /auth/sessions/{id}  | Auth       | Revoke session                      |
+| DELETE | /auth/sessions?did=X | Admin      | Revoke all sessions for a DID       |
 
 ### Configuration
 
-| Method | Path    | Auth        | Purpose          |
-|--------|---------|-------------|------------------|
-| GET    | /config | Auth        | Read config      |
-| PATCH  | /config | Super Admin | Update config    |
+| Method | Path    | Auth        | Purpose       |
+| ------ | ------- | ----------- | ------------- |
+| GET    | /config | Auth        | Read config   |
+| PATCH  | /config | Super Admin | Update config |
 
 ### Keys
 
-| Method | Path            | Auth  | Purpose                                    |
-|--------|-----------------|-------|--------------------------------------------|
-| GET    | /keys           | Auth  | List (filtered by context access)          |
-| POST   | /keys           | Admin | Create (context access checked)            |
-| GET    | /keys/{key_id}  | Auth  | Get key record (context access checked)    |
-| DELETE | /keys/{key_id}  | Admin | Invalidate key (context access checked)    |
-| PATCH  | /keys/{key_id}  | Admin | Rename key (context access checked)        |
+| Method | Path           | Auth  | Purpose                                 |
+| ------ | -------------- | ----- | --------------------------------------- |
+| GET    | /keys          | Auth  | List (filtered by context access)       |
+| POST   | /keys          | Admin | Create (context access checked)         |
+| GET    | /keys/{key_id} | Auth  | Get key record (context access checked) |
+| DELETE | /keys/{key_id} | Admin | Invalidate key (context access checked) |
+| PATCH  | /keys/{key_id} | Admin | Rename key (context access checked)     |
 
 ### Contexts
 
-| Method | Path             | Auth        | Purpose                         |
-|--------|------------------|-------------|---------------------------------|
-| GET    | /contexts        | Auth        | List contexts (filtered by access) |
-| POST   | /contexts        | Super Admin | Create context                  |
-| GET    | /contexts/{id}   | Auth        | Get context (access checked)    |
-| PATCH  | /contexts/{id}   | Super Admin | Update context                  |
-| DELETE | /contexts/{id}   | Super Admin | Delete context                  |
+| Method | Path           | Auth        | Purpose                            |
+| ------ | -------------- | ----------- | ---------------------------------- |
+| GET    | /contexts      | Auth        | List contexts (filtered by access) |
+| POST   | /contexts      | Super Admin | Create context                     |
+| GET    | /contexts/{id} | Auth        | Get context (access checked)       |
+| PATCH  | /contexts/{id} | Super Admin | Update context                     |
+| DELETE | /contexts/{id} | Super Admin | Delete context                     |
 
 ### ACL
 
-| Method | Path         | Auth   | Purpose          |
-|--------|------------- |--------|------------------|
-| GET    | /acl/        | Manage | List entries     |
-| POST   | /acl/        | Manage | Create entry     |
-| GET    | /acl/{did}   | Manage | Get entry        |
-| PATCH  | /acl/{did}   | Manage | Update entry     |
-| DELETE | /acl/{did}   | Manage | Delete entry     |
+| Method | Path       | Auth   | Purpose      |
+| ------ | ---------- | ------ | ------------ |
+| GET    | /acl/      | Manage | List entries |
+| POST   | /acl/      | Manage | Create entry |
+| GET    | /acl/{did} | Manage | Get entry    |
+| PATCH  | /acl/{did} | Manage | Update entry |
+| DELETE | /acl/{did} | Manage | Delete entry |
 
 Auth levels: **Auth** = any valid JWT, **Manage** = Admin or Initiator,
 **Admin** = Admin role only, **Super Admin** = Admin with empty
@@ -221,18 +221,18 @@ expired sessions from both states.
 
 ### Roles
 
-| Role        | Capabilities                                    |
-|-------------|------------------------------------------------|
+| Role        | Capabilities                                               |
+| ----------- | ---------------------------------------------------------- |
 | Admin       | Full access; unrestricted when `allowed_contexts` is empty |
-| Initiator   | Can manage ACL entries and view resources        |
-| Application | Read-only access to keys, contexts, config       |
+| Initiator   | Can manage ACL entries and view resources                  |
+| Application | Read-only access to keys, contexts, config                 |
 
 ### Admin Types
 
 The Admin role has two tiers based on `allowed_contexts`:
 
-| Type          | `allowed_contexts` | Access                                         |
-|---------------|--------------------|-------------------------------------------------|
+| Type          | `allowed_contexts` | Access                                           |
+| ------------- | ------------------ | ------------------------------------------------ |
 | Super admin   | `[]` (empty)       | Unrestricted: config, contexts, all keys and ACL |
 | Context admin | `["vta", ...]`     | Keys and ACL within assigned contexts only       |
 
@@ -316,7 +316,7 @@ KeyRecord {
 ### Seed Storage
 
 The master seed (64 bytes from BIP-39 or 32 bytes random) is stored
-hex-encoded in the OS keyring under service `vtc-vta`, user `master_seed`.
+hex-encoded in the OS keyring under service `vta`, user `master_seed`.
 It never touches disk.
 
 ## Application Contexts
@@ -381,30 +381,30 @@ The VTA uses DIDComm v2 for authenticated communication:
 
 Message types used:
 
-| Type URI                                        | Purpose              |
-|-------------------------------------------------|----------------------|
-| `https://affinidi.com/atm/1.0/authenticate`     | Challenge response   |
-| `https://affinidi.com/atm/1.0/authenticate/refresh` | Token refresh    |
+| Type URI                                            | Purpose            |
+| --------------------------------------------------- | ------------------ |
+| `https://affinidi.com/atm/1.0/authenticate`         | Challenge response |
+| `https://affinidi.com/atm/1.0/authenticate/refresh` | Token refresh      |
 
 ## Configuration
 
 Configuration loads from a TOML file with environment variable overrides:
 
-| Section      | Key Fields                           | Env Prefix     |
-|------------- |--------------------------------------|----------------|
-| (root)       | vta_did, community_name/description  | VTA_           |
-| server       | host, port                           | VTA_SERVER_    |
-| log          | level, format                        | VTA_LOG_       |
-| store        | data_dir                             | VTA_STORE_     |
-| messaging    | mediator_url, mediator_did           | VTA_MESSAGING_ |
-| auth         | token expiries, jwt_signing_key      | VTA_AUTH_      |
+| Section   | Key Fields                          | Env Prefix     |
+| --------- | ----------------------------------- | -------------- |
+| (root)    | vta_did, community_name/description | VTA\_          |
+| server    | host, port                          | VTA*SERVER*    |
+| log       | level, format                       | VTA*LOG*       |
+| store     | data_dir                            | VTA*STORE*     |
+| messaging | mediator_url, mediator_did          | VTA*MESSAGING* |
+| auth      | token expiries, jwt_signing_key     | VTA*AUTH*      |
 
 `vta_did`, `community_name`, and `community_description` are mutable at
 runtime via `PATCH /config`.
 
 ## Setup Wizard
 
-Running `vtc-vta setup` launches an interactive wizard that bootstraps the
+Running `vta setup` launches an interactive wizard that bootstraps the
 service:
 
 1. Collect server, logging, and storage configuration.
@@ -424,15 +424,15 @@ exclude the dialoguer dependency.
 
 All data lives in fjall keyspaces:
 
-| Keyspace   | Key Pattern                  | Value             |
-|------------|------------------------------|-------------------|
-| keys       | `key:{key_id}`               | KeyRecord (JSON)  |
-| keys       | `path_counter:{base_path}`   | u32 (LE bytes)    |
-| sessions   | `session:{session_id}`       | Session (JSON)    |
-| sessions   | `refresh:{token}`            | session_id bytes  |
-| acl        | `acl:{did}`                  | AclEntry (JSON)   |
-| contexts   | `ctx:{id}`                   | ContextRecord (JSON) |
-| contexts   | `ctx_counter`                | u32 (LE bytes)    |
+| Keyspace | Key Pattern                | Value                |
+| -------- | -------------------------- | -------------------- |
+| keys     | `key:{key_id}`             | KeyRecord (JSON)     |
+| keys     | `path_counter:{base_path}` | u32 (LE bytes)       |
+| sessions | `session:{session_id}`     | Session (JSON)       |
+| sessions | `refresh:{token}`          | session_id bytes     |
+| acl      | `acl:{did}`                | AclEntry (JSON)      |
+| contexts | `ctx:{id}`                 | ContextRecord (JSON) |
+| contexts | `ctx_counter`              | u32 (LE bytes)       |
 
 ## CLI (cnm-cli)
 

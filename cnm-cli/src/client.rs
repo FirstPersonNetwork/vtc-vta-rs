@@ -3,7 +3,7 @@ use reqwest::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use vta_sdk::keys::{KeyRecord, KeyStatus, KeyType};
 
-/// HTTP client for the VTC-VTA service API.
+/// HTTP client for the VTA service API.
 pub struct VtaClient {
     client: Client,
     base_url: String,

@@ -32,11 +32,11 @@ pub async fn run_create_did_webvh(
     let contexts_ks = store.keyspace("contexts")?;
 
     // Load seed from OS keyring
-    let seed_store = KeyringSeedStore::new("vtc-vta", "master_seed");
+    let seed_store = KeyringSeedStore::new("vta", "master_seed");
     let seed = seed_store
         .get()
         .await?
-        .ok_or("No seed found in OS keyring. Run `vtc-vta setup` first.")?;
+        .ok_or("No seed found in OS keyring. Run `vta setup` first.")?;
 
     // Resolve context
     let mut ctx = match get_context(&contexts_ks, &args.context).await? {

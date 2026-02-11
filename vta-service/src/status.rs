@@ -17,28 +17,20 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
             eprintln!("Setup:     NOT COMPLETE");
             eprintln!("  Error: {e}");
             eprintln!();
-            eprintln!("Run `vtc-vta setup` to configure this instance.");
+            eprintln!("Run `vta setup` to configure this instance.");
             return Ok(());
         }
     };
 
     eprintln!("=== VTA Status ===");
     eprintln!();
-    eprintln!(
-        "Setup:     complete"
-    );
-    eprintln!(
-        "Config:    {}",
-        config.config_path.display()
-    );
+    eprintln!("Setup:     complete");
+    eprintln!("Config:    {}", config.config_path.display());
     eprintln!(
         "VTA DID:   {}",
         config.vta_did.as_deref().unwrap_or("(not set)")
     );
-    eprintln!(
-        "Store:     {}",
-        config.store.data_dir.display()
-    );
+    eprintln!("Store:     {}", config.store.data_dir.display());
 
     // 2. Open store
     let store = Store::open(&config.store)?;
@@ -111,9 +103,7 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
 
     eprintln!();
     eprintln!("--- Keys ({total_keys}) ---");
-    eprintln!(
-        "  Active:  {active}  (Ed25519: {ed25519_count}, X25519: {x25519_count})"
-    );
+    eprintln!("  Active:  {active}  (Ed25519: {ed25519_count}, X25519: {x25519_count})");
     eprintln!("  Revoked: {revoked}");
 
     // --- ACL ---

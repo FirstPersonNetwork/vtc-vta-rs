@@ -214,7 +214,7 @@ pub async fn run_setup_wizard(
 
     // Store seed in OS keyring
     let seed = mnemonic.to_seed("");
-    let seed_store = KeyringSeedStore::new("vtc-vta", "master_seed");
+    let seed_store = KeyringSeedStore::new("vta", "master_seed");
     seed_store.set(&seed).await?;
 
     // 11. Generate random JWT signing key
@@ -228,7 +228,9 @@ pub async fn run_setup_wizard(
     // Update mediator context with the DID
     med_ctx.did = Some(messaging.mediator_did.clone());
     med_ctx.updated_at = Utc::now();
-    store_context(&contexts_ks, &med_ctx).await.map_err(|e| format!("{e}"))?;
+    store_context(&contexts_ks, &med_ctx)
+        .await
+        .map_err(|e| format!("{e}"))?;
 
     // 13. VTA DID (after mediator so we can embed it as a service endpoint)
     let vta_did = create_vta_did(&seed, &messaging, &vta_ctx.base_path, &keys_ks).await?;
@@ -237,7 +239,9 @@ pub async fn run_setup_wizard(
     if let Some(ref did) = vta_did {
         vta_ctx.did = Some(did.clone());
         vta_ctx.updated_at = Utc::now();
-        store_context(&contexts_ks, &vta_ctx).await.map_err(|e| format!("{e}"))?;
+        store_context(&contexts_ks, &vta_ctx)
+            .await
+            .map_err(|e| format!("{e}"))?;
     }
 
     // 14. Bootstrap admin DID in ACL
@@ -289,7 +293,7 @@ pub async fn run_setup_wizard(
     eprintln!();
     eprintln!("\x1b[1;32mSetup complete!\x1b[0m");
     eprintln!("  Config saved to: {}", config_path.display());
-    eprintln!("  Seed stored in OS keyring (service: vtc-vta, user: master_seed)");
+    eprintln!("  Seed stored in OS keyring (service: vta, user: master_seed)");
     if let Some(name) = &config.vta_name {
         eprintln!("  VTA Name: {name}");
     }
@@ -304,8 +308,10 @@ pub async fn run_setup_wizard(
         eprintln!("  Mediator DID: {}", msg.mediator_did);
         eprintln!("  Mediator URL: {}", msg.mediator_url);
     }
-    eprintln!("  Contexts: vta ({}), mediator ({}), trust-registry ({})",
-        vta_ctx.base_path, med_ctx.base_path, _tr_ctx.base_path);
+    eprintln!(
+        "  Contexts: vta ({}), mediator ({}), trust-registry ({})",
+        vta_ctx.base_path, med_ctx.base_path, _tr_ctx.base_path
+    );
     eprintln!("  Admin DID: {admin_did}");
     if let Some(cred) = &admin_credential {
         eprintln!();

@@ -25,11 +25,11 @@ pub async fn run_create_did_key(args: CreateDidKeyArgs) -> Result<(), Box<dyn st
     let contexts_ks = store.keyspace("contexts")?;
 
     // Load seed from OS keyring
-    let seed_store = KeyringSeedStore::new("vtc-vta", "master_seed");
+    let seed_store = KeyringSeedStore::new("vta", "master_seed");
     let seed = seed_store
         .get()
         .await?
-        .ok_or("No seed found in OS keyring. Run `vtc-vta setup` first.")?;
+        .ok_or("No seed found in OS keyring. Run `vta setup` first.")?;
 
     // Resolve context
     let ctx = match get_context(&contexts_ks, &args.context).await? {
@@ -46,10 +46,7 @@ pub async fn run_create_did_key(args: CreateDidKeyArgs) -> Result<(), Box<dyn st
         }
     };
 
-    let label = args
-        .label
-        .as_deref()
-        .unwrap_or("did:key");
+    let label = args.label.as_deref().unwrap_or("did:key");
 
     // Derive and store the did:key
     let (did, private_key_multibase) =
@@ -70,7 +67,10 @@ pub async fn run_create_did_key(args: CreateDidKeyArgs) -> Result<(), Box<dyn st
             created_by: "cli:create-did-key".into(),
         };
         store_acl_entry(&acl_ks, &entry).await?;
-        eprintln!("ACL entry created: {} (admin, context: {})", did, args.context);
+        eprintln!(
+            "ACL entry created: {} (admin, context: {})",
+            did, args.context
+        );
     }
 
     // Persist all writes

@@ -28,7 +28,7 @@ use multibase::Base;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "vtc-vta", about = "Verified Trust Agent", version)]
+#[command(name = "vta", about = "Verified Trust Agent", version)]
 struct Cli {
     /// Path to the configuration file
     #[arg(short, long, global = true)]
@@ -145,10 +145,10 @@ async fn main() {
                     eprintln!("Error: {e}");
                     eprintln!();
                     eprintln!("To set up a new VTA instance, run:");
-                    eprintln!("  vtc-vta setup");
+                    eprintln!("  vta setup");
                     eprintln!();
                     eprintln!("Or specify a config file:");
-                    eprintln!("  vtc-vta --config <path>");
+                    eprintln!("  vta --config <path>");
                     std::process::exit(1);
                 }
             };
@@ -156,7 +156,7 @@ async fn main() {
             init_tracing(&config);
 
             let store = store::Store::open(&config.store).expect("failed to open store");
-            let seed_store = Arc::new(KeyringSeedStore::new("vtc-vta", "master_seed"));
+            let seed_store = Arc::new(KeyringSeedStore::new("vta", "master_seed"));
 
             if let Err(e) = server::run(config, store, seed_store).await {
                 tracing::error!("server error: {e}");
@@ -199,14 +199,12 @@ fn init_tracing(config: &AppConfig) {
     }
 }
 
-async fn export_admin(
-    config_path: Option<PathBuf>,
-) -> Result<(), Box<dyn std::error::Error>> {
+async fn export_admin(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::load(config_path)?;
     let store = store::Store::open(&config.store)?;
     let acl_ks = store.keyspace("acl")?;
     let keys_ks = store.keyspace("keys")?;
-    let seed_store = KeyringSeedStore::new("vtc-vta", "master_seed");
+    let seed_store = KeyringSeedStore::new("vta", "master_seed");
 
     let vta_did = config.vta_did.as_deref().unwrap_or("(not set)");
 
@@ -240,12 +238,7 @@ async fn export_admin(
         // For did:key admins, reconstruct the credential
         if admin.did.starts_with("did:key:") {
             if let Some(ref seed) = seed {
-                match reconstruct_credential(
-                    seed,
-                    &admin.did,
-                    vta_did,
-                    &keys_ks,
-                ).await {
+                match reconstruct_credential(seed, &admin.did, vta_did, &keys_ks).await {
                     Ok(credential) => {
                         eprintln!();
                         eprintln!("  Credential:");
@@ -285,9 +278,12 @@ async fn reconstruct_credential(
     // Re-derive the private key
     let root = ExtendedSigningKey::from_seed(seed)
         .map_err(|e| format!("failed to create BIP-32 root key: {e}"))?;
-    let derivation_path: DerivationPath = record.derivation_path.parse()
+    let derivation_path: DerivationPath = record
+        .derivation_path
+        .parse()
         .map_err(|e| format!("invalid derivation path: {e}"))?;
-    let derived = root.derive(&derivation_path)
+    let derived = root
+        .derive(&derivation_path)
         .map_err(|e| format!("key derivation failed: {e}"))?;
 
     let signing_key = SigningKey::from_bytes(derived.signing_key.as_bytes());

@@ -85,7 +85,7 @@ pub async fn create_key(
         }
     };
 
-    let bip32 = load_or_generate_seed(&state.seed_store, req.mnemonic.as_deref()).await?;
+    let bip32 = load_or_generate_seed(&*state.seed_store, req.mnemonic.as_deref()).await?;
 
     let secret = match req.key_type {
         KeyType::Ed25519 => bip32.derive_ed25519(&derivation_path)?,

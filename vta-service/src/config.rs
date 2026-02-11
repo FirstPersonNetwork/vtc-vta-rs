@@ -19,8 +19,24 @@ pub struct AppConfig {
     pub messaging: Option<MessagingConfig>,
     #[serde(default)]
     pub auth: AuthConfig,
+    #[serde(default)]
+    pub secrets: SecretsConfig,
     #[serde(skip)]
     pub config_path: PathBuf,
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+pub struct SecretsConfig {
+    /// Hex-encoded BIP-32 seed (config-seed feature)
+    pub seed: Option<String>,
+    /// AWS Secrets Manager secret name (aws-secrets feature)
+    pub aws_secret_name: Option<String>,
+    /// AWS region override (aws-secrets feature)
+    pub aws_region: Option<String>,
+    /// GCP project ID (gcp-secrets feature)
+    pub gcp_project: Option<String>,
+    /// GCP secret name (gcp-secrets feature)
+    pub gcp_secret_name: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -221,6 +237,23 @@ impl AppConfig {
                 messaging.mediator_did = did;
             }
             (Err(_), Err(_)) => {}
+        }
+
+        // Secrets env var overrides
+        if let Ok(seed) = std::env::var("VTA_SECRETS_SEED") {
+            config.secrets.seed = Some(seed);
+        }
+        if let Ok(name) = std::env::var("VTA_SECRETS_AWS_SECRET_NAME") {
+            config.secrets.aws_secret_name = Some(name);
+        }
+        if let Ok(region) = std::env::var("VTA_SECRETS_AWS_REGION") {
+            config.secrets.aws_region = Some(region);
+        }
+        if let Ok(project) = std::env::var("VTA_SECRETS_GCP_PROJECT") {
+            config.secrets.gcp_project = Some(project);
+        }
+        if let Ok(name) = std::env::var("VTA_SECRETS_GCP_SECRET_NAME") {
+            config.secrets.gcp_secret_name = Some(name);
         }
 
         // Auth env var overrides

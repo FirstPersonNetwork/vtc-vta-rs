@@ -14,7 +14,7 @@ use crate::config::{AppConfig, AuthConfig};
 use crate::error::AppError;
 use crate::keys::KeyRecord;
 use crate::keys::derivation::Bip32Extension;
-use crate::keys::seed_store::KeyringSeedStore;
+use crate::keys::seed_store::SeedStore;
 use crate::routes;
 use crate::store::{KeyspaceHandle, Store};
 use tokio::net::TcpListener;
@@ -29,7 +29,7 @@ pub struct AppState {
     pub acl_ks: KeyspaceHandle,
     pub contexts_ks: KeyspaceHandle,
     pub config: Arc<RwLock<AppConfig>>,
-    pub seed_store: Arc<KeyringSeedStore>,
+    pub seed_store: Arc<dyn SeedStore>,
     pub did_resolver: Option<DIDCacheClient>,
     pub secrets_resolver: Option<Arc<ThreadedSecretsResolver>>,
     pub jwt_keys: Option<Arc<JwtKeys>>,
@@ -38,7 +38,7 @@ pub struct AppState {
 pub async fn run(
     config: AppConfig,
     store: Store,
-    seed_store: Arc<KeyringSeedStore>,
+    seed_store: Arc<dyn SeedStore>,
 ) -> Result<(), AppError> {
     let addr = format!("{}:{}", config.server.host, config.server.port);
     let listener = TcpListener::bind(&addr).await.map_err(AppError::Io)?;
@@ -51,7 +51,7 @@ pub async fn run(
 
     // Initialize auth infrastructure
     let (did_resolver, secrets_resolver, jwt_keys) =
-        init_auth(&config, &seed_store, &keys_ks).await;
+        init_auth(&config, &*seed_store, &keys_ks).await;
 
     let auth_config = config.auth.clone();
 
@@ -93,7 +93,7 @@ pub async fn run(
 /// so the setup wizard can be run first).
 async fn init_auth(
     config: &AppConfig,
-    seed_store: &KeyringSeedStore,
+    seed_store: &dyn SeedStore,
     keys_ks: &KeyspaceHandle,
 ) -> (
     Option<DIDCacheClient>,
@@ -108,15 +108,15 @@ async fn init_auth(
         }
     };
 
-    // Load seed from keyring
+    // Load seed from store
     let seed = match seed_store.get().await {
         Ok(Some(s)) => s,
         Ok(None) => {
-            warn!("no master seed in keyring — auth endpoints will not work (run setup first)");
+            warn!("no master seed found — auth endpoints will not work (run setup first)");
             return (None, None, None);
         }
         Err(e) => {
-            warn!("failed to load seed from keyring: {e} — auth endpoints will not work");
+            warn!("failed to load seed: {e} — auth endpoints will not work");
             return (None, None, None);
         }
     };

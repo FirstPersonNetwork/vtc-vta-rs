@@ -1,10 +1,10 @@
 use crate::error::AppError;
-use crate::keys::seed_store::KeyringSeedStore;
+use crate::keys::seed_store::SeedStore;
 use affinidi_tdk::{
     affinidi_crypto::ed25519::ed25519_private_to_x25519, secrets_resolver::secrets::Secret,
 };
 use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
-use rand::RngCore;
+use rand::Rng;
 use tracing::{debug, info};
 
 pub trait Bip32Extension {
@@ -55,7 +55,7 @@ impl Bip32Extension for ExtendedSigningKey {
 /// - If no mnemonic and a seed already exists, returns the existing seed.
 /// - If no mnemonic and no seed exists, generates 32 random bytes and stores them.
 pub async fn load_or_generate_seed(
-    seed_store: &KeyringSeedStore,
+    seed_store: &dyn SeedStore,
     mnemonic: Option<&str>,
 ) -> Result<ExtendedSigningKey, AppError> {
     if let Some(phrase) = mnemonic {
@@ -72,7 +72,7 @@ pub async fn load_or_generate_seed(
     }
 
     if let Some(existing) = seed_store.get().await? {
-        debug!("master seed loaded from keyring");
+        debug!("master seed loaded from store");
         return ExtendedSigningKey::from_seed(&existing).map_err(|e| {
             AppError::KeyDerivation(format!(
                 "Couldn't create bip32 root signing key! Reason: {e}"

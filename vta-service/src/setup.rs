@@ -12,7 +12,7 @@ use didwebvh_rs::log_entry::LogEntryMethods;
 use didwebvh_rs::parameters::Parameters as WebVHParameters;
 use didwebvh_rs::url::WebVHURL;
 use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
-use rand::RngCore;
+use rand::Rng;
 use serde_json::json;
 use url::Url;
 
@@ -24,7 +24,7 @@ use crate::config::{
 };
 use crate::contexts::{self, ContextRecord, store_context};
 use crate::keys::paths::allocate_path;
-use crate::keys::seed_store::KeyringSeedStore;
+use crate::keys::seed_store::create_seed_store;
 use crate::keys::{self, DerivedEntityKeys, KeyType as SdkKeyType, PreRotationKeyData};
 use crate::store::{KeyspaceHandle, Store};
 
@@ -212,10 +212,23 @@ pub async fn run_setup_wizard(
         }
     };
 
-    // Store seed in OS keyring
+    // Store seed via configured backend (defaults to OS keyring)
     let seed = mnemonic.to_seed("");
-    let seed_store = KeyringSeedStore::new("vta", "master_seed");
-    seed_store.set(&seed).await?;
+    let seed_store = create_seed_store(&AppConfig {
+        vta_did: None,
+        vta_name: None,
+        vta_description: None,
+        public_url: None,
+        server: ServerConfig::default(),
+        log: LogConfig::default(),
+        store: StoreConfig::default(),
+        messaging: None,
+        auth: AuthConfig::default(),
+        secrets: Default::default(),
+        config_path: config_path.clone(),
+    })
+    .map_err(|e| format!("{e}"))?;
+    seed_store.set(&seed).await.map_err(|e| format!("{e}"))?;
 
     // 11. Generate random JWT signing key
     let mut jwt_key_bytes = [0u8; 32];
@@ -285,6 +298,7 @@ pub async fn run_setup_wizard(
             jwt_signing_key: Some(jwt_signing_key),
             ..AuthConfig::default()
         },
+        secrets: Default::default(),
         config_path: config_path.clone(),
     };
     config.save()?;
@@ -293,7 +307,7 @@ pub async fn run_setup_wizard(
     eprintln!();
     eprintln!("\x1b[1;32mSetup complete!\x1b[0m");
     eprintln!("  Config saved to: {}", config_path.display());
-    eprintln!("  Seed stored in OS keyring (service: vta, user: master_seed)");
+    eprintln!("  Seed stored in configured backend");
     if let Some(name) = &config.vta_name {
         eprintln!("  VTA Name: {name}");
     }

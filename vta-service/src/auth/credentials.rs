@@ -1,6 +1,6 @@
 use ed25519_dalek::SigningKey;
 use multibase::Base;
-use rand::RngCore;
+use rand::Rng;
 use tracing::debug;
 
 use crate::keys::ed25519_multibase_pubkey;

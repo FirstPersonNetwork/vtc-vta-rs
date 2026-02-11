@@ -12,7 +12,7 @@ use vta_sdk::did_secrets::{DidSecretsBundle, SecretEntry};
 
 use crate::config::AppConfig;
 use crate::contexts::{self, get_context, store_context};
-use crate::keys::seed_store::KeyringSeedStore;
+use crate::keys::seed_store::create_seed_store;
 use crate::keys::{self, KeyType as SdkKeyType};
 use crate::setup;
 use crate::store::Store;
@@ -31,12 +31,13 @@ pub async fn run_create_did_webvh(
     let keys_ks = store.keyspace("keys")?;
     let contexts_ks = store.keyspace("contexts")?;
 
-    // Load seed from OS keyring
-    let seed_store = KeyringSeedStore::new("vta", "master_seed");
+    // Load seed from configured backend
+    let seed_store = create_seed_store(&config)?;
     let seed = seed_store
         .get()
-        .await?
-        .ok_or("No seed found in OS keyring. Run `vta setup` first.")?;
+        .await
+        .map_err(|e| format!("{e}"))?
+        .ok_or("No seed found. Run `vta setup` first.")?;
 
     // Resolve context
     let mut ctx = match get_context(&contexts_ks, &args.context).await? {

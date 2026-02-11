@@ -54,7 +54,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 
 # Random number generation
-rand = "0.9"
+rand = "0.10"
 
 # DID Web with Verifiable History
 did-webvh = "0.1"
@@ -78,7 +78,7 @@ axum-extra = { version = "0.12", features = ["typed-header"] }
 base64 = "0.22"
 
 # HTTP client
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.13", features = ["json"] }
 
 # CLI argument parsing
 clap = { version = "4", features = ["derive"] }

@@ -23,7 +23,7 @@ use clap::{Parser, Subcommand};
 use config::{AppConfig, LogFormat};
 use ed25519_dalek::SigningKey;
 use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
-use keys::seed_store::KeyringSeedStore;
+use keys::seed_store::create_seed_store;
 use multibase::Base;
 use tracing_subscriber::EnvFilter;
 
@@ -156,7 +156,8 @@ async fn main() {
             init_tracing(&config);
 
             let store = store::Store::open(&config.store).expect("failed to open store");
-            let seed_store = Arc::new(KeyringSeedStore::new("vta", "master_seed"));
+            let seed_store: Arc<dyn keys::seed_store::SeedStore> =
+                Arc::from(create_seed_store(&config).expect("failed to create seed store"));
 
             if let Err(e) = server::run(config, store, seed_store).await {
                 tracing::error!("server error: {e}");
@@ -204,7 +205,7 @@ async fn export_admin(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::e
     let store = store::Store::open(&config.store)?;
     let acl_ks = store.keyspace("acl")?;
     let keys_ks = store.keyspace("keys")?;
-    let seed_store = KeyringSeedStore::new("vta", "master_seed");
+    let seed_store = create_seed_store(&config)?;
 
     let vta_did = config.vta_did.as_deref().unwrap_or("(not set)");
 
@@ -227,7 +228,7 @@ async fn export_admin(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::e
     eprintln!();
 
     // Load seed for credential reconstruction
-    let seed = seed_store.get().await?;
+    let seed = seed_store.get().await.map_err(|e| format!("{e}"))?;
 
     for admin in &admins {
         eprintln!("Admin DID: {}", admin.did);
@@ -249,7 +250,7 @@ async fn export_admin(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::e
                     }
                 }
             } else {
-                eprintln!("  No seed in keyring — cannot reconstruct credential");
+                eprintln!("  No seed found — cannot reconstruct credential");
             }
         }
         eprintln!();

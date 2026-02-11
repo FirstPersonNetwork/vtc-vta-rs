@@ -12,6 +12,7 @@ Manager (CNM) CLI.
 
 - [Overview](#overview)
 - [Architecture](#architecture)
+- [Feature Flags](#feature-flags)
 - [Prerequisites](#prerequisites)
 - [Getting Started](#getting-started)
 - [Example: Creating a New Application Context](#example-creating-a-new-application-context)
@@ -32,8 +33,8 @@ The repository is a Rust workspace with three crates:
 
 The VTA is built on Axum with an embedded fjall key-value store for
 persistence. Cryptographic keys derive from a single BIP-39 mnemonic via
-BIP-32 Ed25519 derivation, and the master seed is stored in the OS keyring
-(never on disk). Authentication uses a DIDComm v2 challenge-response flow
+BIP-32 Ed25519 derivation, and the master seed is stored in a pluggable
+backend (OS keyring by default; see [Feature Flags](#feature-flags)). Authentication uses a DIDComm v2 challenge-response flow
 that issues short-lived EdDSA JWTs.
 
 | Layer | Technology |
@@ -45,15 +46,63 @@ that issues short-lived EdDSA JWTs.
 | DID resolution | affinidi-did-resolver-cache-sdk |
 | DIDComm | affinidi-tdk (didcomm, secrets_resolver) |
 | JWT | jsonwebtoken (EdDSA / Ed25519) |
-| Seed storage | OS keyring (keyring crate) |
+| Seed storage | OS keyring, AWS Secrets Manager, GCP Secret Manager, or config file (see [Feature Flags](#feature-flags)) |
 
 See [docs/design.md](docs/design.md) for the full design document.
+
+## Feature Flags
+
+The `vta-service` crate uses feature flags to control which seed storage
+backend is compiled in. The default build uses the OS keyring.
+
+| Feature | Description | Default |
+|---|---|---|
+| `setup` | Interactive setup wizard (`vta setup`) | Yes |
+| `keyring` | Store the master seed in the OS keyring (macOS Keychain, GNOME Keyring, Windows Credential Manager) | Yes |
+| `config-seed` | Store the seed as a hex string in `config.toml` (useful for containers / CI) | No |
+| `aws-secrets` | Store the seed in AWS Secrets Manager | No |
+| `gcp-secrets` | Store the seed in GCP Secret Manager | No |
+
+### Build examples
+
+```sh
+# Default (OS keyring + setup wizard)
+cargo build --package vta-service
+
+# AWS Secrets Manager instead of keyring
+cargo build --package vta-service --no-default-features --features "setup,aws-secrets"
+
+# GCP Secret Manager instead of keyring
+cargo build --package vta-service --no-default-features --features "setup,gcp-secrets"
+
+# Both cloud backends (setup wizard lets you choose)
+cargo build --package vta-service --no-default-features --features "setup,aws-secrets,gcp-secrets"
+
+# Config-file seed (no keyring, no cloud -- seed stored in config.toml)
+cargo build --package vta-service --no-default-features --features "setup,config-seed"
+
+# Keyring + AWS (keyring is the fallback if no AWS secret name is configured)
+cargo build --package vta-service --features "aws-secrets"
+```
+
+When a cloud backend is compiled in, the setup wizard prompts for the
+relevant configuration (secret name, region, project ID). If both
+`aws-secrets` and `gcp-secrets` are enabled, the wizard shows a selector
+to choose between them or fall back to the OS keyring.
+
+At runtime, the backend is selected by priority based on what is
+configured in `config.toml` (or environment variables):
+
+1. AWS Secrets Manager (`secrets.aws_secret_name` set)
+2. GCP Secret Manager (`secrets.gcp_secret_name` set)
+3. Config file seed (`secrets.seed` set)
+4. OS keyring (default fallback)
 
 ## Prerequisites
 
 - **Rust 1.91.0+** (edition 2024)
-- **OS keyring support** -- the master seed is stored in your platform's
-  credential manager:
+- **OS keyring support** (when using the default `keyring` feature) --
+  the master seed is stored in your platform's credential manager:
   - macOS: Keychain
   - Linux: secret-service (e.g. GNOME Keyring)
   - Windows: Credential Manager

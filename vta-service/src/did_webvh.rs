@@ -20,7 +20,6 @@ use crate::store::Store;
 pub struct CreateDidWebvhArgs {
     pub config_path: Option<PathBuf>,
     pub context: String,
-    pub context_name: Option<String>,
     pub label: Option<String>,
 }
 
@@ -43,17 +42,14 @@ pub async fn run_create_did_webvh(
     let mut ctx = match get_context(&contexts_ks, &args.context).await? {
         Some(ctx) => ctx,
         None => {
-            if let Some(name) = &args.context_name {
-                let ctx = contexts::create_context(&contexts_ks, &args.context, name).await?;
-                eprintln!("Created context: {} ({})", ctx.id, ctx.base_path);
-                ctx
-            } else {
-                return Err(format!(
-                    "Context '{}' does not exist. Use --context-name to create it.",
-                    args.context
-                )
-                .into());
-            }
+            eprintln!("Context '{}' does not exist.", args.context);
+            let name: String = Input::new()
+                .with_prompt("Create it with name")
+                .default(args.context.clone())
+                .interact_text()?;
+            let ctx = contexts::create_context(&contexts_ks, &args.context, &name).await?;
+            eprintln!("Created context: {} ({})", ctx.id, ctx.base_path);
+            ctx
         }
     };
 

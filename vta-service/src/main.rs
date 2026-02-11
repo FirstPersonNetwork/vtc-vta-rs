@@ -66,9 +66,6 @@ enum Commands {
         /// Target context ID
         #[arg(long)]
         context: String,
-        /// Create the context with this name if it doesn't exist
-        #[arg(long)]
-        context_name: Option<String>,
         /// Human-readable label prefix for key records (default: context id)
         #[arg(long)]
         label: Option<String>,
@@ -126,17 +123,12 @@ async fn main() {
                 std::process::exit(1);
             }
         }
-        Some(Commands::CreateDidWebvh {
-            context,
-            context_name,
-            label,
-        }) => {
+        Some(Commands::CreateDidWebvh { context, label }) => {
             #[cfg(feature = "setup")]
             {
                 let args = did_webvh::CreateDidWebvhArgs {
                     config_path: cli.config,
                     context,
-                    context_name,
                     label,
                 };
                 if let Err(e) = did_webvh::run_create_did_webvh(args).await {
@@ -146,7 +138,7 @@ async fn main() {
             }
             #[cfg(not(feature = "setup"))]
             {
-                let _ = (context, context_name, label);
+                let _ = (context, label);
                 eprintln!("create-did-webvh is not available (compiled without 'setup' feature)");
                 std::process::exit(1);
             }

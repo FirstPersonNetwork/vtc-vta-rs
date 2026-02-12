@@ -10,6 +10,10 @@ readme = "README.md"
 license.workspace = true
 repository.workspace = true
 
+[[bin]]
+name = "cnm"
+path = "src/main.rs"
+
 [dependencies]
 vta-sdk = { path = "../vta-sdk" }
 affinidi-tdk = { workspace = true }

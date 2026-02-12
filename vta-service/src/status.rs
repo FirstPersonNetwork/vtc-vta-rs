@@ -24,11 +24,23 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
 
     eprintln!("=== VTA Status ===");
     eprintln!();
+    eprintln!(
+        "Name:      {}",
+        config.vta_name.as_deref().unwrap_or("(not set)")
+    );
+    eprintln!(
+        "Desc:      {}",
+        config.vta_description.as_deref().unwrap_or("(not set)")
+    );
     eprintln!("Setup:     complete");
     eprintln!("Config:    {}", config.config_path.display());
     eprintln!(
         "VTA DID:   {}",
         config.vta_did.as_deref().unwrap_or("(not set)")
+    );
+    eprintln!(
+        "URL:       {}",
+        config.public_url.as_deref().unwrap_or("(not set)")
     );
     eprintln!("Store:     {}", config.store.data_dir.display());
 

@@ -1,4 +1,5 @@
 mod acl;
+mod acl_cli;
 mod auth;
 mod config;
 mod contexts;
@@ -82,6 +83,51 @@ enum Commands {
         /// Restrict to specific context(s); omit for unrestricted access
         #[arg(long)]
         context: Vec<String>,
+    },
+    /// Manage Access Control List entries (offline, no server required)
+    Acl {
+        #[command(subcommand)]
+        command: AclCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum AclCommands {
+    /// List all ACL entries
+    List {
+        /// Filter by context
+        #[arg(long)]
+        context: Option<String>,
+        /// Filter by role (admin, initiator, application)
+        #[arg(long)]
+        role: Option<String>,
+    },
+    /// Show details of a single ACL entry
+    Get {
+        /// The DID to look up
+        did: String,
+    },
+    /// Update an existing ACL entry
+    Update {
+        /// The DID to update
+        did: String,
+        /// New role (admin, initiator, application)
+        #[arg(long)]
+        role: Option<String>,
+        /// New label (empty string to clear)
+        #[arg(long)]
+        label: Option<String>,
+        /// New context list (comma-separated; omit flag to keep unchanged)
+        #[arg(long, value_delimiter = ',')]
+        contexts: Option<Vec<String>>,
+    },
+    /// Delete an ACL entry
+    Delete {
+        /// The DID to delete
+        did: String,
+        /// Skip confirmation prompt
+        #[arg(short, long)]
+        yes: bool,
     },
 }
 
@@ -168,6 +214,27 @@ async fn main() {
                 context,
             };
             if let Err(e) = import_did::run_import_did(args).await {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::Acl { command }) => {
+            let result = match command {
+                AclCommands::List { context, role } => {
+                    acl_cli::run_acl_list(cli.config, context, role).await
+                }
+                AclCommands::Get { did } => acl_cli::run_acl_get(cli.config, did).await,
+                AclCommands::Update {
+                    did,
+                    role,
+                    label,
+                    contexts,
+                } => acl_cli::run_acl_update(cli.config, did, role, label, contexts).await,
+                AclCommands::Delete { did, yes } => {
+                    acl_cli::run_acl_delete(cli.config, did, yes).await
+                }
+            };
+            if let Err(e) = result {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }

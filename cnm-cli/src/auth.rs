@@ -162,6 +162,28 @@ pub async fn login(
     Ok(())
 }
 
+/// Store a session directly (without performing authentication).
+///
+/// Used when cnm already knows the DID, private key, and community VTA details
+/// (e.g. after generating a DID via the personal VTA during setup).
+pub fn store_session_direct(
+    keyring_key: &str,
+    did: &str,
+    private_key: &str,
+    vta_did: &str,
+    vta_url: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let session = Session {
+        client_did: did.to_string(),
+        private_key: private_key.to_string(),
+        vta_did: vta_did.to_string(),
+        vta_url: Some(vta_url.to_string()),
+        access_token: None,
+        access_expires_at: None,
+    };
+    save_session_for(keyring_key, &session)
+}
+
 /// Clear stored credentials and cached tokens.
 ///
 /// When `keyring_key` is `None`, clears the legacy `"session"` key.

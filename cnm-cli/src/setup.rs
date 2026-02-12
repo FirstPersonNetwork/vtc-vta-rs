@@ -1,4 +1,6 @@
 use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use dialoguer::{Input, Select};
 
 use crate::auth;
@@ -41,17 +43,18 @@ async fn resolve_vta_url(did: &str) -> Option<String> {
 /// then ask for the URL (pre-filled with the discovered value or manual entry).
 ///
 /// `label` is a human-readable prefix like "Personal" or "Community".
-async fn prompt_vta_url(label: &str) -> Result<String, Box<dyn std::error::Error>> {
+/// Returns `(Option<did>, url)`.
+async fn prompt_vta_url(label: &str) -> Result<(Option<String>, String), Box<dyn std::error::Error>> {
     let did: String = Input::new()
         .with_prompt(format!("{label} VTA DID (press Enter to skip)"))
         .allow_empty(true)
         .interact_text()?;
 
-    let discovered_url = if did.is_empty() {
-        None
+    let (did, discovered_url) = if did.is_empty() {
+        (None, None)
     } else {
         eprintln!("Resolving DID...");
-        match resolve_vta_url(&did).await {
+        let url = match resolve_vta_url(&did).await {
             Some(url) => {
                 eprintln!("  Discovered VTA URL: {url}");
                 Some(url)
@@ -60,7 +63,8 @@ async fn prompt_vta_url(label: &str) -> Result<String, Box<dyn std::error::Error
                 eprintln!("  No #vta service endpoint found in DID document.");
                 None
             }
-        }
+        };
+        (Some(did), url)
     };
 
     let vta_url: String = if let Some(url) = discovered_url {
@@ -74,7 +78,7 @@ async fn prompt_vta_url(label: &str) -> Result<String, Box<dyn std::error::Error
             .interact_text()?
     };
 
-    Ok(vta_url)
+    Ok((did, vta_url))
 }
 
 /// Run the interactive setup wizard.
@@ -84,7 +88,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = load_config()?;
 
     // ── Personal VTA ────────────────────────────────────────────────
-    let personal_url = prompt_vta_url("Personal").await?;
+    let (_personal_did, personal_url) = prompt_vta_url("Personal").await?;
 
     let personal_credential: String = Input::new()
         .with_prompt("Personal VTA credential (base64)")
@@ -109,7 +113,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
         .default(default_slug)
         .interact_text()?;
 
-    let community_url = prompt_vta_url("Community").await?;
+    let (community_did, community_url) = prompt_vta_url("Community").await?;
 
     let join_options = &[
         "Import existing credential",
@@ -178,15 +182,44 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
             };
             let resp = personal_client.generate_credentials(cred_req).await?;
 
+            // Decode credential to extract the private key
+            let bundle_json = BASE64
+                .decode(&resp.credential)
+                .map_err(|e| format!("failed to decode credential: {e}"))?;
+            let bundle: serde_json::Value = serde_json::from_slice(&bundle_json)
+                .map_err(|e| format!("invalid credential format: {e}"))?;
+            let private_key = bundle["privateKeyMultibase"]
+                .as_str()
+                .ok_or("credential missing privateKeyMultibase")?;
+
+            // Ensure we have the community VTA DID (prompt if not provided earlier)
+            let community_vta_did = match &community_did {
+                Some(did) => did.clone(),
+                None => {
+                    Input::new()
+                        .with_prompt("Community VTA DID (required for authentication)")
+                        .interact_text()?
+                }
+            };
+
+            // Store community session so cnm can authenticate automatically
+            let keyring_key = community_keyring_key(&community_slug);
+            auth::store_session_direct(
+                &keyring_key,
+                &resp.did,
+                private_key,
+                &community_vta_did,
+                &community_url,
+            )?;
+
             eprintln!();
             eprintln!("\x1b[1;32mGenerated community admin DID:\x1b[0m {}", resp.did);
             eprintln!();
-            eprintln!("To join the community, provide this DID to the community administrator.");
-            eprintln!("They will create an ACL entry granting your DID access.");
+            eprintln!("Share this DID with the community administrator.");
+            eprintln!("They will run:");
+            eprintln!("  vta import-did --did {}", resp.did);
             eprintln!();
-            eprintln!("Once the community admin has granted access, run:");
-            eprintln!("  cnm community add");
-            eprintln!("and import the credential they provide.");
+            eprintln!("Once access is granted, cnm will authenticate automatically.");
             eprintln!();
 
             Some(context_slug)
@@ -241,7 +274,7 @@ pub async fn add_community() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
-    let community_url = prompt_vta_url("Community").await?;
+    let (_community_did, community_url) = prompt_vta_url("Community").await?;
 
     let credential: String = Input::new()
         .with_prompt("Community credential (base64)")

@@ -21,6 +21,10 @@ struct Cli {
     #[arg(long, env = "VTA_URL")]
     url: Option<String>,
 
+    /// Enable verbose debug output (can also set RUST_LOG=debug)
+    #[arg(short, long, global = true)]
+    verbose: bool,
+
     #[command(subcommand)]
     command: Commands,
 }
@@ -304,6 +308,19 @@ fn requires_auth(cmd: &Commands) -> bool {
 async fn main() {
     let cli = Cli::parse();
 
+    // Initialize tracing: --verbose sets cnm_cli=debug, or respect RUST_LOG
+    let filter = if cli.verbose {
+        tracing_subscriber::EnvFilter::new("cnm_cli=debug")
+    } else {
+        tracing_subscriber::EnvFilter::from_default_env()
+    };
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_target(false)
+        .without_time()
+        .with_writer(std::io::stderr)
+        .init();
+
     print_banner();
 
     let url = cli
@@ -438,9 +455,66 @@ async fn main() {
 }
 
 async fn cmd_health(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>> {
+    use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
+
     let resp = client.health().await?;
-    println!("Status:  {}", resp.status);
-    println!("Version: {}", resp.version);
+    println!("Service: {} (v{})", resp.status, resp.version);
+    println!("URL:     {}", client.base_url());
+
+    // Resolve DIDs from stored session
+    let Some(session) = auth::loaded_session() else {
+        println!("\n(not authenticated — DID resolution skipped)");
+        return Ok(());
+    };
+
+    println!();
+    println!("Client DID: {}", session.client_did);
+    println!("VTA DID:    {}", session.vta_did);
+
+    let resolver = match DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await {
+        Ok(r) => r,
+        Err(e) => {
+            println!("\nDID resolution: skipped (resolver unavailable: {e})");
+            return Ok(());
+        }
+    };
+
+    println!();
+    for (label, did) in [
+        ("Client DID", session.client_did.as_str()),
+        ("VTA DID", session.vta_did.as_str()),
+    ] {
+        let method = did
+            .strip_prefix("did:")
+            .and_then(|s| s.split(':').next())
+            .unwrap_or("unknown");
+
+        match resolver.resolve(did).await {
+            Ok(resolved) => {
+                println!("{label} resolution: ok ({method})");
+
+                // Key agreement keys (used for DIDComm encryption)
+                for ka in &resolved.doc.key_agreement {
+                    println!("  keyAgreement: {}", ka.get_id());
+                }
+
+                // Services (shows DIDComm routing, mediators, etc.)
+                for svc in &resolved.doc.service {
+                    let types = svc.type_.join(", ");
+                    let uris = svc.service_endpoint.get_uris();
+                    if uris.is_empty() {
+                        println!("  service: {types}");
+                    } else {
+                        for uri in &uris {
+                            println!("  service: {types} -> {uri}");
+                        }
+                    }
+                }
+            }
+            Err(e) => println!("{label} resolution: FAILED ({e})"),
+        }
+    }
+
     Ok(())
 }
 

@@ -6,6 +6,7 @@ use affinidi_tdk::secrets_resolver::{SecretsResolver, ThreadedSecretsResolver, s
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use serde::{Deserialize, Serialize};
+use tracing::debug;
 
 const SERVICE_NAME: &str = "cnm-cli";
 const KEYRING_KEY: &str = "session";
@@ -93,11 +94,19 @@ struct AuthenticateData {
 
 /// Import a base64-encoded credential into the OS keyring.
 pub async fn login(credential_b64: &str, base_url: &str) -> Result<(), Box<dyn std::error::Error>> {
+    debug!("decoding credential bundle");
     let bundle_json = BASE64
         .decode(credential_b64)
         .map_err(|e| format!("invalid base64 credential: {e}"))?;
     let bundle: CredentialBundle = serde_json::from_slice(&bundle_json)
         .map_err(|e| format!("invalid credential format: {e}"))?;
+
+    debug!(
+        client_did = %bundle.did,
+        vta_did = %bundle.vta_did,
+        vta_url = ?bundle.vta_url,
+        "credential decoded"
+    );
 
     let mut session = Session {
         client_did: bundle.did.clone(),
@@ -108,6 +117,7 @@ pub async fn login(credential_b64: &str, base_url: &str) -> Result<(), Box<dyn s
         access_expires_at: None,
     };
     save_session(&session)?;
+    debug!("session saved to keyring");
 
     println!("Credential imported:");
     println!("  Client DID: {}", bundle.did);
@@ -143,6 +153,20 @@ pub fn logout() {
 /// Return the stored VTA URL from the session, if any.
 pub fn stored_url() -> Option<String> {
     load_session().and_then(|s| s.vta_url)
+}
+
+/// Loaded session info exposed for health/diagnostics.
+pub struct SessionInfo {
+    pub client_did: String,
+    pub vta_did: String,
+}
+
+/// Load the stored session for diagnostics (DID resolution, etc.).
+pub fn loaded_session() -> Option<SessionInfo> {
+    load_session().map(|s| SessionInfo {
+        client_did: s.client_did,
+        vta_did: s.vta_did,
+    })
 }
 
 /// Show current authentication status.
@@ -182,16 +206,26 @@ pub fn status() {
 /// If a cached token is still valid (>30s remaining), returns it.
 /// Otherwise, performs a full challenge-response authentication.
 pub async fn ensure_authenticated(base_url: &str) -> Result<String, Box<dyn std::error::Error>> {
+    debug!(base_url, "ensuring authentication");
     let mut session = load_session().ok_or(
         "Not authenticated.\n\nTo authenticate, import a credential from your VTA administrator:\n  cnm auth login <credential-string>",
     )?;
+
+    debug!(
+        client_did = %session.client_did,
+        vta_did = %session.vta_did,
+        "session loaded from keyring"
+    );
 
     // Check cached token
     if let (Some(token), Some(expires_at)) = (&session.access_token, session.access_expires_at)
         && now_epoch() + 30 < expires_at
     {
+        debug!(expires_in = expires_at - now_epoch(), "using cached token");
         return Ok(token.clone());
     }
+
+    debug!("cached token expired or missing, performing challenge-response");
 
     // Full challenge-response
     let result = do_challenge_response(
@@ -206,6 +240,7 @@ pub async fn ensure_authenticated(base_url: &str) -> Result<String, Box<dyn std:
     session.access_token = Some(result.access_token);
     session.access_expires_at = Some(result.access_expires_at);
     save_session(&session)?;
+    debug!("new token cached in keyring");
 
     Ok(token)
 }
@@ -221,11 +256,19 @@ async fn do_challenge_response(
     private_key_multibase: &str,
     vta_did: &str,
 ) -> Result<TokenResult, Box<dyn std::error::Error>> {
+    debug!(
+        base_url,
+        client_did,
+        vta_did,
+        "starting challenge-response auth"
+    );
     let http = reqwest::Client::new();
 
     // Step 1: Request challenge
+    let challenge_url = format!("{base_url}/auth/challenge");
+    debug!(url = %challenge_url, did = client_did, "requesting challenge");
     let challenge_resp = http
-        .post(format!("{base_url}/auth/challenge"))
+        .post(&challenge_url)
         .json(&ChallengeRequest {
             did: client_did.to_string(),
         })
@@ -239,8 +282,14 @@ async fn do_challenge_response(
     }
 
     let challenge: ChallengeResponse = challenge_resp.json().await?;
+    debug!(
+        session_id = %challenge.session_id,
+        challenge = %challenge.data.challenge,
+        "challenge received"
+    );
 
     // Step 2: Build DIDComm message
+    debug!("initializing DID resolver");
     let did_resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build())
         .await
         .map_err(|e| format!("DID resolver init failed: {e}"))?;
@@ -259,6 +308,7 @@ async fn do_challenge_response(
         .ok_or("invalid did:key format")?;
     let mut ed_secret = Secret::generate_ed25519(None, Some(&seed));
     ed_secret.id = format!("{client_did}#{ed_pub_mb}");
+    debug!(secret_id = %ed_secret.id, "inserting Ed25519 signing secret");
     secrets_resolver.insert(ed_secret.clone()).await;
 
     // X25519 key agreement secret (derived from Ed25519)
@@ -269,9 +319,15 @@ async fn do_challenge_response(
         .get_public_keymultibase()
         .map_err(|e| format!("failed to get X25519 public key: {e}"))?;
     x_secret.id = format!("{client_did}#{x_pub_mb}");
+    debug!(secret_id = %x_secret.id, "inserting X25519 key-agreement secret");
     secrets_resolver.insert(x_secret).await;
 
     // Build the authenticate message
+    debug!(
+        from = client_did,
+        to = vta_did,
+        "building DIDComm authenticate message (forward=false)"
+    );
     let msg = Message::build(
         uuid::Uuid::new_v4().to_string(),
         "https://affinidi.com/atm/1.0/authenticate".to_string(),
@@ -285,33 +341,52 @@ async fn do_challenge_response(
     .finalize();
 
     // Pack the message (encrypted)
-    let (packed, _metadata) = msg
+    let (packed, metadata) = msg
         .pack_encrypted(
             vta_did,
             Some(client_did),
             None,
             &did_resolver,
             &secrets_resolver,
-            &PackEncryptedOptions::default(),
+            &PackEncryptedOptions {
+                forward: false,
+                ..PackEncryptedOptions::default()
+            },
         )
         .await
         .map_err(|e| format!("DIDComm pack failed: {e}"))?;
 
+    debug!(
+        from_kid = ?metadata.from_kid,
+        to_kids = ?metadata.to_kids,
+        messaging_service = ?metadata.messaging_service,
+        packed_len = packed.len(),
+        "message packed"
+    );
+
     // Step 3: Authenticate
+    let auth_url = format!("{base_url}/auth/");
+    debug!(url = %auth_url, "sending packed message");
     let auth_resp = http
-        .post(format!("{base_url}/auth/"))
+        .post(&auth_url)
         .header("content-type", "text/plain")
         .body(packed)
         .send()
         .await?;
 
-    if !auth_resp.status().is_success() {
-        let status = auth_resp.status();
+    let status = auth_resp.status();
+    debug!(status = %status, "auth response received");
+
+    if !status.is_success() {
         let body = auth_resp.text().await.unwrap_or_default();
         return Err(format!("authentication failed ({status}): {body}").into());
     }
 
     let auth_data: AuthenticateResponse = auth_resp.json().await?;
+    debug!(
+        expires_at = auth_data.data.access_expires_at,
+        "authentication successful"
+    );
 
     Ok(TokenResult {
         access_token: auth_data.data.access_token,

@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 const SERVICE_NAME: &str = "cnm-cli";
-const KEYRING_KEY: &str = "session";
+/// Legacy keyring key (pre multi-community).
+const LEGACY_KEYRING_KEY: &str = "session";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Session {
@@ -22,8 +23,8 @@ struct Session {
     access_expires_at: Option<u64>,
 }
 
-fn load_session() -> Option<Session> {
-    let entry = keyring::Entry::new(SERVICE_NAME, KEYRING_KEY).ok()?;
+fn load_session_for(keyring_key: &str) -> Option<Session> {
+    let entry = keyring::Entry::new(SERVICE_NAME, keyring_key).ok()?;
     let json = match entry.get_password() {
         Ok(v) => v,
         Err(keyring::Error::NoEntry) => return None,
@@ -35,8 +36,12 @@ fn load_session() -> Option<Session> {
     serde_json::from_str(&json).ok()
 }
 
-fn save_session(session: &Session) -> Result<(), Box<dyn std::error::Error>> {
-    let entry = keyring::Entry::new(SERVICE_NAME, KEYRING_KEY)
+fn load_session() -> Option<Session> {
+    load_session_for(LEGACY_KEYRING_KEY)
+}
+
+fn save_session_for(keyring_key: &str, session: &Session) -> Result<(), Box<dyn std::error::Error>> {
+    let entry = keyring::Entry::new(SERVICE_NAME, keyring_key)
         .map_err(|e| format!("keyring entry error: {e}"))?;
     let json = serde_json::to_string(session)?;
     entry
@@ -45,10 +50,15 @@ fn save_session(session: &Session) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-fn clear_session() {
-    if let Ok(entry) = keyring::Entry::new(SERVICE_NAME, KEYRING_KEY) {
+fn clear_session_for(keyring_key: &str) {
+    if let Ok(entry) = keyring::Entry::new(SERVICE_NAME, keyring_key) {
         let _ = entry.delete_credential();
     }
+}
+
+/// Returns true if the legacy single-session keyring entry exists.
+pub fn has_legacy_session() -> bool {
+    load_session().is_some()
 }
 
 #[derive(Debug, Deserialize)]
@@ -93,7 +103,15 @@ struct AuthenticateData {
 }
 
 /// Import a base64-encoded credential into the OS keyring.
-pub async fn login(credential_b64: &str, base_url: &str) -> Result<(), Box<dyn std::error::Error>> {
+///
+/// When `keyring_key` is `None`, the legacy `"session"` key is used (backward compat).
+pub async fn login(
+    credential_b64: &str,
+    base_url: &str,
+    keyring_key: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let key = keyring_key.unwrap_or(LEGACY_KEYRING_KEY);
+
     debug!("decoding credential bundle");
     let bundle_json = BASE64
         .decode(credential_b64)
@@ -116,8 +134,8 @@ pub async fn login(credential_b64: &str, base_url: &str) -> Result<(), Box<dyn s
         access_token: None,
         access_expires_at: None,
     };
-    save_session(&session)?;
-    debug!("session saved to keyring");
+    save_session_for(key, &session)?;
+    debug!(keyring_key = key, "session saved to keyring");
 
     println!("Credential imported:");
     println!("  Client DID: {}", bundle.did);
@@ -138,15 +156,17 @@ pub async fn login(credential_b64: &str, base_url: &str) -> Result<(), Box<dyn s
 
     session.access_token = Some(token.access_token);
     session.access_expires_at = Some(token.access_expires_at);
-    save_session(&session)?;
+    save_session_for(key, &session)?;
 
     println!("Authentication successful.");
     Ok(())
 }
 
 /// Clear stored credentials and cached tokens.
-pub fn logout() {
-    clear_session();
+///
+/// When `keyring_key` is `None`, clears the legacy `"session"` key.
+pub fn logout(keyring_key: Option<&str>) {
+    clear_session_for(keyring_key.unwrap_or(LEGACY_KEYRING_KEY));
     println!("Logged out. Credentials and tokens removed.");
 }
 
@@ -162,16 +182,28 @@ pub struct SessionInfo {
 }
 
 /// Load the stored session for diagnostics (DID resolution, etc.).
-pub fn loaded_session() -> Option<SessionInfo> {
-    load_session().map(|s| SessionInfo {
+///
+/// When `keyring_key` is `None`, loads the legacy `"session"` key.
+pub fn loaded_session(keyring_key: Option<&str>) -> Option<SessionInfo> {
+    let session = match keyring_key {
+        Some(key) => load_session_for(key),
+        None => load_session(),
+    };
+    session.map(|s| SessionInfo {
         client_did: s.client_did,
         vta_did: s.vta_did,
     })
 }
 
 /// Show current authentication status.
-pub fn status() {
-    match load_session() {
+///
+/// When `keyring_key` is `None`, shows the legacy session.
+pub fn status(keyring_key: Option<&str>) {
+    let session = match keyring_key {
+        Some(key) => load_session_for(key),
+        None => load_session(),
+    };
+    match session {
         Some(session) => {
             println!("Client DID: {}", session.client_did);
             println!("VTA DID:    {}", session.vta_did);
@@ -205,9 +237,16 @@ pub fn status() {
 /// If no credentials are stored, returns an error prompting the user to log in.
 /// If a cached token is still valid (>30s remaining), returns it.
 /// Otherwise, performs a full challenge-response authentication.
-pub async fn ensure_authenticated(base_url: &str) -> Result<String, Box<dyn std::error::Error>> {
-    debug!(base_url, "ensuring authentication");
-    let mut session = load_session().ok_or(
+///
+/// When `keyring_key` is `None`, the legacy `"session"` key is used.
+pub async fn ensure_authenticated(
+    base_url: &str,
+    keyring_key: Option<&str>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let key = keyring_key.unwrap_or(LEGACY_KEYRING_KEY);
+    debug!(base_url, keyring_key = key, "ensuring authentication");
+
+    let mut session = load_session_for(key).ok_or(
         "Not authenticated.\n\nTo authenticate, import a credential from your VTA administrator:\n  cnm auth login <credential-string>",
     )?;
 
@@ -239,7 +278,7 @@ pub async fn ensure_authenticated(base_url: &str) -> Result<String, Box<dyn std:
     let token = result.access_token.clone();
     session.access_token = Some(result.access_token);
     session.access_expires_at = Some(result.access_expires_at);
-    save_session(&session)?;
+    save_session_for(key, &session)?;
     debug!("new token cached in keyring");
 
     Ok(token)

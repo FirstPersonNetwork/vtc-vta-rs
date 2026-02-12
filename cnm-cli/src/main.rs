@@ -1,11 +1,14 @@
 mod auth;
 mod client;
+mod config;
+mod setup;
 
 use clap::{Parser, Subcommand};
 use client::{
     CreateAclRequest, CreateContextRequest, CreateKeyRequest, GenerateCredentialsRequest,
     UpdateAclRequest, UpdateConfigRequest, UpdateContextRequest, VtaClient,
 };
+use config::{community_keyring_key, resolve_community};
 use ratatui::{
     TerminalOptions, Viewport,
     layout::Constraint,
@@ -17,9 +20,13 @@ use vta_sdk::keys::KeyType;
 #[derive(Parser)]
 #[command(name = "cnm-cli", about = "CLI for VTC Verified Trust Agents")]
 struct Cli {
-    /// Base URL of the VTA service
+    /// Base URL of the VTA service (overrides config)
     #[arg(long, env = "VTA_URL")]
     url: Option<String>,
+
+    /// Override the active community for this command
+    #[arg(short = 'c', long, global = true)]
+    community: Option<String>,
 
     /// Enable verbose debug output (can also set RUST_LOG=debug)
     #[arg(short, long, global = true)]
@@ -31,6 +38,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Initial setup wizard
+    Setup,
+
+    /// Community management
+    Community {
+        #[command(subcommand)]
+        command: CommunityCommands,
+    },
+
     /// Check service health
     Health,
 
@@ -72,6 +88,26 @@ enum Commands {
 }
 
 #[derive(Subcommand)]
+enum CommunityCommands {
+    /// List configured communities
+    List,
+    /// Switch default community
+    Use {
+        /// Community slug to set as default
+        name: String,
+    },
+    /// Add a new community
+    Add,
+    /// Remove a community
+    Remove {
+        /// Community slug to remove
+        name: String,
+    },
+    /// Show current community info
+    Status,
+}
+
+#[derive(Subcommand)]
 enum AuthCommands {
     /// Import a credential and authenticate
     Login {
@@ -92,13 +128,13 @@ enum ConfigCommands {
     Update {
         /// VTA DID
         #[arg(long)]
-        vta_did: Option<String>,
+        community_vta_did: Option<String>,
         /// VTA name
         #[arg(long)]
-        vta_name: Option<String>,
+        community_vta_name: Option<String>,
         /// VTA description
         #[arg(long)]
-        vta_description: Option<String>,
+        community_vta_description: Option<String>,
         /// Public URL for this VTA
         #[arg(long)]
         public_url: Option<String>,
@@ -301,7 +337,10 @@ fn print_banner() {
 
 /// Returns true if this command requires authentication.
 fn requires_auth(cmd: &Commands) -> bool {
-    !matches!(cmd, Commands::Health | Commands::Auth { .. })
+    !matches!(
+        cmd,
+        Commands::Health | Commands::Auth { .. } | Commands::Setup | Commands::Community { .. }
+    )
 }
 
 #[tokio::main]
@@ -323,15 +362,56 @@ async fn main() {
 
     print_banner();
 
-    let url = cli
-        .url
-        .or_else(auth::stored_url)
-        .unwrap_or_else(|| "http://localhost:8100".to_string());
+    // Load CNM config (multi-community)
+    let cnm_config = match config::load_config() {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("Warning: could not load config: {e}");
+            config::CnmConfig::default()
+        }
+    };
+
+    // Legacy migration notice
+    if cnm_config.communities.is_empty() && auth::has_legacy_session() {
+        eprintln!("\x1b[33mDetected legacy single-community session. Run `cnm setup` to migrate.\x1b[0m\n");
+    }
+
+    // Resolve community URL and keyring key for commands that need a VTA connection.
+    // Setup and Community commands handle their own URL resolution.
+    let (url, keyring_key) = if requires_auth(&cli.command)
+        || matches!(
+            cli.command,
+            Commands::Health | Commands::Auth { .. }
+        )
+    {
+        match resolve_community(cli.community.as_deref(), &cnm_config) {
+            Ok((slug, community)) => {
+                let url = cli.url.unwrap_or_else(|| community.url.clone());
+                let key = community_keyring_key(&slug);
+                (url, Some(key))
+            }
+            Err(_) => {
+                // Fall back to legacy behavior: --url, stored URL, or localhost
+                let url = cli
+                    .url
+                    .or_else(auth::stored_url)
+                    .unwrap_or_else(|| "http://localhost:8100".to_string());
+                (url, None)
+            }
+        }
+    } else {
+        // Setup/Community commands don't need a pre-resolved URL
+        let url = cli
+            .url
+            .unwrap_or_else(|| "http://localhost:8100".to_string());
+        (url, None)
+    };
+
     let mut client = VtaClient::new(&url);
 
     // Transparent authentication for protected commands
     if requires_auth(&cli.command) {
-        match auth::ensure_authenticated(client.base_url()).await {
+        match auth::ensure_authenticated(client.base_url(), keyring_key.as_deref()).await {
             Ok(token) => client.set_token(token),
             Err(e) => {
                 eprintln!("Error: {e}");
@@ -341,31 +421,35 @@ async fn main() {
     }
 
     let result = match cli.command {
-        Commands::Health => cmd_health(&client).await,
+        Commands::Setup => setup::run_setup_wizard().await,
+        Commands::Community { command } => cmd_community(command, &cnm_config).await,
+        Commands::Health => cmd_health(&client, keyring_key.as_deref()).await,
         Commands::Auth { command } => match command {
-            AuthCommands::Login { credential } => auth::login(&credential, client.base_url()).await,
+            AuthCommands::Login { credential } => {
+                auth::login(&credential, client.base_url(), keyring_key.as_deref()).await
+            }
             AuthCommands::Logout => {
-                auth::logout();
+                auth::logout(keyring_key.as_deref());
                 Ok(())
             }
             AuthCommands::Status => {
-                auth::status();
+                auth::status(keyring_key.as_deref());
                 Ok(())
             }
         },
         Commands::Config { command } => match command {
             ConfigCommands::Get => cmd_config_get(&client).await,
             ConfigCommands::Update {
-                vta_did,
-                vta_name,
-                vta_description,
+                community_vta_did,
+                community_vta_name,
+                community_vta_description,
                 public_url,
             } => {
                 cmd_config_update(
                     &client,
-                    vta_did,
-                    vta_name,
-                    vta_description,
+                    community_vta_did,
+                    community_vta_name,
+                    community_vta_description,
                     public_url,
                 )
                 .await
@@ -454,7 +538,90 @@ async fn main() {
     }
 }
 
-async fn cmd_health(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>> {
+async fn cmd_community(
+    command: CommunityCommands,
+    cnm_config: &config::CnmConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match command {
+        CommunityCommands::List => {
+            if cnm_config.communities.is_empty() {
+                println!("No communities configured.");
+                println!("\nRun `cnm setup` to configure your first community.");
+                return Ok(());
+            }
+            let default = cnm_config.default_community.as_deref().unwrap_or("");
+            for (slug, community) in &cnm_config.communities {
+                let marker = if slug == default { " (default)" } else { "" };
+                println!("  {slug}{marker}");
+                println!("    Name: {}", community.name);
+                println!("    URL:  {}", community.url);
+                if let Some(ref ctx) = community.context_id {
+                    println!("    Context: {ctx}");
+                }
+            }
+            Ok(())
+        }
+        CommunityCommands::Use { name } => {
+            if !cnm_config.communities.contains_key(&name) {
+                return Err(format!(
+                    "community '{name}' not found.\n\nConfigured communities: {}",
+                    cnm_config
+                        .communities
+                        .keys()
+                        .cloned()
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+                .into());
+            }
+            let mut config = config::load_config()?;
+            config.default_community = Some(name.clone());
+            config::save_config(&config)?;
+            println!("Default community set to '{name}'.");
+            Ok(())
+        }
+        CommunityCommands::Add => setup::add_community().await,
+        CommunityCommands::Remove { name } => {
+            let mut config = config::load_config()?;
+            if config.communities.remove(&name).is_none() {
+                return Err(format!("community '{name}' not found.").into());
+            }
+            // Clear default if it was the removed community
+            if config.default_community.as_deref() == Some(&name) {
+                config.default_community = config.communities.keys().next().cloned();
+            }
+            // Clear the keyring entry
+            auth::logout(Some(&community_keyring_key(&name)));
+            config::save_config(&config)?;
+            println!("Community '{name}' removed.");
+            Ok(())
+        }
+        CommunityCommands::Status => {
+            match resolve_community(None, cnm_config) {
+                Ok((slug, community)) => {
+                    println!("Active community: {slug}");
+                    println!("  Name: {}", community.name);
+                    println!("  URL:  {}", community.url);
+                    if let Some(ref ctx) = community.context_id {
+                        println!("  Context: {ctx}");
+                    }
+                    let key = community_keyring_key(&slug);
+                    auth::status(Some(&key));
+                }
+                Err(_) => {
+                    println!("No community configured.");
+                    println!("\nRun `cnm setup` to get started.");
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
+async fn cmd_health(
+    client: &VtaClient,
+    keyring_key: Option<&str>,
+) -> Result<(), Box<dyn std::error::Error>> {
     use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
 
     let resp = client.health().await?;
@@ -462,14 +629,14 @@ async fn cmd_health(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>
     println!("URL:     {}", client.base_url());
 
     // Resolve DIDs from stored session
-    let Some(session) = auth::loaded_session() else {
+    let Some(session) = auth::loaded_session(keyring_key) else {
         println!("\n(not authenticated — DID resolution skipped)");
         return Ok(());
     };
 
     println!();
     println!("Client DID: {}", session.client_did);
-    println!("VTA DID:    {}", session.vta_did);
+    println!("Community VTA DID:    {}", session.vta_did);
 
     let resolver = match DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await {
         Ok(r) => r,
@@ -482,7 +649,7 @@ async fn cmd_health(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>
     println!();
     for (label, did) in [
         ("Client DID", session.client_did.as_str()),
-        ("VTA DID", session.vta_did.as_str()),
+        ("Community VTA DID", session.vta_did.as_str()),
     ] {
         let method = did
             .strip_prefix("did:")
@@ -521,19 +688,21 @@ async fn cmd_health(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>
 async fn cmd_config_get(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>> {
     let resp = client.get_config().await?;
     println!(
-        "VTA DID:         {}",
-        resp.vta_did.as_deref().unwrap_or("(not set)")
+        "Community VTA DID:         {}",
+        resp.community_vta_did.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "VTA Name:        {}",
-        resp.vta_name.as_deref().unwrap_or("(not set)")
+        "Community VTA Name:        {}",
+        resp.community_vta_name.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "VTA Description: {}",
-        resp.vta_description.as_deref().unwrap_or("(not set)")
+        "Community VTA Description: {}",
+        resp.community_vta_description
+            .as_deref()
+            .unwrap_or("(not set)")
     );
     println!(
-        "Public URL:      {}",
+        "Community Public URL:      {}",
         resp.public_url.as_deref().unwrap_or("(not set)")
     );
     Ok(())
@@ -555,16 +724,18 @@ async fn cmd_config_update(
     let resp = client.update_config(req).await?;
     println!("Configuration updated:");
     println!(
-        "  VTA DID:         {}",
-        resp.vta_did.as_deref().unwrap_or("(not set)")
+        "  Community VTA DID:         {}",
+        resp.community_vta_did.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "  VTA Name:        {}",
-        resp.vta_name.as_deref().unwrap_or("(not set)")
+        "  Community VTA Name:        {}",
+        resp.community_vta_name.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "  VTA Description: {}",
-        resp.vta_description.as_deref().unwrap_or("(not set)")
+        "  Community VTA Description: {}",
+        resp.community_vta_description
+            .as_deref()
+            .unwrap_or("(not set)")
     );
     println!(
         "  Public URL:      {}",
@@ -1232,5 +1403,18 @@ mod tests {
             command: ContextCommands::List,
         };
         assert!(requires_auth(&cmd));
+    }
+
+    #[test]
+    fn test_requires_auth_setup_false() {
+        assert!(!requires_auth(&Commands::Setup));
+    }
+
+    #[test]
+    fn test_requires_auth_community_false() {
+        let cmd = Commands::Community {
+            command: CommunityCommands::List,
+        };
+        assert!(!requires_auth(&cmd));
     }
 }

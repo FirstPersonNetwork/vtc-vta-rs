@@ -20,9 +20,9 @@ pub struct HealthResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct ConfigResponse {
-    pub vta_did: Option<String>,
-    pub vta_name: Option<String>,
-    pub vta_description: Option<String>,
+    pub community_vta_did: Option<String>,
+    pub community_vta_name: Option<String>,
+    pub community_vta_description: Option<String>,
     pub public_url: Option<String>,
 }
 

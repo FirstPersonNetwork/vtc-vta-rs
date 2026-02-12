@@ -17,6 +17,8 @@ affinidi-did-resolver-cache-sdk = "0.7"
 base64 = { workspace = true }
 clap = { workspace = true, features = ["env"] }
 chrono = { workspace = true }
+dialoguer = "0.12"
+dirs = "6"
 ed25519-dalek = "2"
 keyring = "3"
 multibase = { workspace = true }
@@ -24,6 +26,7 @@ ratatui = { workspace = true }
 reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+toml = "0.8"
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

@@ -1039,7 +1039,7 @@ async fn cmd_acl_list(
     let table = Table::new(
         rows,
         [
-            Constraint::Length(52), // DID
+            Constraint::Min(60), // DID
             Constraint::Length(12), // Role
             Constraint::Min(16),    // Label
             Constraint::Length(24), // Contexts

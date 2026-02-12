@@ -337,7 +337,8 @@ pub async fn run_setup_wizard(
         .map_err(|e| format!("{e}"))?;
 
     // 13. VTA DID (after mediator so we can embed it as a service endpoint)
-    let vta_did = create_vta_did(&seed, &messaging, &vta_ctx.base_path, &keys_ks).await?;
+    let vta_did =
+        create_vta_did(&seed, &messaging, &public_url, &vta_ctx.base_path, &keys_ks).await?;
 
     // Update VTA context with the DID
     if let Some(ref did) = vta_did {
@@ -531,6 +532,7 @@ async fn create_admin_did(
                 "admin",
                 None,
                 None,
+                None,
                 seed,
                 vta_base_path,
                 "vta",
@@ -571,6 +573,7 @@ async fn create_admin_did(
 async fn create_vta_did(
     seed: &[u8],
     messaging: &MessagingConfig,
+    public_url: &Option<String>,
     vta_base_path: &str,
     keys_ks: &KeyspaceHandle,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
@@ -601,6 +604,7 @@ async fn create_vta_did(
                 "VTA",
                 None,
                 Some(messaging),
+                public_url.as_deref(),
                 seed,
                 vta_base_path,
                 "vta",
@@ -663,6 +667,7 @@ async fn configure_messaging(
                 &mut derived,
                 "mediator",
                 Some(&mediator_url),
+                None,
                 None,
                 seed,
                 mediator_base_path,
@@ -841,6 +846,7 @@ async fn create_webvh_did(
     label: &str,
     mediator_url: Option<&str>,
     messaging: Option<&MessagingConfig>,
+    vta_public_url: Option<&str>,
     seed: &[u8],
     base: &str,
     context_id: &str,
@@ -926,6 +932,15 @@ async fn create_webvh_did(
                 "accept": ["didcomm/v2"],
                 "uri": msg.mediator_did
             }]
+        }));
+    }
+
+    // Add #vta service endpoint if a public URL is configured
+    if let Some(url) = vta_public_url {
+        services.push(json!({
+            "id": format!("{did_id}#vta"),
+            "type": "VerifiedTrustAgent",
+            "serviceEndpoint": url
         }));
     }
 

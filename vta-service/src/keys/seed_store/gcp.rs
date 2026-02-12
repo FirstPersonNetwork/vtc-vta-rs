@@ -46,7 +46,7 @@ impl super::SeedStore for GcpSeedStore {
             let client = self.client().await?;
             let result = client
                 .access_secret_version()
-                .set_name(&self.latest_version_path())
+                .set_name(self.latest_version_path())
                 .send()
                 .await;
 
@@ -56,9 +56,7 @@ impl super::SeedStore for GcpSeedStore {
                         AppError::SeedStore("GCP secret version has no payload".into())
                     })?;
                     let hex_seed = String::from_utf8(payload.data.to_vec()).map_err(|e| {
-                        AppError::SeedStore(format!(
-                            "GCP secret payload is not valid UTF-8: {e}"
-                        ))
+                        AppError::SeedStore(format!("GCP secret payload is not valid UTF-8: {e}"))
                     })?;
                     let bytes = hex::decode(hex_seed.trim()).map_err(|e| {
                         AppError::SeedStore(format!("failed to decode hex seed from GCP: {e}"))
@@ -91,7 +89,7 @@ impl super::SeedStore for GcpSeedStore {
                 .set_data(bytes::Bytes::from(hex_seed.clone()));
             let result = client
                 .add_secret_version()
-                .set_parent(&self.secret_path())
+                .set_parent(self.secret_path())
                 .set_payload(payload.clone())
                 .send()
                 .await;
@@ -126,7 +124,7 @@ impl super::SeedStore for GcpSeedStore {
                         // Now add the version
                         client
                             .add_secret_version()
-                            .set_parent(&self.secret_path())
+                            .set_parent(self.secret_path())
                             .set_payload(payload)
                             .send()
                             .await

@@ -66,7 +66,7 @@ pub fn create_seed_store(config: &AppConfig) -> Result<Box<dyn SeedStore>, AppEr
 
     #[cfg(feature = "keyring")]
     {
-        let store = KeyringSeedStore::new("vta", "master_seed");
+        let store = KeyringSeedStore::new(&config.secrets.keyring_service, "master_seed");
         return Ok(Box::new(store));
     }
 

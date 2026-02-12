@@ -25,7 +25,7 @@ pub struct AppConfig {
     pub config_path: PathBuf,
 }
 
-#[derive(Debug, Default, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SecretsConfig {
     /// Hex-encoded BIP-32 seed (config-seed feature)
     pub seed: Option<String>,
@@ -37,6 +37,27 @@ pub struct SecretsConfig {
     pub gcp_project: Option<String>,
     /// GCP secret name (gcp-secrets feature)
     pub gcp_secret_name: Option<String>,
+    /// OS keyring service name (keyring feature).
+    /// Change this to run multiple VTA instances on the same machine.
+    #[serde(default = "default_keyring_service")]
+    pub keyring_service: String,
+}
+
+fn default_keyring_service() -> String {
+    "vta".to_string()
+}
+
+impl Default for SecretsConfig {
+    fn default() -> Self {
+        Self {
+            seed: None,
+            aws_secret_name: None,
+            aws_region: None,
+            gcp_project: None,
+            gcp_secret_name: None,
+            keyring_service: default_keyring_service(),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -254,6 +275,9 @@ impl AppConfig {
         }
         if let Ok(name) = std::env::var("VTA_SECRETS_GCP_SECRET_NAME") {
             config.secrets.gcp_secret_name = Some(name);
+        }
+        if let Ok(service) = std::env::var("VTA_SECRETS_KEYRING_SERVICE") {
+            config.secrets.keyring_service = service;
         }
 
         // Auth env var overrides

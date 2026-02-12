@@ -76,7 +76,7 @@ fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
         return match choice {
             0 => prompt_aws_secrets(),
             1 => prompt_gcp_secrets(),
-            _ => Ok(SecretsConfig::default()),
+            _ => prompt_keyring_service(SecretsConfig::default()),
         };
     }
 
@@ -92,9 +92,24 @@ fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
         return prompt_gcp_secrets();
     }
 
-    // Neither cloud backend compiled — nothing to configure.
+    // Neither cloud backend compiled — prompt for keyring service name.
     #[allow(unreachable_code)]
-    Ok(SecretsConfig::default())
+    prompt_keyring_service(SecretsConfig::default())
+}
+
+/// Prompt for the OS keyring service name.
+///
+/// Each VTA instance needs a unique keyring service name to store its seed
+/// separately. The default is "vta".
+fn prompt_keyring_service(
+    mut config: SecretsConfig,
+) -> Result<SecretsConfig, Box<dyn std::error::Error>> {
+    let service: String = Input::new()
+        .with_prompt("Keyring service name (use a unique name per VTA instance)")
+        .default("vta".into())
+        .interact_text()?;
+    config.keyring_service = service;
+    Ok(config)
 }
 
 #[cfg(feature = "aws-secrets")]
@@ -401,26 +416,34 @@ pub async fn run_setup_wizard(
     eprintln!("  Config saved to: {}", config_path.display());
     eprintln!("  Seed stored in configured backend");
     // Print which seed backend was chosen
-    #[cfg(feature = "aws-secrets")]
-    if let Some(ref name) = config.secrets.aws_secret_name {
-        let region = config
-            .secrets
-            .aws_region
-            .as_deref()
-            .unwrap_or("SDK default");
-        eprintln!("  Seed backend: AWS Secrets Manager ({name} in {region})");
+    {
+        let mut _printed = false;
+        #[cfg(feature = "aws-secrets")]
+        if let Some(ref name) = config.secrets.aws_secret_name {
+            let region = config
+                .secrets
+                .aws_region
+                .as_deref()
+                .unwrap_or("SDK default");
+            eprintln!("  Seed backend: AWS Secrets Manager ({name} in {region})");
+            _printed = true;
+        }
+        #[cfg(feature = "gcp-secrets")]
+        if !_printed {
+            if let Some(ref name) = config.secrets.gcp_secret_name {
+                let project = config.secrets.gcp_project.as_deref().unwrap_or("unknown");
+                eprintln!("  Seed backend: GCP Secret Manager ({project}/{name})");
+                _printed = true;
+            }
+        }
+        #[cfg(feature = "keyring")]
+        if !_printed {
+            eprintln!(
+                "  Seed backend: OS keyring (service: \"{}\")",
+                config.secrets.keyring_service
+            );
+        }
     }
-    #[cfg(feature = "gcp-secrets")]
-    if let Some(ref name) = config.secrets.gcp_secret_name {
-        let project = config.secrets.gcp_project.as_deref().unwrap_or("unknown");
-        eprintln!("  Seed backend: GCP Secret Manager ({project}/{name})");
-    }
-    #[cfg(all(
-        not(feature = "aws-secrets"),
-        not(feature = "gcp-secrets"),
-        feature = "keyring"
-    ))]
-    eprintln!("  Seed backend: OS keyring");
     if let Some(name) = &config.vta_name {
         eprintln!("  VTA Name: {name}");
     }

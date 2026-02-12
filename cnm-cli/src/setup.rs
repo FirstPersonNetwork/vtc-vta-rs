@@ -1,3 +1,4 @@
+use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
 use dialoguer::{Input, Select};
 
 use crate::auth;
@@ -23,6 +24,59 @@ fn slugify(name: &str) -> String {
         .join("-")
 }
 
+/// Try to resolve a VTA URL from a DID's `#vta` service endpoint.
+async fn resolve_vta_url(did: &str) -> Option<String> {
+    let resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build())
+        .await
+        .ok()?;
+
+    let resolved = resolver.resolve(did).await.ok()?;
+    let svc = resolved.doc.find_service("vta")?;
+    let url = svc.service_endpoint.get_uri()?;
+
+    Some(url.trim_end_matches('/').to_string())
+}
+
+/// Prompt for a VTA DID, resolve the `#vta` service URL if possible,
+/// then ask for the URL (pre-filled with the discovered value or manual entry).
+///
+/// `label` is a human-readable prefix like "Personal" or "Community".
+async fn prompt_vta_url(label: &str) -> Result<String, Box<dyn std::error::Error>> {
+    let did: String = Input::new()
+        .with_prompt(format!("{label} VTA DID (press Enter to skip)"))
+        .allow_empty(true)
+        .interact_text()?;
+
+    let discovered_url = if did.is_empty() {
+        None
+    } else {
+        eprintln!("Resolving DID...");
+        match resolve_vta_url(&did).await {
+            Some(url) => {
+                eprintln!("  Discovered VTA URL: {url}");
+                Some(url)
+            }
+            None => {
+                eprintln!("  No #vta service endpoint found in DID document.");
+                None
+            }
+        }
+    };
+
+    let vta_url: String = if let Some(url) = discovered_url {
+        Input::new()
+            .with_prompt(format!("{label} VTA URL"))
+            .default(url)
+            .interact_text()?
+    } else {
+        Input::new()
+            .with_prompt(format!("{label} VTA URL"))
+            .interact_text()?
+    };
+
+    Ok(vta_url)
+}
+
 /// Run the interactive setup wizard.
 pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("Welcome to the CNM setup wizard.\n");
@@ -30,16 +84,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = load_config()?;
 
     // ── Personal VTA ────────────────────────────────────────────────
-    let personal_url: String = Input::new()
-        .with_prompt("Personal VTA URL")
-        .default(
-            config
-                .personal_vta
-                .as_ref()
-                .map(|p| p.url.clone())
-                .unwrap_or_default(),
-        )
-        .interact_text()?;
+    let personal_url = prompt_vta_url("Personal").await?;
 
     let personal_credential: String = Input::new()
         .with_prompt("Personal VTA credential (base64)")
@@ -64,9 +109,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
         .default(default_slug)
         .interact_text()?;
 
-    let community_url: String = Input::new()
-        .with_prompt("Community VTA URL")
-        .interact_text()?;
+    let community_url = prompt_vta_url("Community").await?;
 
     let join_options = &[
         "Import existing credential",
@@ -198,9 +241,7 @@ pub async fn add_community() -> Result<(), Box<dyn std::error::Error>> {
         .into());
     }
 
-    let community_url: String = Input::new()
-        .with_prompt("Community VTA URL")
-        .interact_text()?;
+    let community_url = prompt_vta_url("Community").await?;
 
     let credential: String = Input::new()
         .with_prompt("Community credential (base64)")

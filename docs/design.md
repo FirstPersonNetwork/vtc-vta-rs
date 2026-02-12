@@ -61,11 +61,16 @@ Keyspace handles wrap fjall partitions and expose async CRUD via
 
 ```
 vta-service/src/
-  main.rs          CLI entry (run server or setup wizard)
+  main.rs          CLI entry (run server, setup, or offline commands)
   server.rs        Router construction, AppState init, graceful shutdown
   config.rs        TOML config with env var overrides
   error.rs         AppError enum -> HTTP responses
+  status.rs        `vta status` -- offline stats and health check
   setup.rs         Interactive setup wizard (feature-gated "setup")
+  import_did.rs    `vta import-did` -- offline ACL entry creation
+  acl_cli.rs       `vta acl` -- offline ACL list/get/update/delete
+  did_key.rs       `vta create-did-key` -- offline did:key creation
+  did_webvh.rs     `vta create-did-webvh` -- offline did:webvh wizard (feature-gated "setup")
 
   auth/
     jwt.rs         EdDSA JWT encode/decode, PKCS8 DER key construction
@@ -434,27 +439,55 @@ All data lives in fjall keyspaces:
 | contexts | `ctx:{id}`                 | ContextRecord (JSON) |
 | contexts | `ctx_counter`              | u32 (LE bytes)       |
 
-## CLI (cnm-cli)
+## VTA CLI
 
-The Community Network Manager CLI is the primary client:
+The VTA binary serves as both the HTTP server (when run without a subcommand)
+and a set of offline management commands that operate directly on the store:
 
 ```
-cnm health                          Health check
-cnm auth login <credential>         Import credential and authenticate
-cnm auth status                     Show current session
-cnm auth logout                     Clear session
-cnm config get                      Show VTA config
-cnm config update [--name ...] ...  Update config fields
-cnm keys list [--status ...]        List keys
-cnm keys create [--context-id ...]  Create key
-cnm keys get <key_id>               Get key
-cnm keys revoke <key_id>            Invalidate key
-cnm keys rename <key_id> <new_id>   Rename key
-cnm contexts list                   List contexts
-cnm contexts get <id>               Get context
-cnm contexts create --id ... ...    Create context
-cnm contexts update <id> [...]      Update context
-cnm contexts delete <id>            Delete context
+vta                                     Start the HTTP service
+vta setup                               Interactive setup wizard
+vta status                              Show config, contexts, keys, ACL, sessions
+vta export-admin                        Export admin DID and credential
+vta create-did-key --context ID         Create a did:key in a context
+vta create-did-webvh --context ID       Create a did:webvh interactively
+vta import-did --did DID [--role ...]   Import external DID into ACL
+vta acl list [--context ...] [--role ...] List ACL entries
+vta acl get <did>                       Show ACL entry details
+vta acl update <did> [--role ...]       Update ACL entry
+vta acl delete <did> [--yes]            Delete ACL entry
+```
+
+## CNM CLI (cnm-cli)
+
+The Community Network Manager CLI is the primary network client:
+
+```
+cnm setup                               First-time setup wizard
+cnm health                               Health check (community + personal VTA)
+cnm community list|use|add|remove|status Multi-community management
+cnm auth login <credential>              Import credential and authenticate
+cnm auth status                          Show current session
+cnm auth logout                          Clear session
+cnm config get                           Show VTA config
+cnm config update [--name ...] ...       Update config fields
+cnm keys list [--status ...]             List keys
+cnm keys create [--context-id ...]       Create key
+cnm keys get <key_id>                    Get key
+cnm keys revoke <key_id>                 Invalidate key
+cnm keys rename <key_id> <new_id>        Rename key
+cnm contexts list                        List contexts
+cnm contexts get <id>                    Get context
+cnm contexts create --id ... ...         Create context
+cnm contexts update <id> [...]           Update context
+cnm contexts delete <id>                 Delete context
+cnm contexts bootstrap --id ... ...      Create context + first admin credential
+cnm acl list [--context ...]             List ACL entries
+cnm acl get <did>                        Get ACL entry
+cnm acl create --did ... --role ...      Create ACL entry
+cnm acl update <did> [--role ...]        Update ACL entry
+cnm acl delete <did>                     Delete ACL entry
+cnm auth-credential create --role ...    Generate did:key credential with ACL entry
 ```
 
 The CLI caches authentication state (tokens, credential) in the OS keyring.

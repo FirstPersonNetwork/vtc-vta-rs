@@ -165,10 +165,12 @@ url = "https://personal.vta.example.com"
 name = "Storm Network"
 url = "https://vta.storm.ws"
 context_id = "cnm-storm-network"
+vta_did = "did:webvh:..."
 
 [communities.acme]
 name = "Acme Corp"
 url = "https://vta.acme.example.com"
+# vta_did and context_id are optional
 ```
 
 ### VTA service configuration

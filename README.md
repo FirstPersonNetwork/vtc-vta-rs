@@ -203,16 +203,49 @@ cargo run --package cnm-cli -- keys list
 
 ## CLI Reference
 
-The CLI binary is `cnm`. All commands below use `cargo run --package cnm-cli --`
-during development; in a release build, replace that prefix with `cnm`.
+### VTA Service CLI (`vta`)
 
-### General
+The VTA binary provides both the server and offline management commands.
+During development use `cargo run --package vta-service --` in place of `vta`.
+
+| Command | Description |
+|---|---|
+| *(no subcommand)* | Start the VTA HTTP service |
+| `setup` | Interactive setup wizard (requires `setup` feature) |
+| `status` | Show VTA status: config, contexts, keys, ACL, sessions |
+| `export-admin` | Export admin DID and credential |
+| `create-did-key --context ID [--admin] [--label LABEL]` | Create a did:key in a context (offline) |
+| `create-did-webvh --context ID [--label LABEL]` | Create a did:webvh interactively (offline, requires `setup` feature) |
+| `import-did --did DID [--role ROLE] [--label LABEL] [--context CTX ...]` | Import an external DID and create an ACL entry (offline) |
+| `acl list [--context ID] [--role ROLE]` | List ACL entries (offline) |
+| `acl get <did>` | Show details of an ACL entry (offline) |
+| `acl update <did> [--role ROLE] [--label LABEL] [--contexts ctx1,ctx2]` | Update an ACL entry (offline) |
+| `acl delete <did> [--yes]` | Delete an ACL entry (offline) |
+
+### CNM CLI (`cnm`)
+
+The CNM binary is the primary client for operating a VTA over the network.
+During development use `cargo run --package cnm-cli --` in place of `cnm`.
+See the [cnm-cli README](cnm-cli/README.md) for full documentation.
+
+#### General
 
 | Command | Description |
 |---|---|
 | `health` | Check VTA service health and version |
 
-### Authentication
+#### Setup & Communities
+
+| Command | Description |
+|---|---|
+| `setup` | Interactive first-time setup wizard |
+| `community list` | List configured communities |
+| `community use <slug>` | Set default community |
+| `community add` | Add a new community interactively |
+| `community remove <slug>` | Remove a community |
+| `community status` | Show active community info and auth status |
+
+#### Authentication
 
 | Command | Description |
 |---|---|
@@ -220,14 +253,14 @@ during development; in a release build, replace that prefix with `cnm`.
 | `auth logout` | Clear stored credentials and tokens |
 | `auth status` | Show current authentication status |
 
-### Configuration
+#### Configuration
 
 | Command | Description |
 |---|---|
 | `config get` | Show current VTA configuration |
 | `config update [--community-name ...] [--community-description ...] [--public-url ...]` | Update configuration fields |
 
-### Keys
+#### Keys
 
 | Command | Description |
 |---|---|
@@ -237,7 +270,7 @@ during development; in a release build, replace that prefix with `cnm`.
 | `keys revoke <key_id>` | Revoke (invalidate) a key |
 | `keys rename <key_id> <new_key_id>` | Rename a key |
 
-### Contexts
+#### Contexts
 
 | Command | Description |
 |---|---|
@@ -248,7 +281,7 @@ during development; in a release build, replace that prefix with `cnm`.
 | `contexts delete <id>` | Delete a context |
 | `contexts bootstrap --id ID --name NAME [--admin-label LABEL]` | Create a context and generate its first admin credential |
 
-### ACL
+#### ACL
 
 | Command | Description |
 |---|---|
@@ -258,7 +291,7 @@ during development; in a release build, replace that prefix with `cnm`.
 | `acl update <did> [--role ROLE] [--label LABEL] [--contexts ctx1,ctx2]` | Update an ACL entry |
 | `acl delete <did>` | Delete an ACL entry |
 
-### Auth Credentials
+#### Auth Credentials
 
 | Command | Description |
 |---|---|

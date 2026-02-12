@@ -3,6 +3,7 @@ mod auth;
 mod config;
 mod contexts;
 mod did_key;
+mod import_did;
 #[cfg(feature = "setup")]
 mod did_webvh;
 mod error;
@@ -66,6 +67,21 @@ enum Commands {
         /// Human-readable label prefix for key records (default: context id)
         #[arg(long)]
         label: Option<String>,
+    },
+    /// Import an external DID and create an ACL entry (offline, no server required)
+    ImportDid {
+        /// The DID to import
+        #[arg(long)]
+        did: String,
+        /// Role to assign (admin, initiator, application)
+        #[arg(long)]
+        role: Option<String>,
+        /// Human-readable label for the ACL entry
+        #[arg(long)]
+        label: Option<String>,
+        /// Restrict to specific context(s); omit for unrestricted access
+        #[arg(long)]
+        context: Vec<String>,
     },
 }
 
@@ -135,6 +151,24 @@ async fn main() {
             {
                 let _ = (context, label);
                 eprintln!("create-did-webvh is not available (compiled without 'setup' feature)");
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::ImportDid {
+            did,
+            role,
+            label,
+            context,
+        }) => {
+            let args = import_did::ImportDidArgs {
+                config_path: cli.config,
+                did,
+                role,
+                label,
+                context,
+            };
+            if let Err(e) = import_did::run_import_did(args).await {
+                eprintln!("Error: {e}");
                 std::process::exit(1);
             }
         }

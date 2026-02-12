@@ -411,6 +411,27 @@ async fn main() {
 
     // Transparent authentication for protected commands
     if requires_auth(&cli.command) {
+        // Bootstrap session from personal VTA if needed
+        if let Some(ref key) = keyring_key {
+            if auth::loaded_session(Some(key)).is_none() {
+                if let Ok((slug, community)) =
+                    resolve_community(cli.community.as_deref(), &cnm_config)
+                {
+                    if community.context_id.is_some() {
+                        if let Some(ref personal) = cnm_config.personal_vta {
+                            if let Err(e) = setup::bootstrap_community_session(
+                                &slug, community, &personal.url,
+                            )
+                            .await
+                            {
+                                eprintln!("Warning: could not bootstrap session: {e}");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         match auth::ensure_authenticated(client.base_url(), keyring_key.as_deref()).await {
             Ok(token) => client.set_token(token),
             Err(e) => {
@@ -423,7 +444,7 @@ async fn main() {
     let result = match cli.command {
         Commands::Setup => setup::run_setup_wizard().await,
         Commands::Community { command } => cmd_community(command, &cnm_config).await,
-        Commands::Health => cmd_health(&client, keyring_key.as_deref()).await,
+        Commands::Health => cmd_health(&client, keyring_key.as_deref(), &cnm_config).await,
         Commands::Auth { command } => match command {
             AuthCommands::Login { credential } => {
                 auth::login(&credential, client.base_url(), keyring_key.as_deref()).await
@@ -621,68 +642,118 @@ async fn cmd_community(
 async fn cmd_health(
     client: &VtaClient,
     keyring_key: Option<&str>,
+    cnm_config: &config::CnmConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
 
+    // ── Community VTA ──────────────────────────────────────────────
     let resp = client.health().await?;
     println!("Service: {} (v{})", resp.status, resp.version);
     println!("URL:     {}", client.base_url());
 
-    // Resolve DIDs from stored session
-    let Some(session) = auth::loaded_session(keyring_key) else {
+    // Create a shared DID resolver for both sections
+    let resolver = match DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await {
+        Ok(r) => Some(r),
+        Err(e) => {
+            println!("\nDID resolution: skipped (resolver unavailable: {e})");
+            None
+        }
+    };
+
+    // Community DID resolution
+    if let Some(session) = auth::loaded_session(keyring_key) {
+        println!();
+        println!("Client DID:        {}", session.client_did);
+        println!("Community VTA DID: {}", session.vta_did);
+
+        if let Some(ref resolver) = resolver {
+            println!();
+            for (label, did) in [
+                ("Client DID", session.client_did.as_str()),
+                ("Community VTA DID", session.vta_did.as_str()),
+            ] {
+                print_did_resolution(resolver, label, did).await;
+            }
+        }
+    } else {
         println!("\n(not authenticated — DID resolution skipped)");
+    }
+
+    // ── Personal VTA ───────────────────────────────────────────────
+    println!();
+    println!("\x1b[2m── Personal VTA ──────────────────────────────\x1b[0m");
+
+    let Some(ref personal) = cnm_config.personal_vta else {
+        println!("Not configured.");
         return Ok(());
     };
 
-    println!();
-    println!("Client DID: {}", session.client_did);
-    println!("Community VTA DID:    {}", session.vta_did);
-
-    let resolver = match DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await {
-        Ok(r) => r,
-        Err(e) => {
-            println!("\nDID resolution: skipped (resolver unavailable: {e})");
-            return Ok(());
+    let personal_client = VtaClient::new(&personal.url);
+    match personal_client.health().await {
+        Ok(resp) => {
+            println!("Service: {} (v{})", resp.status, resp.version);
+            println!("URL:     {}", personal.url);
         }
-    };
-
-    println!();
-    for (label, did) in [
-        ("Client DID", session.client_did.as_str()),
-        ("Community VTA DID", session.vta_did.as_str()),
-    ] {
-        let method = did
-            .strip_prefix("did:")
-            .and_then(|s| s.split(':').next())
-            .unwrap_or("unknown");
-
-        match resolver.resolve(did).await {
-            Ok(resolved) => {
-                println!("{label} resolution: ok ({method})");
-
-                // Key agreement keys (used for DIDComm encryption)
-                for ka in &resolved.doc.key_agreement {
-                    println!("  keyAgreement: {}", ka.get_id());
-                }
-
-                // Services (shows DIDComm routing, mediators, etc.)
-                for svc in &resolved.doc.service {
-                    let types = svc.type_.join(", ");
-                    let uris = svc.service_endpoint.get_uris();
-                    if uris.is_empty() {
-                        println!("  service: {types}");
-                    } else {
-                        for uri in &uris {
-                            println!("  service: {types} -> {uri}");
-                        }
-                    }
-                }
-            }
-            Err(e) => println!("{label} resolution: FAILED ({e})"),
+        Err(e) => {
+            println!("Service: unreachable ({e})");
         }
     }
 
+    // Personal DID resolution
+    let personal_session = auth::loaded_session(Some(config::PERSONAL_KEYRING_KEY));
+    if let Some(session) = personal_session {
+        println!();
+        println!("Client DID: {}", session.client_did);
+        println!("VTA DID:    {}", session.vta_did);
+
+        if let Some(ref resolver) = resolver {
+            println!();
+            for (label, did) in [
+                ("Client DID", session.client_did.as_str()),
+                ("VTA DID", session.vta_did.as_str()),
+            ] {
+                print_did_resolution(resolver, label, did).await;
+            }
+        }
+    } else {
+        println!("\n(not authenticated — DID resolution skipped)");
+    }
+
     Ok(())
+}
+
+async fn print_did_resolution(
+    resolver: &affinidi_did_resolver_cache_sdk::DIDCacheClient,
+    label: &str,
+    did: &str,
+) {
+    let method = did
+        .strip_prefix("did:")
+        .and_then(|s| s.split(':').next())
+        .unwrap_or("unknown");
+
+    match resolver.resolve(did).await {
+        Ok(resolved) => {
+            println!("{label} resolution: ok ({method})");
+
+            for ka in &resolved.doc.key_agreement {
+                println!("  keyAgreement: {}", ka.get_id());
+            }
+
+            for svc in &resolved.doc.service {
+                let types = svc.type_.join(", ");
+                let uris = svc.service_endpoint.get_uris();
+                if uris.is_empty() {
+                    println!("  service: {types}");
+                } else {
+                    for uri in &uris {
+                        println!("  service: {types} -> {uri}");
+                    }
+                }
+            }
+        }
+        Err(e) => println!("{label} resolution: FAILED ({e})"),
+    }
 }
 
 async fn cmd_config_get(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>> {

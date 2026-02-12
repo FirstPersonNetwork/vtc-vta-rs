@@ -21,6 +21,8 @@ pub struct CommunityConfig {
     pub name: String,
     pub url: String,
     pub context_id: Option<String>,
+    #[serde(default)]
+    pub vta_did: Option<String>,
 }
 
 /// Returns `~/.config/cnm/`, creating it if it doesn't exist.
@@ -107,6 +109,7 @@ mod tests {
                 name: "Storm Network".into(),
                 url: "https://vta.storm.ws".into(),
                 context_id: Some("cnm-storm-network".into()),
+                vta_did: Some("did:key:z6MkStorm".into()),
             },
         );
         config.communities.insert(
@@ -115,6 +118,7 @@ mod tests {
                 name: "Acme Corp".into(),
                 url: "https://vta.acme.example.com".into(),
                 context_id: None,
+                vta_did: None,
             },
         );
 
@@ -155,6 +159,7 @@ mod tests {
                 name: "Storm".into(),
                 url: "https://vta.storm.ws".into(),
                 context_id: None,
+                vta_did: None,
             },
         );
         let (slug, community) = resolve_community(Some("storm"), &config).unwrap();
@@ -174,6 +179,7 @@ mod tests {
                 name: "Acme".into(),
                 url: "https://vta.acme.example.com".into(),
                 context_id: None,
+                vta_did: None,
             },
         );
         let (slug, community) = resolve_community(None, &config).unwrap();

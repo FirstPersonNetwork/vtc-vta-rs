@@ -125,6 +125,8 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
         .default(0)
         .interact()?;
 
+    let mut community_vta_did_for_config: Option<String> = community_did.clone();
+
     let context_id = match join_choice {
         // Import existing credential
         0 => {
@@ -196,9 +198,11 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
             let community_vta_did = match &community_did {
                 Some(did) => did.clone(),
                 None => {
-                    Input::new()
+                    let did: String = Input::new()
                         .with_prompt("Community VTA DID (required for authentication)")
-                        .interact_text()?
+                        .interact_text()?;
+                    community_vta_did_for_config = Some(did.clone());
+                    did
                 }
             };
 
@@ -233,6 +237,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
             name: community_name,
             url: community_url,
             context_id,
+            vta_did: community_vta_did_for_config,
         },
     );
 
@@ -290,6 +295,7 @@ pub async fn add_community() -> Result<(), Box<dyn std::error::Error>> {
             name: community_name,
             url: community_url,
             context_id: None,
+            vta_did: None,
         },
     );
 
@@ -301,6 +307,66 @@ pub async fn add_community() -> Result<(), Box<dyn std::error::Error>> {
 
     eprintln!();
     eprintln!("Community '{community_slug}' added.");
+    Ok(())
+}
+
+/// Bootstrap a community session from the personal VTA.
+///
+/// When a community was set up via "Generate from personal VTA" but the session
+/// was lost (e.g. setup ran before auto-store was implemented), this function
+/// regenerates a credential from the personal VTA and stores it.
+///
+/// **Note:** This creates a NEW admin DID. The user must run `vta import-did`
+/// on the community VTA with the new DID.
+pub async fn bootstrap_community_session(
+    slug: &str,
+    community: &CommunityConfig,
+    personal_url: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let context_id = community
+        .context_id
+        .as_deref()
+        .ok_or("community has no context_id")?;
+    let community_vta_did = community
+        .vta_did
+        .as_deref()
+        .ok_or("community has no vta_did in config (setup ran before this feature was added)")?;
+
+    // Authenticate to personal VTA
+    let token = auth::ensure_authenticated(personal_url, Some(PERSONAL_KEYRING_KEY)).await?;
+    let mut personal_client = VtaClient::new(personal_url);
+    personal_client.set_token(token);
+
+    // Generate a new credential on the personal VTA
+    eprintln!("Bootstrapping community session from personal VTA...");
+    let cred_req = GenerateCredentialsRequest {
+        role: "admin".into(),
+        label: Some(format!("CNM community admin — {slug} (bootstrapped)")),
+        allowed_contexts: vec![context_id.to_string()],
+    };
+    let resp = personal_client.generate_credentials(cred_req).await?;
+
+    // Decode credential to extract the private key
+    let bundle_json = BASE64
+        .decode(&resp.credential)
+        .map_err(|e| format!("failed to decode credential: {e}"))?;
+    let bundle: serde_json::Value = serde_json::from_slice(&bundle_json)
+        .map_err(|e| format!("invalid credential format: {e}"))?;
+    let private_key = bundle["privateKeyMultibase"]
+        .as_str()
+        .ok_or("credential missing privateKeyMultibase")?;
+
+    // Store community session
+    let keyring_key = community_keyring_key(slug);
+    auth::store_session_direct(&keyring_key, &resp.did, private_key, community_vta_did, &community.url)?;
+
+    eprintln!();
+    eprintln!("\x1b[1;32mBootstrapped community session with new DID:\x1b[0m {}", resp.did);
+    eprintln!();
+    eprintln!("This is a NEW DID. You must grant it access on the community VTA:");
+    eprintln!("  vta import-did --did {}", resp.did);
+    eprintln!();
+
     Ok(())
 }
 

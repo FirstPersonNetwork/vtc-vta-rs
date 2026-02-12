@@ -20,8 +20,11 @@ pub struct HealthResponse {
 
 #[derive(Debug, Deserialize)]
 pub struct ConfigResponse {
+    #[serde(rename = "vta_did")]
     pub community_vta_did: Option<String>,
+    #[serde(rename = "vta_name")]
     pub community_vta_name: Option<String>,
+    #[serde(rename = "vta_description")]
     pub community_vta_description: Option<String>,
     pub public_url: Option<String>,
 }

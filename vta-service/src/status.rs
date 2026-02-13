@@ -44,8 +44,21 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
     );
     eprintln!("Store:     {}", config.store.data_dir.display());
 
-    // 2. Open store
-    let store = Store::open(&config.store)?;
+    // 2. Open store (may fail if VTA is already running)
+    let store = match Store::open(&config.store) {
+        Ok(s) => s,
+        Err(_) => {
+            eprintln!();
+            eprintln!(
+                "Note: Could not open the data store (is VTA already running?)."
+            );
+            eprintln!(
+                "      Stop the VTA service and re-run `vta status` for full statistics."
+            );
+            eprintln!();
+            return Ok(());
+        }
+    };
     let contexts_ks = store.keyspace("contexts")?;
     let keys_ks = store.keyspace("keys")?;
     let acl_ks = store.keyspace("acl")?;

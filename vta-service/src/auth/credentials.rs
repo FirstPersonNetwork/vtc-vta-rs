@@ -3,7 +3,7 @@ use multibase::Base;
 use rand::Rng;
 use tracing::debug;
 
-use crate::keys::ed25519_multibase_pubkey;
+use vta_sdk::did_key::ed25519_multibase_pubkey;
 
 /// Generate a new `did:key` identity from a random Ed25519 keypair.
 ///

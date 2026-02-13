@@ -41,6 +41,12 @@ pub fn config_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(config_dir()?.join("config.toml"))
 }
 
+/// Returns `~/.config/cnm/sessions.json`.
+#[cfg(all(feature = "config-session", not(feature = "keyring")))]
+pub fn sessions_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
+    Ok(config_dir()?.join("sessions.json"))
+}
+
 /// Load config from `~/.config/cnm/config.toml`. Returns default if missing.
 pub fn load_config() -> Result<CnmConfig, Box<dyn std::error::Error>> {
     let path = config_path()?;

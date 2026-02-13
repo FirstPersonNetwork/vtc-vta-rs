@@ -1,13 +1,17 @@
+#[cfg(not(any(feature = "keyring", feature = "config-session")))]
+compile_error!("enable at least one of: keyring, config-session");
+
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
 use affinidi_tdk::didcomm::{Message, PackEncryptedOptions};
-use affinidi_tdk::secrets_resolver::{SecretsResolver, ThreadedSecretsResolver, secrets::Secret};
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
+use affinidi_tdk::secrets_resolver::{SecretsResolver, ThreadedSecretsResolver};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
+use vta_sdk::credentials::CredentialBundle;
+use vta_sdk::protocols::auth::{ChallengeRequest, ChallengeResponse, AuthenticateResponse};
 
+#[cfg(feature = "keyring")]
 const SERVICE_NAME: &str = "cnm-cli";
 /// Legacy keyring key (pre multi-community).
 const LEGACY_KEYRING_KEY: &str = "session";
@@ -23,6 +27,9 @@ struct Session {
     access_expires_at: Option<u64>,
 }
 
+// ── Keyring backend ─────────────────────────────────────────────────
+
+#[cfg(feature = "keyring")]
 fn load_session_for(keyring_key: &str) -> Option<Session> {
     let entry = keyring::Entry::new(SERVICE_NAME, keyring_key).ok()?;
     let json = match entry.get_password() {
@@ -36,10 +43,7 @@ fn load_session_for(keyring_key: &str) -> Option<Session> {
     serde_json::from_str(&json).ok()
 }
 
-fn load_session() -> Option<Session> {
-    load_session_for(LEGACY_KEYRING_KEY)
-}
-
+#[cfg(feature = "keyring")]
 fn save_session_for(keyring_key: &str, session: &Session) -> Result<(), Box<dyn std::error::Error>> {
     let entry = keyring::Entry::new(SERVICE_NAME, keyring_key)
         .map_err(|e| format!("keyring entry error: {e}"))?;
@@ -50,10 +54,64 @@ fn save_session_for(keyring_key: &str, session: &Session) -> Result<(), Box<dyn 
     Ok(())
 }
 
+#[cfg(feature = "keyring")]
 fn clear_session_for(keyring_key: &str) {
     if let Ok(entry) = keyring::Entry::new(SERVICE_NAME, keyring_key) {
         let _ = entry.delete_credential();
     }
+}
+
+// ── File backend (config-session) ───────────────────────────────────
+
+#[cfg(all(feature = "config-session", not(feature = "keyring")))]
+fn load_sessions_map() -> std::collections::HashMap<String, Session> {
+    let path = match crate::config::sessions_path() {
+        Ok(p) => p,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+    let data = match std::fs::read_to_string(&path) {
+        Ok(d) => d,
+        Err(_) => return std::collections::HashMap::new(),
+    };
+    serde_json::from_str(&data).unwrap_or_default()
+}
+
+#[cfg(all(feature = "config-session", not(feature = "keyring")))]
+fn save_sessions_map(
+    map: &std::collections::HashMap<String, Session>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = crate::config::sessions_path()?;
+    let json = serde_json::to_string_pretty(map)?;
+    std::fs::write(&path, json)?;
+    Ok(())
+}
+
+#[cfg(all(feature = "config-session", not(feature = "keyring")))]
+fn load_session_for(key: &str) -> Option<Session> {
+    load_sessions_map().get(key).cloned()
+}
+
+#[cfg(all(feature = "config-session", not(feature = "keyring")))]
+fn save_session_for(key: &str, session: &Session) -> Result<(), Box<dyn std::error::Error>> {
+    let mut map = load_sessions_map();
+    map.insert(key.to_string(), session.clone());
+    save_sessions_map(&map)
+}
+
+#[cfg(all(feature = "config-session", not(feature = "keyring")))]
+fn clear_session_for(key: &str) {
+    if let Ok(mut map) = crate::config::sessions_path().and_then(|p| {
+        let data = std::fs::read_to_string(&p).unwrap_or_default();
+        Ok(serde_json::from_str::<std::collections::HashMap<String, Session>>(&data)
+            .unwrap_or_default())
+    }) {
+        map.remove(key);
+        let _ = save_sessions_map(&map);
+    }
+}
+
+fn load_session() -> Option<Session> {
+    load_session_for(LEGACY_KEYRING_KEY)
 }
 
 /// Returns true if the legacy single-session keyring entry exists.
@@ -61,48 +119,7 @@ pub fn has_legacy_session() -> bool {
     load_session().is_some()
 }
 
-#[derive(Debug, Deserialize)]
-struct CredentialBundle {
-    did: String,
-    #[serde(rename = "privateKeyMultibase")]
-    private_key_multibase: String,
-    #[serde(rename = "vtaDid")]
-    vta_did: String,
-    #[serde(rename = "vtaUrl", default)]
-    vta_url: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-struct ChallengeRequest {
-    did: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct ChallengeResponse {
-    session_id: String,
-    data: ChallengeData,
-}
-
-#[derive(Debug, Deserialize)]
-struct ChallengeData {
-    challenge: String,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AuthenticateResponse {
-    data: AuthenticateData,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct AuthenticateData {
-    access_token: String,
-    access_expires_at: u64,
-}
-
-/// Import a base64-encoded credential into the OS keyring.
+/// Import a base64-encoded credential and authenticate.
 ///
 /// When `keyring_key` is `None`, the legacy `"session"` key is used (backward compat).
 pub async fn login(
@@ -112,12 +129,15 @@ pub async fn login(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let key = keyring_key.unwrap_or(LEGACY_KEYRING_KEY);
 
+    #[cfg(all(feature = "config-session", not(feature = "keyring")))]
+    eprintln!(
+        "Warning: sessions are stored unprotected on disk (~/.config/cnm/sessions.json).\n         \
+         Do not use config-session in production."
+    );
+
     debug!("decoding credential bundle");
-    let bundle_json = BASE64
-        .decode(credential_b64)
-        .map_err(|e| format!("invalid base64 credential: {e}"))?;
-    let bundle: CredentialBundle = serde_json::from_slice(&bundle_json)
-        .map_err(|e| format!("invalid credential format: {e}"))?;
+    let bundle = CredentialBundle::decode(credential_b64)
+        .map_err(|e| format!("invalid credential: {e}"))?;
 
     debug!(
         client_did = %bundle.did,
@@ -356,32 +376,12 @@ async fn do_challenge_response(
         .map_err(|e| format!("DID resolver init failed: {e}"))?;
     let (secrets_resolver, _handle) = ThreadedSecretsResolver::new(None).await;
 
-    // Decode private key from multibase
-    let (_, seed_bytes) = multibase::decode(private_key_multibase)
-        .map_err(|e| format!("invalid private key multibase: {e}"))?;
-    let seed: [u8; 32] = seed_bytes
-        .try_into()
-        .map_err(|_| "private key seed must be 32 bytes")?;
-
-    // Ed25519 signing secret
-    let ed_pub_mb = client_did
-        .strip_prefix("did:key:")
-        .ok_or("invalid did:key format")?;
-    let mut ed_secret = Secret::generate_ed25519(None, Some(&seed));
-    ed_secret.id = format!("{client_did}#{ed_pub_mb}");
-    debug!(secret_id = %ed_secret.id, "inserting Ed25519 signing secret");
-    secrets_resolver.insert(ed_secret.clone()).await;
-
-    // X25519 key agreement secret (derived from Ed25519)
-    let mut x_secret = ed_secret
-        .to_x25519()
-        .map_err(|e| format!("X25519 conversion failed: {e}"))?;
-    let x_pub_mb = x_secret
-        .get_public_keymultibase()
-        .map_err(|e| format!("failed to get X25519 public key: {e}"))?;
-    x_secret.id = format!("{client_did}#{x_pub_mb}");
-    debug!(secret_id = %x_secret.id, "inserting X25519 key-agreement secret");
-    secrets_resolver.insert(x_secret).await;
+    // Build DIDComm secrets from the private key
+    let seed = vta_sdk::did_key::decode_private_key_multibase(private_key_multibase)?;
+    let secrets = vta_sdk::did_key::secrets_from_did_key(client_did, &seed)?;
+    debug!(signing_id = %secrets.signing.id, ka_id = %secrets.key_agreement.id, "inserting DIDComm secrets");
+    secrets_resolver.insert(secrets.signing).await;
+    secrets_resolver.insert(secrets.key_agreement).await;
 
     // Build the authenticate message
     debug!(
@@ -466,45 +466,6 @@ fn now_epoch() -> u64 {
 mod tests {
     use super::*;
 
-    // ── CredentialBundle deserialization ────────────────────────────
-
-    #[test]
-    fn test_credential_bundle_full() {
-        let json = r#"{
-            "did": "did:key:z6Mk123",
-            "privateKeyMultibase": "z1234567890",
-            "vtaDid": "did:key:z6MkVTA",
-            "vtaUrl": "https://vta.example.com"
-        }"#;
-        let bundle: CredentialBundle = serde_json::from_str(json).unwrap();
-        assert_eq!(bundle.did, "did:key:z6Mk123");
-        assert_eq!(bundle.private_key_multibase, "z1234567890");
-        assert_eq!(bundle.vta_did, "did:key:z6MkVTA");
-        assert_eq!(bundle.vta_url.as_deref(), Some("https://vta.example.com"));
-    }
-
-    #[test]
-    fn test_credential_bundle_without_url() {
-        let json = r#"{
-            "did": "did:key:z6Mk123",
-            "privateKeyMultibase": "z1234567890",
-            "vtaDid": "did:key:z6MkVTA"
-        }"#;
-        let bundle: CredentialBundle = serde_json::from_str(json).unwrap();
-        assert!(bundle.vta_url.is_none());
-    }
-
-    #[test]
-    fn test_credential_bundle_missing_did_fails() {
-        let json = r#"{
-            "privateKeyMultibase": "z1234567890",
-            "vtaDid": "did:key:z6MkVTA"
-        }"#;
-        assert!(serde_json::from_str::<CredentialBundle>(json).is_err());
-    }
-
-    // ── Session serialization round-trip ───────────────────────────
-
     #[test]
     fn test_session_round_trip() {
         let session = Session {
@@ -527,7 +488,6 @@ mod tests {
 
     #[test]
     fn test_session_vta_url_defaults_to_none() {
-        // Older sessions stored without vta_url should deserialize with None
         let json = r#"{
             "client_did": "did:key:z6Mk1",
             "private_key": "z_seed",
@@ -539,40 +499,9 @@ mod tests {
         assert!(session.vta_url.is_none());
     }
 
-    // ── ChallengeResponse deserialization ──────────────────────────
-
-    #[test]
-    fn test_challenge_response_camel_case() {
-        let json = r#"{
-            "sessionId": "sess-abc",
-            "data": { "challenge": "nonce123" }
-        }"#;
-        let resp: ChallengeResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.session_id, "sess-abc");
-        assert_eq!(resp.data.challenge, "nonce123");
-    }
-
-    // ── AuthenticateResponse deserialization ───────────────────────
-
-    #[test]
-    fn test_authenticate_response_camel_case() {
-        let json = r#"{
-            "data": {
-                "accessToken": "jwt.token.here",
-                "accessExpiresAt": 1700001000
-            }
-        }"#;
-        let resp: AuthenticateResponse = serde_json::from_str(json).unwrap();
-        assert_eq!(resp.data.access_token, "jwt.token.here");
-        assert_eq!(resp.data.access_expires_at, 1700001000);
-    }
-
-    // ── now_epoch ──────────────────────────────────────────────────
-
     #[test]
     fn test_now_epoch_is_recent() {
         let epoch = now_epoch();
-        // Should be after 2024-01-01 (1704067200) and before 2100-01-01
         assert!(epoch > 1704067200, "epoch {epoch} should be after 2024");
         assert!(epoch < 4102444800, "epoch {epoch} should be before 2100");
     }

@@ -52,8 +52,11 @@ See [docs/design.md](docs/design.md) for the full design document.
 
 ## Feature Flags
 
-The `vta-service` crate uses feature flags to control which seed storage
-backend is compiled in. The default build uses the OS keyring.
+Feature flags control compile-time backend selection. The default build
+uses the OS keyring for both `vta-service` (seed storage) and `cnm-cli`
+(session storage).
+
+### vta-service
 
 | Feature | Description | Default |
 |---|---|---|
@@ -62,6 +65,13 @@ backend is compiled in. The default build uses the OS keyring.
 | `config-seed` | Store the seed as a hex string in `config.toml` (useful for containers / CI). **Warning:** the seed is stored on disk unprotected -- do not use in production. | No |
 | `aws-secrets` | Store the seed in AWS Secrets Manager | No |
 | `gcp-secrets` | Store the seed in GCP Secret Manager | No |
+
+### cnm-cli
+
+| Feature | Description | Default |
+|---|---|---|
+| `keyring` | Store sessions in the OS keyring | Yes |
+| `config-session` | Store sessions in `~/.config/cnm/sessions.json` (useful for containers / CI). **Warning:** sessions are stored on disk unprotected -- do not use in production. | No |
 
 ### Build examples
 

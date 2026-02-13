@@ -2,13 +2,15 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use affinidi_tdk::didcomm::Message;
 use affinidi_tdk::didcomm::UnpackOptions;
+use vta_sdk::credentials::CredentialBundle;
+use vta_sdk::protocols::auth::{
+    AuthenticateData, AuthenticateResponse, ChallengeData, ChallengeRequest, ChallengeResponse,
+};
 
 use crate::acl::{
     AclEntry, Role, check_acl, check_acl_full, store_acl_entry, validate_acl_modification,
@@ -25,23 +27,6 @@ use crate::server::AppState;
 use tracing::{info, warn};
 
 // ---------- POST /auth/challenge ----------
-
-#[derive(Debug, Deserialize)]
-pub struct ChallengeRequest {
-    pub did: String,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ChallengeResponse {
-    pub session_id: String,
-    pub data: ChallengeData,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ChallengeData {
-    pub challenge: String,
-}
 
 pub async fn challenge(
     State(state): State<AppState>,
@@ -80,22 +65,6 @@ pub async fn challenge(
 }
 
 // ---------- POST /auth/ ----------
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthenticateResponse {
-    pub session_id: String,
-    pub data: AuthenticateData,
-}
-
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct AuthenticateData {
-    pub access_token: String,
-    pub access_expires_at: u64,
-    pub refresh_token: String,
-    pub refresh_expires_at: u64,
-}
 
 pub async fn authenticate(
     State(state): State<AppState>,
@@ -215,12 +184,12 @@ pub async fn authenticate(
     info!(did = %session.did, session_id = %session.session_id, "authentication successful");
 
     Ok(Json(AuthenticateResponse {
-        session_id: session.session_id,
+        session_id: Some(session.session_id),
         data: AuthenticateData {
             access_token,
             access_expires_at,
-            refresh_token,
-            refresh_expires_at,
+            refresh_token: Some(refresh_token),
+            refresh_expires_at: Some(refresh_expires_at),
         },
     }))
 }
@@ -349,17 +318,6 @@ pub struct GenerateCredentialsResponse {
     pub role: Role,
 }
 
-#[derive(Debug, Serialize)]
-struct CredentialBundle {
-    did: String,
-    #[serde(rename = "privateKeyMultibase")]
-    private_key_multibase: String,
-    #[serde(rename = "vtaDid")]
-    vta_did: String,
-    #[serde(rename = "vtaUrl", skip_serializing_if = "Option::is_none")]
-    vta_url: Option<String>,
-}
-
 pub async fn generate_credentials(
     auth: ManageAuth,
     State(state): State<AppState>,
@@ -397,8 +355,7 @@ pub async fn generate_credentials(
         vta_did,
         vta_url,
     };
-    let bundle_json = serde_json::to_string(&bundle)?;
-    let credential = BASE64.encode(bundle_json.as_bytes());
+    let credential = bundle.encode().map_err(|e| AppError::Internal(e.to_string()))?;
 
     info!(did = %did, role = %req.role, caller = %entry.created_by, "credentials generated");
 

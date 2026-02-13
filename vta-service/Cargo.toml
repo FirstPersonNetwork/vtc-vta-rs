@@ -27,7 +27,7 @@ name = "vta"
 path = "src/main.rs"
 
 [dependencies]
-vta-sdk = { path = "../vta-sdk" }
+vta-sdk = { path = "../vta-sdk", features = ["didcomm"] }
 affinidi-tdk = { workspace = true }
 affinidi-did-resolver-cache-sdk = "0.7"
 base64 = { workspace = true }

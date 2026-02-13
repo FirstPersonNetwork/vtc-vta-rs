@@ -59,7 +59,7 @@ backend is compiled in. The default build uses the OS keyring.
 |---|---|---|
 | `setup` | Interactive setup wizard (`vta setup`) | Yes |
 | `keyring` | Store the master seed in the OS keyring (macOS Keychain, GNOME Keyring, Windows Credential Manager) | Yes |
-| `config-seed` | Store the seed as a hex string in `config.toml` (useful for containers / CI) | No |
+| `config-seed` | Store the seed as a hex string in `config.toml` (useful for containers / CI). **Warning:** the seed is stored on disk unprotected -- do not use in production. | No |
 | `aws-secrets` | Store the seed in AWS Secrets Manager | No |
 | `gcp-secrets` | Store the seed in GCP Secret Manager | No |
 

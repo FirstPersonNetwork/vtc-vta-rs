@@ -52,55 +52,92 @@ async fn derive_and_store_did_key(
     keys::derive_and_store_did_key(seed, base, context_id, "Admin did:key", keys_ks).await
 }
 
-/// Prompt for cloud seed store configuration when a cloud backend feature is compiled.
+/// Prompt for seed store backend configuration based on compiled features.
 ///
-/// - **aws-secrets only**: asks for AWS secret name and region.
-/// - **gcp-secrets only**: asks for GCP project ID and secret name.
-/// - **both**: shows a selector first.
-/// - **neither**: returns `SecretsConfig::default()` with no prompts.
+/// Dynamically builds a list of available backends and lets the user choose
+/// when more than one is compiled. Supported backends:
+/// - **aws-secrets**: AWS Secrets Manager
+/// - **gcp-secrets**: GCP Secret Manager
+/// - **config-seed**: hex-encoded seed stored in config.toml
+/// - **keyring**: OS keyring (the default)
 fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
-    // Both aws-secrets AND gcp-secrets compiled — let the user choose.
-    #[cfg(all(feature = "aws-secrets", feature = "gcp-secrets"))]
-    {
-        let backends = &[
-            "AWS Secrets Manager",
-            "GCP Secret Manager",
-            "OS keyring (default)",
-        ];
-        let choice = Select::new()
-            .with_prompt("Seed storage backend")
-            .items(backends)
-            .default(0)
-            .interact()?;
+    let mut labels: Vec<&str> = Vec::new();
+    let mut tags: Vec<&str> = Vec::new();
 
-        return match choice {
-            0 => prompt_aws_secrets(),
-            1 => prompt_gcp_secrets(),
-            _ => prompt_keyring_service(SecretsConfig::default()),
-        };
+    #[cfg(feature = "aws-secrets")]
+    {
+        labels.push("AWS Secrets Manager");
+        tags.push("aws");
     }
 
-    // Only aws-secrets compiled.
-    #[cfg(all(feature = "aws-secrets", not(feature = "gcp-secrets")))]
+    #[cfg(feature = "gcp-secrets")]
     {
+        labels.push("GCP Secret Manager");
+        tags.push("gcp");
+    }
+
+    #[cfg(feature = "config-seed")]
+    {
+        labels.push("Config file (hex-encoded seed in config.toml)");
+        tags.push("config");
+    }
+
+    #[cfg(feature = "keyring")]
+    {
+        labels.push("OS keyring");
+        tags.push("keyring");
+    }
+
+    if labels.is_empty() {
+        return Err("no seed storage backend available — compile with at least one of: keyring, config-seed, aws-secrets, gcp-secrets".into());
+    }
+
+    // If only one backend is compiled, use it without prompting
+    let choice = if labels.len() == 1 {
+        0
+    } else {
+        Select::new()
+            .with_prompt("Seed storage backend")
+            .items(&labels)
+            .default(0)
+            .interact()?
+    };
+
+    let tag = tags[choice];
+
+    #[cfg(feature = "aws-secrets")]
+    if tag == "aws" {
         return prompt_aws_secrets();
     }
 
-    // Only gcp-secrets compiled.
-    #[cfg(all(feature = "gcp-secrets", not(feature = "aws-secrets")))]
-    {
+    #[cfg(feature = "gcp-secrets")]
+    if tag == "gcp" {
         return prompt_gcp_secrets();
     }
 
-    // Neither cloud backend compiled — prompt for keyring service name.
-    #[allow(unreachable_code)]
-    prompt_keyring_service(SecretsConfig::default())
+    #[cfg(feature = "config-seed")]
+    if tag == "config" {
+        // Marker: seed field will be populated with hex after mnemonic derivation
+        return Ok(SecretsConfig {
+            seed: Some(String::new()),
+            ..Default::default()
+        });
+    }
+
+    #[cfg(feature = "keyring")]
+    if tag == "keyring" {
+        return prompt_keyring_service(SecretsConfig::default());
+    }
+
+    // All compiled backends are covered above; this is truly unreachable
+    unreachable!("selected backend tag does not match any compiled feature")
 }
 
 /// Prompt for the OS keyring service name.
 ///
 /// Each VTA instance needs a unique keyring service name to store its seed
 /// separately. The default is "vta".
+#[cfg(feature = "keyring")]
 fn prompt_keyring_service(
     mut config: SecretsConfig,
 ) -> Result<SecretsConfig, Box<dyn std::error::Error>> {
@@ -315,26 +352,34 @@ pub async fn run_setup_wizard(
         }
     };
 
-    // Prompt for cloud seed store configuration (if a cloud feature is compiled)
-    let secrets_config = configure_secrets()?;
+    // Prompt for seed store backend configuration
+    let mut secrets_config = configure_secrets()?;
 
-    // Store seed via configured backend (defaults to OS keyring)
+    // Derive BIP-39 seed
     let seed = mnemonic.to_seed("");
-    let seed_store = create_seed_store(&AppConfig {
-        vta_did: None,
-        vta_name: None,
-        vta_description: None,
-        public_url: None,
-        server: ServerConfig::default(),
-        log: LogConfig::default(),
-        store: StoreConfig::default(),
-        messaging: None,
-        auth: AuthConfig::default(),
-        secrets: secrets_config.clone(),
-        config_path: config_path.clone(),
-    })
-    .map_err(|e| format!("{e}"))?;
-    seed_store.set(&seed).await.map_err(|e| format!("{e}"))?;
+
+    // Store seed via the configured backend
+    if secrets_config.seed.is_some() {
+        // config-seed backend: hex-encode seed into the config (persisted when config is saved)
+        secrets_config.seed = Some(hex::encode(&seed));
+    } else {
+        // All other backends: store via the seed store
+        let seed_store = create_seed_store(&AppConfig {
+            vta_did: None,
+            vta_name: None,
+            vta_description: None,
+            public_url: None,
+            server: ServerConfig::default(),
+            log: LogConfig::default(),
+            store: StoreConfig::default(),
+            messaging: None,
+            auth: AuthConfig::default(),
+            secrets: secrets_config.clone(),
+            config_path: config_path.clone(),
+        })
+        .map_err(|e| format!("{e}"))?;
+        seed_store.set(&seed).await.map_err(|e| format!("{e}"))?;
+    }
 
     // 11. Generate random JWT signing key
     let mut jwt_key_bytes = [0u8; 32];
@@ -435,6 +480,10 @@ pub async fn run_setup_wizard(
                 eprintln!("  Seed backend: GCP Secret Manager ({project}/{name})");
                 _printed = true;
             }
+        }
+        if !_printed && config.secrets.seed.is_some() {
+            eprintln!("  Seed backend: config file (hex-encoded in config.toml)");
+            _printed = true;
         }
         #[cfg(feature = "keyring")]
         if !_printed {

@@ -8,6 +8,7 @@ multi-community support from a single command-line tool.
 
 ## Table of Contents
 
+- [Feature Flags](#feature-flags)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Multi-Community Support](#multi-community-support)
@@ -15,6 +16,26 @@ multi-community support from a single command-line tool.
 - [Configuration](#configuration)
 - [CLI Reference](#cli-reference)
 - [Additional Resources](#additional-resources)
+
+## Feature Flags
+
+| Feature | Description | Default |
+|---------|-------------|---------|
+| `keyring` | Store sessions in the OS keyring (macOS Keychain, GNOME Keyring, Windows Credential Manager) | Yes |
+| `config-session` | Store sessions in `~/.config/cnm/sessions.json`. Useful for containers and CI where no keyring is available. **Warning:** sessions are stored on disk unprotected -- do not use in production. | No |
+
+At least one of `keyring` or `config-session` must be enabled. When `keyring`
+is enabled it takes priority over `config-session`.
+
+### Build examples
+
+```sh
+# Default build (keyring)
+cargo build --package cnm-cli --release
+
+# Keyring-free build for containers / CI
+cargo build --package cnm-cli --release --no-default-features --features config-session
+```
 
 ## Installation
 
@@ -141,13 +162,18 @@ After initial login, all subsequent commands authenticate transparently.
 
 ### Credential storage
 
-Sessions are stored in the platform's credential manager:
+With the default `keyring` feature, sessions are stored in the platform's
+credential manager:
 
 | Platform | Backend |
 |----------|---------|
 | macOS    | Keychain |
 | Linux    | secret-service (e.g. GNOME Keyring) |
 | Windows  | Credential Manager |
+
+When built with `--features config-session` (and without `keyring`), sessions
+are stored in `~/.config/cnm/sessions.json` instead. See
+[Feature Flags](#feature-flags) for details.
 
 ## Configuration
 

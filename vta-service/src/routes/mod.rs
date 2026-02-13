@@ -37,6 +37,7 @@ pub fn router() -> Router<AppState> {
                 .delete(keys::invalidate_key)
                 .patch(keys::rename_key),
         )
+        .route("/keys/{key_id}/secret", get(keys::get_key_secret))
         // Context routes
         .route(
             "/contexts",

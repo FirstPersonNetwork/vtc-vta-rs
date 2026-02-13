@@ -13,6 +13,7 @@ use ratatui::{
     TerminalOptions, Viewport,
     layout::Constraint,
     style::{Color, Modifier, Style},
+    text::{Line, Span, Text},
     widgets::{Block, Cell, Row, Table},
 };
 use vta_sdk::keys::KeyType;
@@ -287,6 +288,9 @@ enum KeyCommands {
     Get {
         /// Key ID
         key_id: String,
+        /// Reveal private key material (multibase)
+        #[arg(long)]
+        secret: bool,
     },
     /// Revoke (invalidate) a key
     Revoke {
@@ -540,7 +544,7 @@ async fn main() {
                 )
                 .await
             }
-            KeyCommands::Get { key_id } => cmd_key_get(&client, &key_id).await,
+            KeyCommands::Get { key_id, secret } => cmd_key_get(&client, &key_id, secret).await,
             KeyCommands::Revoke { key_id } => cmd_key_revoke(&client, &key_id).await,
             KeyCommands::Rename { key_id, new_key_id } => {
                 cmd_key_rename(&client, &key_id, &new_key_id).await
@@ -852,18 +856,30 @@ async fn cmd_key_create(
     Ok(())
 }
 
-async fn cmd_key_get(client: &VtaClient, key_id: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let resp = client.get_key(key_id).await?;
-    println!("Key ID:          {}", resp.key_id);
-    println!("Key Type:        {}", resp.key_type);
-    println!("Derivation Path: {}", resp.derivation_path);
-    println!("Public Key:      {}", resp.public_key);
-    println!("Status:          {}", resp.status);
-    if let Some(label) = &resp.label {
-        println!("Label:           {label}");
+async fn cmd_key_get(
+    client: &VtaClient,
+    key_id: &str,
+    secret: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if secret {
+        let resp = client.get_key_secret(key_id).await?;
+        println!("Key ID:               {}", resp.key_id);
+        println!("Key Type:             {}", resp.key_type);
+        println!("Public Key Multibase: {}", resp.public_key_multibase);
+        println!("Secret Key Multibase: {}", resp.private_key_multibase);
+    } else {
+        let resp = client.get_key(key_id).await?;
+        println!("Key ID:          {}", resp.key_id);
+        println!("Key Type:        {}", resp.key_type);
+        println!("Derivation Path: {}", resp.derivation_path);
+        println!("Public Key:      {}", resp.public_key);
+        println!("Status:          {}", resp.status);
+        if let Some(label) = &resp.label {
+            println!("Label:           {label}");
+        }
+        println!("Created At:      {}", resp.created_at);
+        println!("Updated At:      {}", resp.updated_at);
     }
-    println!("Created At:      {}", resp.created_at);
-    println!("Updated At:      {}", resp.updated_at);
     Ok(())
 }
 
@@ -906,62 +922,62 @@ async fn cmd_key_list(
 
     let end = (offset + resp.keys.len() as u64).min(resp.total);
 
-    let header_style = Style::default()
-        .fg(Color::White)
-        .add_modifier(Modifier::BOLD);
-    let header = Row::new(vec!["Label", "Type", "Status", "Path", "ID", "Created"])
-        .style(header_style)
-        .bottom_margin(1);
+    let dim = Style::default().fg(Color::DarkGray);
+    let bold = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
 
-    let rows: Vec<Row> =
-        resp.keys
-            .iter()
-            .map(|key| {
-                let label = key.label.clone().unwrap_or_else(|| "\u{2014}".into());
-                let created = key.created_at.format("%Y-%m-%d").to_string();
+    let rows: Vec<Row> = resp
+        .keys
+        .iter()
+        .map(|key| {
+            let label = key.label.clone().unwrap_or_else(|| "\u{2014}".into());
+            let created = key.created_at.format("%Y-%m-%d").to_string();
 
-                let status_cell =
-                    match key.status {
-                        vta_sdk::keys::KeyStatus::Active => Cell::from(key.status.to_string())
-                            .style(Style::default().fg(Color::Green)),
-                        vta_sdk::keys::KeyStatus::Revoked => Cell::from(key.status.to_string())
-                            .style(Style::default().fg(Color::Red)),
-                    };
+            let status_span = match key.status {
+                vta_sdk::keys::KeyStatus::Active => Span::styled(
+                    key.status.to_string(),
+                    Style::default().fg(Color::Green),
+                ),
+                vta_sdk::keys::KeyStatus::Revoked => Span::styled(
+                    key.status.to_string(),
+                    Style::default().fg(Color::Red),
+                ),
+            };
 
-                Row::new(vec![
-                    Cell::from(label),
-                    Cell::from(key.key_type.to_string()),
-                    status_cell,
-                    Cell::from(key.derivation_path.clone()),
-                    Cell::from(key.key_id.clone()).style(Style::default().fg(Color::DarkGray)),
-                    Cell::from(created),
-                ])
-            })
-            .collect();
+            let id_line = Line::from(vec![
+                Span::styled("\u{25b8} ", Style::default().fg(Color::Cyan)),
+                Span::styled(key.key_id.clone(), bold),
+            ]);
+
+            let detail_line = Line::from(vec![
+                Span::raw("  "),
+                Span::styled(label, Style::default().fg(Color::Yellow)),
+                Span::styled("  \u{2502}  ", dim),
+                Span::raw(key.key_type.to_string()),
+                Span::styled("  \u{2502}  ", dim),
+                status_span,
+                Span::styled("  \u{2502}  ", dim),
+                Span::styled(key.derivation_path.clone(), dim),
+                Span::styled("  \u{2502}  ", dim),
+                Span::styled(created, dim),
+            ]);
+
+            Row::new(vec![Cell::from(Text::from(vec![id_line, detail_line]))])
+                .height(2)
+                .bottom_margin(1)
+        })
+        .collect();
 
     let title = format!(" Keys ({}\u{2013}{} of {}) ", offset + 1, end, resp.total);
 
-    let table = Table::new(
-        rows,
-        [
-            Constraint::Min(20),    // Label
-            Constraint::Length(9),  // Type
-            Constraint::Length(9),  // Status
-            Constraint::Length(16), // Path
-            Constraint::Length(36), // ID
-            Constraint::Length(10), // Created
-        ],
-    )
-    .header(header)
-    .column_spacing(2)
-    .block(
-        Block::bordered()
-            .title(title)
-            .border_style(Style::default().fg(Color::DarkGray)),
-    );
+    let table = Table::new(rows, [Constraint::Min(1)])
+        .block(
+            Block::bordered()
+                .title(title)
+                .border_style(dim),
+        );
 
-    // +4 = top border + header + header bottom_margin + bottom border
-    let height = resp.keys.len() as u16 + 4;
+    // Each key = 2 lines + 1 bottom_margin, last key's margin clipped, + 2 for borders
+    let height = (resp.keys.len() as u16 * 3).saturating_sub(1) + 2;
     let mut terminal = ratatui::init_with_options(TerminalOptions {
         viewport: Viewport::Inline(height),
     });

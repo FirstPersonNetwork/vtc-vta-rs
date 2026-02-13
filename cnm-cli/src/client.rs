@@ -122,6 +122,14 @@ pub struct RenameKeyResponse {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct GetKeySecretResponse {
+    pub key_id: String,
+    pub key_type: KeyType,
+    pub public_key_multibase: String,
+    pub private_key_multibase: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct ListKeysResponse {
     pub keys: Vec<KeyRecord>,
     pub total: u64,
@@ -287,6 +295,20 @@ impl VtaClient {
     pub async fn get_key(&self, key_id: &str) -> Result<KeyRecord, Box<dyn std::error::Error>> {
         let req = self.client.get(format!(
             "{}/keys/{}",
+            self.base_url,
+            encode_path_segment(key_id)
+        ));
+        let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// GET /keys/{key_id}/secret
+    pub async fn get_key_secret(
+        &self,
+        key_id: &str,
+    ) -> Result<GetKeySecretResponse, Box<dyn std::error::Error>> {
+        let req = self.client.get(format!(
+            "{}/keys/{}/secret",
             self.base_url,
             encode_path_segment(key_id)
         ));

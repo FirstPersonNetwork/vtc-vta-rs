@@ -128,6 +128,51 @@ pub async fn create_key(
     Ok((StatusCode::CREATED, Json(response)))
 }
 
+#[derive(Debug, Serialize)]
+pub struct GetKeySecretResponse {
+    pub key_id: String,
+    pub key_type: KeyType,
+    pub public_key_multibase: String,
+    pub private_key_multibase: String,
+}
+
+pub async fn get_key_secret(
+    auth: AdminAuth,
+    State(state): State<AppState>,
+    Path(key_id): Path<String>,
+) -> Result<Json<GetKeySecretResponse>, AppError> {
+    let keys = state.keys_ks.clone();
+
+    let record: KeyRecord = keys
+        .get(keys::store_key(&key_id))
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("key {key_id} not found")))?;
+
+    if let Some(ref ctx) = record.context_id {
+        auth.0.require_context(ctx)?;
+    } else if !auth.0.is_super_admin() {
+        return Err(AppError::Forbidden(
+            "only super admin can access keys without a context".into(),
+        ));
+    }
+
+    let bip32 = load_or_generate_seed(&*state.seed_store, None).await?;
+
+    let secret = match record.key_type {
+        KeyType::Ed25519 => bip32.derive_ed25519(&record.derivation_path)?,
+        KeyType::X25519 => bip32.derive_x25519(&record.derivation_path)?,
+    };
+
+    info!(key_id = %key_id, "key secret retrieved");
+
+    Ok(Json(GetKeySecretResponse {
+        key_id: record.key_id,
+        key_type: record.key_type,
+        public_key_multibase: secret.get_public_keymultibase()?,
+        private_key_multibase: secret.get_private_keymultibase()?,
+    }))
+}
+
 pub async fn get_key(
     auth: AuthClaims,
     State(state): State<AppState>,

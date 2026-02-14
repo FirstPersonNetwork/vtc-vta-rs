@@ -20,35 +20,40 @@ use crate::keys::seed_store::create_seed_store;
 use crate::keys::{KeyRecord, KeyStatus, KeyType};
 use crate::store::Store;
 
+const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
 const GREEN: &str = "\x1b[32m";
 const RED: &str = "\x1b[31m";
+const CYAN: &str = "\x1b[36m";
+const YELLOW: &str = "\x1b[33m";
 const RESET: &str = "\x1b[0m";
+
+fn section(title: &str) {
+    let pad = 46usize.saturating_sub(title.len());
+    eprintln!("\n{DIM}──{RESET} {BOLD}{title}{RESET} {DIM}{}{RESET}", "─".repeat(pad));
+}
 
 pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
     // 1. Check setup completion
     let config = match AppConfig::load(config_path) {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("Setup:     NOT COMPLETE");
-            eprintln!("  Error: {e}");
+            section("VTA Status");
+            eprintln!("  {CYAN}{:<13}{RESET} {RED}✗{RESET} not complete", "Setup");
+            eprintln!("  {CYAN}{:<13}{RESET} {e}", "Error");
             eprintln!();
             eprintln!("Run `vta setup` to configure this instance.");
             return Ok(());
         }
     };
 
-    eprintln!("=== VTA Status ===");
-    eprintln!();
-    eprintln!(
-        "Name:      {}",
-        config.vta_name.as_deref().unwrap_or("(not set)")
-    );
-    eprintln!(
-        "Desc:      {}",
-        config.vta_description.as_deref().unwrap_or("(not set)")
-    );
-    eprintln!("Setup:     complete");
-    eprintln!("Config:    {}", config.config_path.display());
+    section("VTA Status");
+    let name = config.vta_name.as_deref().unwrap_or("(not set)");
+    let desc = config.vta_description.as_deref().unwrap_or("(not set)");
+    eprintln!("  {CYAN}{:<13}{RESET} {}", "Name", if name == "(not set)" { format!("{DIM}{name}{RESET}") } else { name.to_string() });
+    eprintln!("  {CYAN}{:<13}{RESET} {}", "Description", if desc == "(not set)" { format!("{DIM}{desc}{RESET}") } else { desc.to_string() });
+    eprintln!("  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} complete", "Setup");
+    eprintln!("  {CYAN}{:<13}{RESET} {}", "Config", config.config_path.display());
 
     // 2. DID resolver for resolution checks (created early, reused for contexts)
     let did_resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build())
@@ -58,7 +63,7 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
     // 3. VTA DID + resolution check → extract mediator DID from DIDCommMessaging
     let mut discovered_mediator: Option<String> = None;
     if let Some(ref did) = config.vta_did {
-        eprintln!("VTA DID:   {did}");
+        eprintln!("  {CYAN}{:<13}{RESET} {did}", "VTA DID");
         if let Some(ref resolver) = did_resolver {
             match resolver.resolve(did).await {
                 Ok(resolved) => {
@@ -66,7 +71,7 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
                         .strip_prefix("did:")
                         .and_then(|s| s.split(':').next())
                         .unwrap_or("?");
-                    eprintln!("           {GREEN}✓{RESET} resolves ({method})");
+                    eprintln!("                {GREEN}✓{RESET} resolves ({method})");
 
                     // Look for mediator DID in DIDCommMessaging service
                     for svc in &resolved.doc.service {
@@ -83,28 +88,27 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
                         }
                     }
                 }
-                Err(e) => eprintln!("           {RED}✗ resolution failed: {e}{RESET}"),
+                Err(e) => eprintln!("                {RED}✗ resolution failed: {e}{RESET}"),
             }
         }
     } else {
-        eprintln!("VTA DID:   (not set)");
+        eprintln!("  {CYAN}{:<13}{RESET} {DIM}(not set){RESET}", "VTA DID");
     }
 
     // 4. URL + Store path
-    eprintln!(
-        "URL:       {}",
-        config.public_url.as_deref().unwrap_or("(not set)")
-    );
-    eprintln!("Store:     {}", config.store.data_dir.display());
+    let url = config.public_url.as_deref().unwrap_or("(not set)");
+    eprintln!("  {CYAN}{:<13}{RESET} {}", "URL", if url == "(not set)" { format!("{DIM}{url}{RESET}") } else { url.to_string() });
+    eprintln!("  {CYAN}{:<13}{RESET} {}", "Store", config.store.data_dir.display());
 
     // 5. Mediator section (grouped: display + resolution + trust-ping)
+    section("Mediator");
     let mediator_did = discovered_mediator
         .as_deref()
         .or(config.messaging.as_ref().map(|m| m.mediator_did.as_str()));
 
     if let Some(ref msg) = config.messaging {
-        eprintln!("Mediator:  {}", msg.mediator_url);
-        eprintln!("           {}", mediator_did.unwrap_or("(unknown)"));
+        eprintln!("  {CYAN}{:<13}{RESET} {}", "URL", msg.mediator_url);
+        eprintln!("  {CYAN}{:<13}{RESET} {}", "DID", mediator_did.unwrap_or("(unknown)"));
         if let Some(ref resolver) = did_resolver
             && let Some(did) = mediator_did
         {
@@ -114,13 +118,13 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
                         .strip_prefix("did:")
                         .and_then(|s| s.split(':').next())
                         .unwrap_or("?");
-                    eprintln!("           {GREEN}✓{RESET} resolves ({method})");
+                    eprintln!("                {GREEN}✓{RESET} resolves ({method})");
                 }
-                Err(e) => eprintln!("           {RED}✗ resolution failed: {e}{RESET}"),
+                Err(e) => eprintln!("                {RED}✗ resolution failed: {e}{RESET}"),
             }
         }
     } else {
-        eprintln!("Mediator:  (not configured)");
+        eprintln!("  {DIM}Not configured{RESET}");
     }
 
     // 6. Open store (may fail if VTA is already running)
@@ -128,12 +132,8 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
         Ok(s) => s,
         Err(_) => {
             eprintln!();
-            eprintln!(
-                "Note: Could not open the data store (is VTA already running?)."
-            );
-            eprintln!(
-                "      Stop the VTA service and re-run `vta status` for full diagnostics."
-            );
+            eprintln!("  {YELLOW}Note:{RESET} Could not open the data store (is VTA already running?).");
+            eprintln!("        Stop the VTA service and re-run `vta status` for full diagnostics.");
             eprintln!();
             return Ok(());
         }
@@ -148,13 +148,13 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
         .await
         {
             Ok(Ok(latency)) => {
-                eprintln!("           {GREEN}✓{RESET} pong received ({latency}ms)");
+                eprintln!("                {GREEN}✓{RESET} pong ({latency}ms)");
             }
             Ok(Err(e)) => {
-                eprintln!("           {RED}✗ trust-ping failed: {e}{RESET}");
+                eprintln!("                {RED}✗{RESET} trust-ping failed: {e}");
             }
             Err(_) => {
-                eprintln!("           {RED}✗ trust-ping timed out{RESET}");
+                eprintln!("                {RED}✗{RESET} trust-ping timed out");
             }
         }
     }
@@ -167,8 +167,7 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
 
     // --- Contexts ---
     let ctx_records = contexts::list_contexts(&contexts_ks).await?;
-    eprintln!();
-    eprintln!("--- Contexts ({}) ---", ctx_records.len());
+    section(&format!("Contexts ({})", ctx_records.len()));
 
     for ctx in &ctx_records {
         let did_display = ctx.did.as_deref().unwrap_or("(no DID)");
@@ -180,21 +179,21 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
                             .strip_prefix("did:")
                             .and_then(|s| s.split(':').next())
                             .unwrap_or("unknown");
-                        format!("DID resolution: ok ({method})")
+                        format!("{GREEN}✓{RESET} {method}")
                     }
-                    Err(e) => format!("DID resolution: FAILED ({e})"),
+                    Err(e) => format!("{RED}✗{RESET} {e}"),
                 }
             } else {
-                "DID resolution: skipped (resolver unavailable)".to_string()
+                format!("{DIM}skipped{RESET}")
             }
         } else {
             String::new()
         };
 
         if resolution.is_empty() {
-            eprintln!("  {:<16}{}", ctx.id, did_display);
+            eprintln!("  {CYAN}{:<16}{RESET} {DIM}{did_display}{RESET}", ctx.id);
         } else {
-            eprintln!("  {:<16}{}   {}", ctx.id, did_display, resolution);
+            eprintln!("  {CYAN}{:<16}{RESET} {did_display}   {resolution}", ctx.id);
         }
     }
 
@@ -220,10 +219,9 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
         }
     }
 
-    eprintln!();
-    eprintln!("--- Keys ({total_keys}) ---");
-    eprintln!("  Active:  {active}  (Ed25519: {ed25519_count}, X25519: {x25519_count})");
-    eprintln!("  Revoked: {revoked}");
+    section(&format!("Keys ({total_keys})"));
+    eprintln!("  {CYAN}{:<13}{RESET} {active}  Ed25519: {ed25519_count}, X25519: {x25519_count}", "Active");
+    eprintln!("  {CYAN}{:<13}{RESET} {revoked}", "Revoked");
 
     // --- ACL ---
     let acl_entries = acl::list_acl_entries(&acl_ks).await?;
@@ -237,11 +235,10 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
         .filter(|e| e.role == Role::Application)
         .count();
 
-    eprintln!();
-    eprintln!("--- ACL ({}) ---", acl_entries.len());
-    eprintln!("  Admin:       {admin_count}");
-    eprintln!("  Initiator:   {initiator_count}");
-    eprintln!("  Application: {application_count}");
+    section(&format!("ACL ({})", acl_entries.len()));
+    eprintln!("  {CYAN}{:<13}{RESET} {admin_count}", "Admin");
+    eprintln!("  {CYAN}{:<13}{RESET} {initiator_count}", "Initiator");
+    eprintln!("  {CYAN}{:<13}{RESET} {application_count}", "Application");
 
     // --- Sessions ---
     let sessions = session::list_sessions(&sessions_ks).await?;
@@ -254,10 +251,9 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
         .filter(|s| s.state == SessionState::ChallengeSent)
         .count();
 
-    eprintln!();
-    eprintln!("--- Sessions ({}) ---", sessions.len());
-    eprintln!("  Authenticated: {authenticated}");
-    eprintln!("  ChallengeSent: {challenge_sent}");
+    section(&format!("Sessions ({})", sessions.len()));
+    eprintln!("  {CYAN}{:<13}{RESET} {authenticated}", "Authenticated");
+    eprintln!("  {CYAN}{:<13}{RESET} {challenge_sent}", "ChallengeSent");
     eprintln!();
 
     Ok(())

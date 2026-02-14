@@ -378,7 +378,7 @@ async fn main() {
     // Legacy migration notice
     if cnm_config.communities.is_empty() && auth::has_legacy_session() {
         eprintln!(
-            "\x1b[33mDetected legacy single-community session. Run `cnm setup` to migrate.\x1b[0m\n"
+            "{YELLOW}Detected legacy single-community session. Run `cnm setup` to migrate.{RESET}\n"
         );
     }
 
@@ -633,9 +633,18 @@ async fn cmd_community(
     }
 }
 
+const BOLD: &str = "\x1b[1m";
+const DIM: &str = "\x1b[2m";
 const GREEN: &str = "\x1b[32m";
 const RED: &str = "\x1b[31m";
+const CYAN: &str = "\x1b[36m";
+const YELLOW: &str = "\x1b[33m";
 const RESET: &str = "\x1b[0m";
+
+fn print_section(title: &str) {
+    let pad = 46usize.saturating_sub(title.len());
+    println!("\n{DIM}──{RESET} {BOLD}{title}{RESET} {DIM}{}{RESET}", "─".repeat(pad));
+}
 
 async fn cmd_health(
     client: &VtaClient,
@@ -648,15 +657,26 @@ async fn cmd_health(
     let ping_timeout = Duration::from_secs(10);
 
     // ── Community VTA ──────────────────────────────────────────────
-    let resp = client.health().await?;
-    println!("Service: {} (v{})", resp.status, resp.version);
-    println!("URL:     {}", client.base_url());
+    print_section("Community VTA");
+
+    match client.health().await {
+        Ok(resp) => {
+            println!("  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} ok (v{})", "Service", resp.version);
+        }
+        Err(e) => {
+            println!("  {CYAN}{:<13}{RESET} {RED}✗{RESET} unreachable ({e})", "Service");
+            // Continue to personal VTA section instead of returning error
+            print_personal_vta_section(cnm_config, None, ping_timeout).await;
+            return Ok(());
+        }
+    }
+    println!("  {CYAN}{:<13}{RESET} {}", "URL", client.base_url());
 
     // Create a shared DID resolver for both sections
     let resolver = match DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await {
         Ok(r) => Some(r),
         Err(e) => {
-            println!("\nDID resolution: skipped (resolver unavailable: {e})");
+            println!("  {DIM}DID resolution skipped (resolver unavailable: {e}){RESET}");
             None
         }
     };
@@ -664,52 +684,6 @@ async fn cmd_health(
     // Community DID resolution + trust-ping
     let session = auth::loaded_session(keyring_key);
     if let Some(ref session) = session {
-        println!();
-        println!("Client DID:        {}", session.client_did);
-        println!("Community VTA DID: {}", session.vta_did);
-
-        if let Some(ref resolver) = resolver {
-            print_did_resolution(resolver, "Client DID", &session.client_did, false).await;
-
-            let mediator_did =
-                print_did_resolution(resolver, "Community VTA DID", &session.vta_did, true).await;
-
-            if let Some(ref mediator_did) = mediator_did {
-                print_did_resolution(resolver, "Mediator DID", mediator_did, false).await;
-                print_trust_ping(session, mediator_did, ping_timeout).await;
-            }
-        }
-    } else {
-        println!("\n(not authenticated — DID resolution skipped)");
-    }
-
-    // ── Personal VTA ───────────────────────────────────────────────
-    println!();
-    println!("\x1b[2m── Personal VTA ──────────────────────────────\x1b[0m");
-
-    let Some(ref personal) = cnm_config.personal_vta else {
-        println!("Not configured.");
-        return Ok(());
-    };
-
-    let personal_client = VtaClient::new(&personal.url);
-    match personal_client.health().await {
-        Ok(resp) => {
-            println!("Service: {} (v{})", resp.status, resp.version);
-            println!("URL:     {}", personal.url);
-        }
-        Err(e) => {
-            println!("Service: unreachable ({e})");
-        }
-    };
-
-    // Personal DID resolution + trust-ping
-    let personal_session = auth::loaded_session(Some(config::PERSONAL_KEYRING_KEY));
-    if let Some(ref session) = personal_session {
-        println!();
-        println!("Client DID: {}", session.client_did);
-        println!("VTA DID:    {}", session.vta_did);
-
         if let Some(ref resolver) = resolver {
             print_did_resolution(resolver, "Client DID", &session.client_did, false).await;
 
@@ -722,17 +696,63 @@ async fn cmd_health(
             }
         }
     } else {
-        println!("\n(not authenticated — DID resolution skipped)");
+        println!("  {DIM}(not authenticated — DID resolution skipped){RESET}");
     }
+
+    // ── Personal VTA ───────────────────────────────────────────────
+    print_personal_vta_section(cnm_config, resolver.as_ref(), ping_timeout).await;
 
     Ok(())
 }
 
+async fn print_personal_vta_section(
+    cnm_config: &config::CnmConfig,
+    resolver: Option<&affinidi_did_resolver_cache_sdk::DIDCacheClient>,
+    ping_timeout: std::time::Duration,
+) {
+    print_section("Personal VTA");
+
+    let Some(ref personal) = cnm_config.personal_vta else {
+        println!("  {DIM}Not configured.{RESET}");
+        return;
+    };
+
+    let personal_client = VtaClient::new(&personal.url);
+    match personal_client.health().await {
+        Ok(resp) => {
+            println!("  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} ok (v{})", "Service", resp.version);
+        }
+        Err(e) => {
+            println!("  {CYAN}{:<13}{RESET} {RED}✗{RESET} unreachable ({e})", "Service");
+            return;
+        }
+    };
+    println!("  {CYAN}{:<13}{RESET} {}", "URL", personal.url);
+
+    // Personal DID resolution + trust-ping
+    let personal_session = auth::loaded_session(Some(config::PERSONAL_KEYRING_KEY));
+    if let Some(ref session) = personal_session {
+        if let Some(resolver) = resolver {
+            print_did_resolution(resolver, "Client DID", &session.client_did, false).await;
+
+            let mediator_did =
+                print_did_resolution(resolver, "VTA DID", &session.vta_did, true).await;
+
+            if let Some(ref mediator_did) = mediator_did {
+                print_did_resolution(resolver, "Mediator DID", mediator_did, false).await;
+                print_trust_ping(session, mediator_did, ping_timeout).await;
+            }
+        }
+    } else {
+        println!("  {DIM}(not authenticated — DID resolution skipped){RESET}");
+    }
+}
+
 /// Resolve a DID and print the result with colored ✓/✗.
 ///
+/// Prints label + DID, then resolution status and detail lines.
 /// When `find_mediator` is true, looks for a DIDCommMessaging service and
 /// extracts the mediator DID from its endpoint URI (if the URI is a `did:`).
-/// Prints a diagnostic line showing whether a mediator was found.
 async fn print_did_resolution(
     resolver: &affinidi_did_resolver_cache_sdk::DIDCacheClient,
     label: &str,
@@ -744,18 +764,20 @@ async fn print_did_resolution(
         .and_then(|s| s.split(':').next())
         .unwrap_or("unknown");
 
+    println!("  {CYAN}{:<13}{RESET} {did}", label);
+
     let resolved = match resolver.resolve(did).await {
         Ok(r) => r,
         Err(e) => {
-            println!("{label}: {RED}✗ resolution failed: {e}{RESET}");
+            println!("                {RED}✗{RESET} resolution failed: {e}");
             return None;
         }
     };
 
-    println!("{label}: {GREEN}✓{RESET} resolves ({method})");
+    println!("                {GREEN}✓{RESET} resolves ({method})");
 
     for ka in &resolved.doc.key_agreement {
-        println!("  keyAgreement: {}", ka.get_id());
+        println!("                {DIM}keyAgreement: {}{RESET}", ka.get_id());
     }
 
     let mut mediator_did: Option<String> = None;
@@ -770,10 +792,10 @@ async fn print_did_resolution(
             .collect();
 
         if uris.is_empty() {
-            println!("  service: {types}");
+            println!("                {DIM}service: {types}{RESET}");
         } else {
             for uri in &uris {
-                println!("  service: {types} -> {uri}");
+                println!("                {DIM}service: {types} -> {uri}{RESET}");
             }
         }
 
@@ -783,9 +805,9 @@ async fn print_did_resolution(
         {
             mediator_did = uris.into_iter().find(|u| u.starts_with("did:"));
             if let Some(ref m) = mediator_did {
-                println!("  mediator: {GREEN}✓{RESET} {m}");
+                println!("                mediator {GREEN}✓{RESET} {m}");
             } else {
-                println!("  mediator: {RED}✗ no DID found in service endpoint{RESET}");
+                println!("                mediator {RED}✗{RESET} no DID found in service endpoint");
             }
         }
     }
@@ -810,8 +832,6 @@ async fn print_trust_ping(
     let client_did = session.client_did.clone();
     let private_key = session.private_key_multibase.clone();
     let mediator = mediator_did.to_string();
-
-    print!("  Trust-ping: ");
 
     let ping = async {
         let seed = vta_sdk::did_key::decode_private_key_multibase(&private_key)?;
@@ -840,9 +860,9 @@ async fn print_trust_ping(
     };
 
     match tokio::time::timeout(timeout, ping).await {
-        Ok(Ok(latency)) => println!("{GREEN}✓{RESET} pong received ({latency}ms)"),
-        Ok(Err(e)) => println!("{RED}✗ failed: {e}{RESET}"),
-        Err(_) => println!("{RED}✗ timed out{RESET}"),
+        Ok(Ok(latency)) => println!("  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} pong ({latency}ms)", "Trust-ping"),
+        Ok(Err(e)) => println!("  {CYAN}{:<13}{RESET} {RED}✗{RESET} failed: {e}", "Trust-ping"),
+        Err(_) => println!("  {CYAN}{:<13}{RESET} {RED}✗{RESET} timed out", "Trust-ping"),
     }
 }
 

@@ -683,7 +683,7 @@ async fn cmd_community_ping(
     println!("  {CYAN}{:<13}{RESET} {}", "VTA DID", session.vta_did);
     println!("  {CYAN}{:<13}{RESET} {mediator_did}", "Mediator DID");
 
-    print_trust_ping(&session, &mediator_did, Duration::from_secs(10)).await;
+    print_trust_ping(&session, &session.vta_did, &mediator_did, Duration::from_secs(10)).await;
     Ok(())
 }
 
@@ -746,7 +746,7 @@ async fn cmd_health(
 
             if let Some(ref mediator_did) = mediator_did {
                 print_did_resolution(resolver, "Mediator DID", mediator_did, false).await;
-                print_trust_ping(session, mediator_did, ping_timeout).await;
+                print_trust_ping(session, mediator_did, mediator_did, ping_timeout).await;
             }
         }
     } else {
@@ -794,7 +794,7 @@ async fn print_personal_vta_section(
 
             if let Some(ref mediator_did) = mediator_did {
                 print_did_resolution(resolver, "Mediator DID", mediator_did, false).await;
-                print_trust_ping(session, mediator_did, ping_timeout).await;
+                print_trust_ping(session, mediator_did, mediator_did, ping_timeout).await;
             }
         }
     } else {
@@ -869,8 +869,12 @@ async fn print_did_resolution(
 }
 
 /// Send a DIDComm trust-ping and print the result with colored ✓/✗.
+///
+/// `target_did` is the DID to ping. The message is routed through
+/// `mediator_did` (which is also the mediator on the ATM profile).
 async fn print_trust_ping(
     session: &auth::SessionInfo,
+    target_did: &str,
     mediator_did: &str,
     timeout: std::time::Duration,
 ) {
@@ -886,6 +890,7 @@ async fn print_trust_ping(
     let client_did = session.client_did.clone();
     let private_key = session.private_key_multibase.clone();
     let mediator = mediator_did.to_string();
+    let target = target_did.to_string();
 
     let ping = async {
         let seed = vta_sdk::did_key::decode_private_key_multibase(&private_key)?;
@@ -905,7 +910,7 @@ async fn print_trust_ping(
 
         let start = Instant::now();
         TrustPing::default()
-            .send_ping(&atm, &profile, &mediator, true, true, true)
+            .send_ping(&atm, &profile, &target, true, true, true)
             .await?;
         let elapsed = start.elapsed().as_millis();
 

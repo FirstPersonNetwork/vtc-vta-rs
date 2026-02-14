@@ -106,6 +106,8 @@ enum CommunityCommands {
     },
     /// Show current community info
     Status,
+    /// Send a DIDComm trust-ping to the community VTA
+    Ping,
 }
 
 #[derive(Subcommand)]
@@ -630,7 +632,59 @@ async fn cmd_community(
             }
             Ok(())
         }
+        CommunityCommands::Ping => {
+            cmd_community_ping(cnm_config).await
+        }
     }
+}
+
+async fn cmd_community_ping(
+    cnm_config: &config::CnmConfig,
+) -> Result<(), Box<dyn std::error::Error>> {
+    use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
+    use std::time::Duration;
+
+    let (slug, community) = resolve_community(None, cnm_config)?;
+    println!("Community: {} ({slug})", community.name);
+
+    // Need a session to get client DID + VTA DID
+    let key = community_keyring_key(&slug);
+    let session = match auth::loaded_session(Some(&key)) {
+        Some(s) => s,
+        None => {
+            return Err("not authenticated — run `cnm auth login` first".into());
+        }
+    };
+
+    // Check the VTA DID has a DIDCommMessaging service with a mediator
+    let resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await?;
+
+    let resolved = resolver.resolve(&session.vta_did).await.map_err(|e| {
+        format!("failed to resolve VTA DID {}: {e}", session.vta_did)
+    })?;
+
+    let mediator_did = resolved
+        .doc
+        .service
+        .iter()
+        .filter(|svc| svc.type_.iter().any(|t| t == "DIDCommMessaging"))
+        .flat_map(|svc| svc.service_endpoint.get_uris())
+        .map(|u| u.trim_matches('"').to_string())
+        .find(|u| u.starts_with("did:"));
+
+    let mediator_did = match mediator_did {
+        Some(did) => did,
+        None => {
+            println!("  This community is not using DIDComm Messaging.");
+            return Ok(());
+        }
+    };
+
+    println!("  {CYAN}{:<13}{RESET} {}", "VTA DID", session.vta_did);
+    println!("  {CYAN}{:<13}{RESET} {mediator_did}", "Mediator DID");
+
+    print_trust_ping(&session, &mediator_did, Duration::from_secs(10)).await;
+    Ok(())
 }
 
 const BOLD: &str = "\x1b[1m";

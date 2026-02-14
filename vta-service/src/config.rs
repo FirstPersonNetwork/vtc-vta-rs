@@ -2,7 +2,7 @@ use crate::error::AppError;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
     pub vta_did: Option<String>,
     #[serde(alias = "community_name")]
@@ -60,13 +60,13 @@ impl Default for SecretsConfig {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct MessagingConfig {
     pub mediator_url: String,
     pub mediator_did: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct ServerConfig {
     #[serde(default = "default_host")]
     pub host: String,
@@ -74,7 +74,7 @@ pub struct ServerConfig {
     pub port: u16,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LogConfig {
     #[serde(default = "default_log_level")]
     pub level: String,
@@ -82,7 +82,7 @@ pub struct LogConfig {
     pub format: LogFormat,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct StoreConfig {
     #[serde(default = "default_data_dir")]
     pub data_dir: PathBuf,

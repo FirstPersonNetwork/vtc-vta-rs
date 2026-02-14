@@ -388,15 +388,17 @@ pub async fn run_setup_wizard(
     let messaging = configure_messaging(&seed, &med_ctx.base_path, &keys_ks).await?;
 
     // Update mediator context with the DID
-    med_ctx.did = Some(messaging.mediator_did.clone());
-    med_ctx.updated_at = Utc::now();
-    store_context(&contexts_ks, &med_ctx)
-        .await
-        .map_err(|e| format!("{e}"))?;
+    if let Some(ref msg) = messaging {
+        med_ctx.did = Some(msg.mediator_did.clone());
+        med_ctx.updated_at = Utc::now();
+        store_context(&contexts_ks, &med_ctx)
+            .await
+            .map_err(|e| format!("{e}"))?;
+    }
 
     // 13. VTA DID (after mediator so we can embed it as a service endpoint)
     let vta_did =
-        create_vta_did(&seed, &messaging, &public_url, &vta_ctx.base_path, &keys_ks).await?;
+        create_vta_did(&seed, messaging.as_ref(), &public_url, &vta_ctx.base_path, &keys_ks).await?;
 
     // Update VTA context with the DID
     if let Some(ref did) = vta_did {
@@ -443,7 +445,7 @@ pub async fn run_setup_wizard(
         store: StoreConfig {
             data_dir: PathBuf::from(data_dir),
         },
-        messaging: Some(messaging),
+        messaging,
         auth: AuthConfig {
             jwt_signing_key: Some(jwt_signing_key),
             ..AuthConfig::default()
@@ -501,7 +503,9 @@ pub async fn run_setup_wizard(
     eprintln!("  Server: {}:{}", config.server.host, config.server.port);
     if let Some(msg) = &config.messaging {
         eprintln!("  Mediator DID: {}", msg.mediator_did);
-        eprintln!("  Mediator URL: {}", msg.mediator_url);
+        if !msg.mediator_url.is_empty() {
+            eprintln!("  Mediator URL: {}", msg.mediator_url);
+        }
     }
     eprintln!(
         "  Contexts: vta ({}), mediator ({}), trust-registry ({})",
@@ -640,7 +644,7 @@ async fn create_admin_did(
 /// Returns `Some(did_string)` or `None` if skipped.
 async fn create_vta_did(
     seed: &[u8],
-    messaging: &MessagingConfig,
+    messaging: Option<&MessagingConfig>,
     public_url: &Option<String>,
     vta_base_path: &str,
     keys_ks: &KeyspaceHandle,
@@ -671,7 +675,7 @@ async fn create_vta_did(
                 &mut derived,
                 "VTA",
                 None,
-                Some(messaging),
+                messaging,
                 public_url.as_deref(),
                 seed,
                 vta_base_path,
@@ -702,49 +706,31 @@ async fn create_vta_did(
 
 /// Guide the user through DIDComm messaging configuration.
 ///
-/// Offers to create a new mediator DID or enter an existing one.
+/// Offers three choices:
+/// 1. Use an existing mediator DID (no URL needed — ATM resolves endpoints from the DID document)
+/// 2. Create a new did:webvh mediator DID (prompts for URL for service endpoints)
+/// 3. Skip DIDComm messaging entirely
+///
+/// Returns `None` when the user chooses to skip.
 async fn configure_messaging(
     seed: &[u8],
     mediator_base_path: &str,
     keys_ks: &KeyspaceHandle,
-) -> Result<MessagingConfig, Box<dyn std::error::Error>> {
-    let mediator_url: String = Input::new().with_prompt("Mediator URL").interact_text()?;
-
-    let mediator_options = &[
-        "Create a new did:webvh DID for the mediator",
-        "Enter an existing mediator DID",
+) -> Result<Option<MessagingConfig>, Box<dyn std::error::Error>> {
+    let options = &[
+        "Use an existing mediator DID",
+        "Create a new mediator DID (did:webvh)",
+        "Do not use DIDComm messaging",
     ];
-    let mediator_choice = Select::new()
-        .with_prompt("Mediator DID")
-        .items(mediator_options)
+    let choice = Select::new()
+        .with_prompt("DIDComm messaging")
+        .items(options)
         .default(0)
         .interact()?;
 
-    let mediator_did = match mediator_choice {
+    match choice {
+        // Existing DID — no URL needed
         0 => {
-            let mut derived = keys::derive_entity_keys(
-                seed,
-                mediator_base_path,
-                "Mediator signing key",
-                "Mediator key-agreement key",
-                keys_ks,
-            )
-            .await?;
-
-            create_webvh_did(
-                &mut derived,
-                "mediator",
-                Some(&mediator_url),
-                None,
-                None,
-                seed,
-                mediator_base_path,
-                "mediator",
-                keys_ks,
-            )
-            .await?
-        }
-        _ => {
             let did: String = Input::new().with_prompt("Mediator DID").interact_text()?;
 
             let derived = keys::derive_entity_keys(
@@ -757,14 +743,46 @@ async fn configure_messaging(
             .await?;
             keys::save_entity_key_records(&did, &derived, keys_ks, "mediator").await?;
 
-            did
+            Ok(Some(MessagingConfig {
+                mediator_url: String::new(),
+                mediator_did: did,
+            }))
         }
-    };
+        // Create new did:webvh
+        1 => {
+            let mediator_url: String =
+                Input::new().with_prompt("Mediator URL").interact_text()?;
 
-    Ok(MessagingConfig {
-        mediator_url,
-        mediator_did,
-    })
+            let mut derived = keys::derive_entity_keys(
+                seed,
+                mediator_base_path,
+                "Mediator signing key",
+                "Mediator key-agreement key",
+                keys_ks,
+            )
+            .await?;
+
+            let mediator_did = create_webvh_did(
+                &mut derived,
+                "mediator",
+                Some(&mediator_url),
+                None,
+                None,
+                seed,
+                mediator_base_path,
+                "mediator",
+                keys_ks,
+            )
+            .await?;
+
+            Ok(Some(MessagingConfig {
+                mediator_url,
+                mediator_did,
+            }))
+        }
+        // Skip DIDComm
+        _ => Ok(None),
+    }
 }
 
 /// Prompt the user for a URL (e.g. `https://example.com/dids/vta`) and convert

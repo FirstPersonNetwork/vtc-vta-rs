@@ -9,6 +9,7 @@ mod did_webvh;
 mod error;
 mod import_did;
 mod keys;
+mod messaging;
 mod routes;
 mod server;
 #[cfg(feature = "setup")]

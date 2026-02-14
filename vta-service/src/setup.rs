@@ -359,7 +359,7 @@ pub async fn run_setup_wizard(
     // Store seed via the configured backend
     if secrets_config.seed.is_some() {
         // config-seed backend: hex-encode seed into the config (persisted when config is saved)
-        secrets_config.seed = Some(hex::encode(&seed));
+        secrets_config.seed = Some(hex::encode(seed));
     } else {
         // All other backends: store via the seed store
         let seed_store = create_seed_store(&AppConfig {
@@ -472,12 +472,10 @@ pub async fn run_setup_wizard(
             _printed = true;
         }
         #[cfg(feature = "gcp-secrets")]
-        if !_printed {
-            if let Some(ref name) = config.secrets.gcp_secret_name {
-                let project = config.secrets.gcp_project.as_deref().unwrap_or("unknown");
-                eprintln!("  Seed backend: GCP Secret Manager ({project}/{name})");
-                _printed = true;
-            }
+        if !_printed && let Some(ref name) = config.secrets.gcp_secret_name {
+            let project = config.secrets.gcp_project.as_deref().unwrap_or("unknown");
+            eprintln!("  Seed backend: GCP Secret Manager ({project}/{name})");
+            _printed = true;
         }
         if !_printed && config.secrets.seed.is_some() {
             eprintln!("  Seed backend: config file (hex-encoded in config.toml)");

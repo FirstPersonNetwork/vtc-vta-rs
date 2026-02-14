@@ -27,10 +27,7 @@ pub struct DidKeySecrets {
 /// The `did` must start with `did:key:`. The `seed` is the 32-byte Ed25519
 /// private key seed.
 #[cfg(feature = "didcomm")]
-pub fn secrets_from_did_key(
-    did: &str,
-    seed: &[u8; 32],
-) -> Result<DidKeySecrets, DidKeyError> {
+pub fn secrets_from_did_key(did: &str, seed: &[u8; 32]) -> Result<DidKeySecrets, DidKeyError> {
     use affinidi_tdk::secrets_resolver::secrets::Secret;
 
     let ed_pub_mb = did
@@ -113,7 +110,7 @@ mod tests {
 
     #[test]
     fn test_decode_private_key_multibase_wrong_length() {
-        let encoded = multibase::encode(multibase::Base::Base58Btc, &[1u8; 16]);
+        let encoded = multibase::encode(multibase::Base::Base58Btc, [1u8; 16]);
         let result = decode_private_key_multibase(&encoded);
         assert!(matches!(result, Err(DidKeyError::InvalidSeedLength)));
     }

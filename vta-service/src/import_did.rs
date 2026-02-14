@@ -31,7 +31,7 @@ pub async fn run_import_did(args: ImportDidArgs) -> Result<(), Box<dyn std::erro
             let roles = ["admin", "initiator", "application"];
             let selection = Select::new()
                 .with_prompt("Select role for this DID")
-                .items(&roles)
+                .items(roles)
                 .default(0)
                 .interact()?;
             Role::from_str(roles[selection])?

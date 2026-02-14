@@ -13,7 +13,7 @@ use ed25519_dalek_bip32::ExtendedSigningKey;
 
 use crate::acl::{self, Role};
 use crate::auth::session::{self, SessionState};
-use crate::config::{AppConfig, MessagingConfig};
+use crate::config::AppConfig;
 use crate::contexts;
 use crate::keys::derivation::Bip32Extension;
 use crate::keys::seed_store::create_seed_store;
@@ -55,17 +55,36 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
         .await
         .ok();
 
-    // 3. VTA DID + resolution check
+    // 3. VTA DID + resolution check → extract mediator DID from DIDCommMessaging
+    let mut discovered_mediator: Option<String> = None;
     if let Some(ref did) = config.vta_did {
         eprintln!("VTA DID:   {did}");
         if let Some(ref resolver) = did_resolver {
             match resolver.resolve(did).await {
-                Ok(_) => {
+                Ok(resolved) => {
                     let method = did
                         .strip_prefix("did:")
                         .and_then(|s| s.split(':').next())
                         .unwrap_or("?");
                     eprintln!("           {GREEN}✓{RESET} resolves ({method})");
+
+                    // Look for mediator DID in DIDCommMessaging service
+                    for svc in &resolved.doc.service {
+                        if svc.type_.iter().any(|t| t == "DIDCommMessaging")
+                            && discovered_mediator.is_none()
+                        {
+                            // get_uris() wraps Map-sourced values in JSON quotes
+                            discovered_mediator = svc
+                                .service_endpoint
+                                .get_uris()
+                                .into_iter()
+                                .map(|u| u.trim_matches('"').to_string())
+                                .find(|u| u.starts_with("did:"));
+                            if let Some(ref m) = discovered_mediator {
+                                eprintln!("           mediator: {GREEN}✓{RESET} {m}");
+                            }
+                        }
+                    }
                 }
                 Err(e) => eprintln!("           {RED}✗ resolution failed: {e}{RESET}"),
             }
@@ -75,14 +94,20 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
     }
 
     // 4. Mediator + resolution check
+    // Use discovered mediator from VTA DID, fall back to config
+    let mediator_did = discovered_mediator
+        .as_deref()
+        .or(config.messaging.as_ref().map(|m| m.mediator_did.as_str()));
+
     if let Some(ref msg) = config.messaging {
         eprintln!("Mediator:  {}", msg.mediator_url);
-        eprintln!("           {}", msg.mediator_did);
-        if let Some(ref resolver) = did_resolver {
-            match resolver.resolve(&msg.mediator_did).await {
+        eprintln!("           {}", mediator_did.unwrap_or("(unknown)"));
+        if let Some(ref resolver) = did_resolver
+            && let Some(did) = mediator_did
+        {
+            match resolver.resolve(did).await {
                 Ok(_) => {
-                    let method = msg
-                        .mediator_did
+                    let method = did
                         .strip_prefix("did:")
                         .and_then(|s| s.split(':').next())
                         .unwrap_or("?");
@@ -118,10 +143,10 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
     };
 
     // 6. Trust-ping to mediator (needs secrets from store)
-    if let (Some(vta_did), Some(messaging)) = (&config.vta_did, &config.messaging) {
+    if let (Some(vta_did), Some(mediator)) = (&config.vta_did, mediator_did) {
         match tokio::time::timeout(
             Duration::from_secs(10),
-            send_trust_ping(&config, &store, vta_did, messaging),
+            send_trust_ping(&config, &store, vta_did, mediator),
         )
         .await
         {
@@ -246,19 +271,16 @@ async fn send_trust_ping(
     config: &AppConfig,
     store: &Store,
     vta_did: &str,
-    messaging: &MessagingConfig,
+    mediator_did: &str,
 ) -> Result<u128, Box<dyn std::error::Error>> {
-    // Load seed
     let seed_store = create_seed_store(config)?;
     let seed = seed_store
         .get()
         .await?
         .ok_or("no master seed available")?;
 
-    // Derive BIP-32 root key
     let root = ExtendedSigningKey::from_seed(&seed)?;
 
-    // Look up VTA key derivation paths from store
     let keys_ks = store.keyspace("keys")?;
     let signing_key_id = format!("{vta_did}#key-0");
     let ka_key_id = format!("{vta_did}#key-1");
@@ -272,49 +294,36 @@ async fn send_trust_ping(
         .await?
         .ok_or("VTA key-agreement key record not found")?;
 
-    // Create TDKSharedState with its own DID resolver + secrets resolver
     let tdk = TDKSharedState::default().await;
 
-    // Insert VTA's Ed25519 signing secret
     let mut signing_secret = root.derive_ed25519(&signing.derivation_path)?;
     signing_secret.id = signing_key_id;
     tdk.secrets_resolver.insert(signing_secret).await;
 
-    // Insert VTA's X25519 key-agreement secret
     let mut ka_secret = root.derive_x25519(&ka.derivation_path)?;
     ka_secret.id = ka_key_id;
     tdk.secrets_resolver.insert(ka_secret).await;
 
-    // Create ATM instance
-    let atm_config = ATMConfig::builder().build()?;
-    let atm = ATM::new(atm_config, Arc::new(tdk)).await?;
+    let atm = ATM::new(ATMConfig::builder().build()?, Arc::new(tdk)).await?;
 
-    // Create profile with mediator
     let profile = ATMProfile::new(
         &atm,
         None,
         vta_did.to_string(),
-        Some(messaging.mediator_did.clone()),
+        Some(mediator_did.to_string()),
     )
     .await?;
     let profile = Arc::new(profile);
 
-    // Send trust-ping and measure latency
+    // The mediator may only expose a wss:// endpoint (no REST/https).
+    atm.profile_enable_websocket(&profile).await?;
+
     let start = Instant::now();
     TrustPing::default()
-        .send_ping(
-            &atm,
-            &profile,
-            &messaging.mediator_did,
-            true,  // signed
-            true,  // expect_pong
-            true,  // wait_response
-        )
+        .send_ping(&atm, &profile, mediator_did, true, true, true)
         .await?;
     let elapsed = start.elapsed().as_millis();
 
-    // Clean shutdown
     atm.graceful_shutdown().await;
-
     Ok(elapsed)
 }

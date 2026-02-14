@@ -13,9 +13,14 @@ pub struct VtaClient {
 // ── Request / Response types ────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 pub struct HealthResponse {
     pub status: String,
     pub version: String,
+    #[serde(default)]
+    pub mediator_url: Option<String>,
+    #[serde(default)]
+    pub mediator_did: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

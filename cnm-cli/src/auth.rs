@@ -221,6 +221,7 @@ pub fn stored_url() -> Option<String> {
 pub struct SessionInfo {
     pub client_did: String,
     pub vta_did: String,
+    pub private_key_multibase: String,
 }
 
 /// Load the stored session for diagnostics (DID resolution, etc.).
@@ -234,6 +235,7 @@ pub fn loaded_session(keyring_key: Option<&str>) -> Option<SessionInfo> {
     session.map(|s| SessionInfo {
         client_did: s.client_did,
         vta_did: s.vta_did,
+        private_key_multibase: s.private_key,
     })
 }
 

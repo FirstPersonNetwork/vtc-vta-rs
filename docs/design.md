@@ -1,8 +1,8 @@
 # VTA Service Design
 
-This document describes the high-level architecture and design of the Verified
+This document describes the high-level architecture and design of the Verifiable
 Trust Agent (VTA) service. The VTA manages cryptographic keys, DIDs, and access
-control for a Verified Trust Community as part of the
+control for a Verifiable Trust Community as part of the
 [First Person Network](https://www.firstperson.network/white-paper).
 
 ## Workspace
@@ -331,7 +331,7 @@ Contexts group keys and DIDs into logical units:
 ```rust
 ContextRecord {
     id:          String,          // slug: "vta", "mediator"
-    name:        String,          // "Verified Trust Agent"
+    name:        String,          // "Verifiable Trust Agent"
     did:         Option<String>,  // set after DID creation
     description: Option<String>,
     base_path:   String,          // "m/26'/2'/0'"

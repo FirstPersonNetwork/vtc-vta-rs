@@ -4,10 +4,10 @@ mod auth;
 mod config;
 mod contexts;
 mod did_key;
-mod import_did;
 #[cfg(feature = "setup")]
 mod did_webvh;
 mod error;
+mod import_did;
 mod keys;
 mod routes;
 mod server;
@@ -30,7 +30,7 @@ use multibase::Base;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
-#[command(name = "vta", about = "Verified Trust Agent", version)]
+#[command(name = "vta", about = "Verifiable Trust Agent", version)]
 struct Cli {
     /// Path to the configuration file
     #[arg(short, long, global = true)]
@@ -283,7 +283,7 @@ fn print_banner() {
 {cyan} ╚██╗ ██╔╝{magenta}   ██║   {yellow}██╔══██║{reset}
 {cyan}  ╚████╔╝ {magenta}   ██║   {yellow}██║  ██║{reset}
 {cyan}   ╚═══╝  {magenta}   ╚═╝   {yellow}╚═╝  ╚═╝{reset}
-{dim}  Verified Trust Agent v{version}{reset}
+{dim}  Verifiable Trust Agent v{version}{reset}
 "#,
         version = env!("CARGO_PKG_VERSION"),
     );

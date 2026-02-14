@@ -26,11 +26,11 @@ m/26'
 Each **application context** is an isolated key group with its own DID and
 BIP-32 subtree. Three contexts are created automatically during setup:
 
-| Context ID       | Index | Base Path       | Purpose                     |
-|------------------|-------|-----------------|-----------------------------|
-| `vta`            | 0     | `m/26'/2'/0'`   | Verified Trust Agent        |
-| `mediator`       | 1     | `m/26'/2'/1'`   | DIDComm Messaging Mediator  |
-| `trust-registry` | 2     | `m/26'/2'/2'`   | Trust Registry              |
+| Context ID       | Index | Base Path     | Purpose                    |
+| ---------------- | ----- | ------------- | -------------------------- |
+| `vta`            | 0     | `m/26'/2'/0'` | Verifiable Trust Agent     |
+| `mediator`       | 1     | `m/26'/2'/1'` | DIDComm Messaging Mediator |
+| `trust-registry` | 2     | `m/26'/2'/2'` | Trust Registry             |
 
 Additional contexts can be created via the API or CLI and are assigned
 sequential indices starting at 3.
@@ -67,18 +67,18 @@ typical run produces the following layout:
 
 ### VTA keys (`m/26'/2'/0'/K'`)
 
-| Index | Key Type | Label                      |
-|-------|----------|----------------------------|
-| 0     | Ed25519  | VTA signing key            |
-| 1     | X25519   | VTA key-agreement key      |
+| Index | Key Type | Label                          |
+| ----- | -------- | ------------------------------ |
+| 0     | Ed25519  | VTA signing key                |
+| 1     | X25519   | VTA key-agreement key          |
 | 2+    | Ed25519  | VTA pre-rotation key 0, 1, ... |
 
 ### Mediator keys (`m/26'/2'/1'/K'`)
 
-| Index | Key Type | Label                          |
-|-------|----------|--------------------------------|
-| 0     | Ed25519  | Mediator signing key           |
-| 1     | X25519   | Mediator key-agreement key     |
+| Index | Key Type | Label                               |
+| ----- | -------- | ----------------------------------- |
+| 0     | Ed25519  | Mediator signing key                |
+| 1     | X25519   | Mediator key-agreement key          |
 | 2+    | Ed25519  | Mediator pre-rotation key 0, 1, ... |
 
 ### Admin keys (under VTA context: `m/26'/2'/0'/K'`)

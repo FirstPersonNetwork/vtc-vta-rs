@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Rust workspace for **Verified Trust Communities (VTC) - Verified Trust Agent (VTA)**. A Trust Agent manages keys and policies for a Verified Trust Community. Part of the [First Person Network](https://www.firstperson.network/white-paper) project.
+Rust workspace for **Verifiable Trust Communities (VTC) - Verifiable Trust Agent (VTA)**. A Trust Agent manages keys and policies for a Verifiable Trust Community. Part of the [First Person Network](https://www.firstperson.network/white-paper) project.
 
 ## Workspace Structure
 
 This repo lives at `vtc-vta-rs/vta-service/` within a two-crate workspace:
 
-- **vta-sdk** (`../vta-sdk/`) — Library crate providing the SDK for Verified Trust Agents
+- **vta-sdk** (`../vta-sdk/`) — Library crate providing the SDK for Verifiable Trust Agents
 - **vta-service** (this crate) — Binary service application
 
 Both crates share configuration via `workspace.package` in the root `Cargo.toml`.

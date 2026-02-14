@@ -19,7 +19,7 @@ use ratatui::{
 use vta_sdk::keys::KeyType;
 
 #[derive(Parser)]
-#[command(name = "cnm-cli", about = "CLI for VTC Verified Trust Agents")]
+#[command(name = "cnm-cli", about = "CLI for VTC Verifiable Trust Agents")]
 struct Cli {
     /// Base URL of the VTA service (overrides config)
     #[arg(long, env = "VTA_URL")]
@@ -377,16 +377,15 @@ async fn main() {
 
     // Legacy migration notice
     if cnm_config.communities.is_empty() && auth::has_legacy_session() {
-        eprintln!("\x1b[33mDetected legacy single-community session. Run `cnm setup` to migrate.\x1b[0m\n");
+        eprintln!(
+            "\x1b[33mDetected legacy single-community session. Run `cnm setup` to migrate.\x1b[0m\n"
+        );
     }
 
     // Resolve community URL and keyring key for commands that need a VTA connection.
     // Setup and Community commands handle their own URL resolution.
     let (url, keyring_key) = if requires_auth(&cli.command)
-        || matches!(
-            cli.command,
-            Commands::Health | Commands::Auth { .. }
-        )
+        || matches!(cli.command, Commands::Health | Commands::Auth { .. })
     {
         match resolve_community(cli.community.as_deref(), &cnm_config) {
             Ok((slug, community)) => {
@@ -418,8 +417,7 @@ async fn main() {
         // Bootstrap session from personal VTA if needed
         if let Some(ref key) = keyring_key
             && auth::loaded_session(Some(key)).is_none()
-            && let Ok((slug, community)) =
-                resolve_community(cli.community.as_deref(), &cnm_config)
+            && let Ok((slug, community)) = resolve_community(cli.community.as_deref(), &cnm_config)
             && community.context_id.is_some()
             && let Some(ref personal) = cnm_config.personal_vta
             && let Err(e) =
@@ -644,8 +642,8 @@ async fn cmd_health(
     keyring_key: Option<&str>,
     cnm_config: &config::CnmConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    use std::time::Duration;
     use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
+    use std::time::Duration;
 
     let ping_timeout = Duration::from_secs(10);
 
@@ -674,8 +672,7 @@ async fn cmd_health(
             print_did_resolution(resolver, "Client DID", &session.client_did, false).await;
 
             let mediator_did =
-                print_did_resolution(resolver, "Community VTA DID", &session.vta_did, true)
-                    .await;
+                print_did_resolution(resolver, "Community VTA DID", &session.vta_did, true).await;
 
             if let Some(ref mediator_did) = mediator_did {
                 print_did_resolution(resolver, "Mediator DID", mediator_did, false).await;
@@ -801,14 +798,14 @@ async fn print_trust_ping(
     mediator_did: &str,
     timeout: std::time::Duration,
 ) {
-    use std::sync::Arc;
-    use std::time::Instant;
     use affinidi_tdk::common::TDKSharedState;
     use affinidi_tdk::messaging::ATM;
     use affinidi_tdk::messaging::config::ATMConfig;
     use affinidi_tdk::messaging::profiles::ATMProfile;
     use affinidi_tdk::messaging::protocols::trust_ping::TrustPing;
     use affinidi_tdk::secrets_resolver::SecretsResolver;
+    use std::sync::Arc;
+    use std::time::Instant;
 
     let client_did = session.client_did.clone();
     let private_key = session.private_key_multibase.clone();
@@ -826,8 +823,7 @@ async fn print_trust_ping(
 
         let atm = ATM::new(ATMConfig::builder().build()?, Arc::new(tdk)).await?;
 
-        let profile =
-            ATMProfile::new(&atm, None, client_did, Some(mediator.clone())).await?;
+        let profile = ATMProfile::new(&atm, None, client_did, Some(mediator.clone())).await?;
         let profile = Arc::new(profile);
 
         // The mediator may only expose a wss:// endpoint (no REST/https).
@@ -1013,7 +1009,9 @@ async fn cmd_key_list(
     let end = (offset + resp.keys.len() as u64).min(resp.total);
 
     let dim = Style::default().fg(Color::DarkGray);
-    let bold = Style::default().fg(Color::White).add_modifier(Modifier::BOLD);
+    let bold = Style::default()
+        .fg(Color::White)
+        .add_modifier(Modifier::BOLD);
 
     let rows: Vec<Row> = resp
         .keys
@@ -1023,14 +1021,12 @@ async fn cmd_key_list(
             let created = key.created_at.format("%Y-%m-%d").to_string();
 
             let status_span = match key.status {
-                vta_sdk::keys::KeyStatus::Active => Span::styled(
-                    key.status.to_string(),
-                    Style::default().fg(Color::Green),
-                ),
-                vta_sdk::keys::KeyStatus::Revoked => Span::styled(
-                    key.status.to_string(),
-                    Style::default().fg(Color::Red),
-                ),
+                vta_sdk::keys::KeyStatus::Active => {
+                    Span::styled(key.status.to_string(), Style::default().fg(Color::Green))
+                }
+                vta_sdk::keys::KeyStatus::Revoked => {
+                    Span::styled(key.status.to_string(), Style::default().fg(Color::Red))
+                }
             };
 
             let id_line = Line::from(vec![
@@ -1060,11 +1056,7 @@ async fn cmd_key_list(
     let title = format!(" Keys ({}\u{2013}{} of {}) ", offset + 1, end, resp.total);
 
     let table = Table::new(rows, [Constraint::Min(1)])
-        .block(
-            Block::bordered()
-                .title(title)
-                .border_style(dim),
-        );
+        .block(Block::bordered().title(title).border_style(dim));
 
     // Each key = 2 lines + 1 bottom_margin, last key's margin clipped, + 2 for borders
     let height = (resp.keys.len() as u16 * 3).saturating_sub(1) + 2;
@@ -1145,7 +1137,7 @@ async fn cmd_acl_list(
     let table = Table::new(
         rows,
         [
-            Constraint::Min(60), // DID
+            Constraint::Min(60),    // DID
             Constraint::Length(12), // Role
             Constraint::Min(16),    // Label
             Constraint::Length(24), // Contexts

@@ -1,8 +1,8 @@
 # Community Network Manager (CNM) CLI
 
 The CNM CLI is the primary client for operating a
-[Verified Trust Agent (VTA)](../README.md) and participating in
-[Verified Trust Communities](https://www.firstperson.network/white-paper).
+[Verifiable Trust Agent (VTA)](../README.md) and participating in
+[Verifiable Trust Communities](https://www.firstperson.network/white-paper).
 It provides authentication, key management, access control, and
 multi-community support from a single command-line tool.
 
@@ -19,10 +19,10 @@ multi-community support from a single command-line tool.
 
 ## Feature Flags
 
-| Feature | Description | Default |
-|---------|-------------|---------|
-| `keyring` | Store sessions in the OS keyring (macOS Keychain, GNOME Keyring, Windows Credential Manager) | Yes |
-| `config-session` | Store sessions in `~/.config/cnm/sessions.json`. Useful for containers and CI where no keyring is available. **Warning:** sessions are stored on disk unprotected -- do not use in production. | No |
+| Feature          | Description                                                                                                                                                                                    | Default |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `keyring`        | Store sessions in the OS keyring (macOS Keychain, GNOME Keyring, Windows Credential Manager)                                                                                                   | Yes     |
+| `config-session` | Store sessions in `~/.config/cnm/sessions.json`. Useful for containers and CI where no keyring is available. **Warning:** sessions are stored on disk unprotected -- do not use in production. | No      |
 
 At least one of `keyring` or `config-session` must be enabled. When `keyring`
 is enabled it takes priority over `config-session`.
@@ -165,11 +165,11 @@ After initial login, all subsequent commands authenticate transparently.
 With the default `keyring` feature, sessions are stored in the platform's
 credential manager:
 
-| Platform | Backend |
-|----------|---------|
-| macOS    | Keychain |
+| Platform | Backend                             |
+| -------- | ----------------------------------- |
+| macOS    | Keychain                            |
 | Linux    | secret-service (e.g. GNOME Keyring) |
-| Windows  | Credential Manager |
+| Windows  | Credential Manager                  |
 
 When built with `--features config-session` (and without `keyring`), sessions
 are stored in `~/.config/cnm/sessions.json` instead. See
@@ -211,91 +211,91 @@ cnm config update --community-vta-name "My VTA" --public-url "https://vta.exampl
 
 ### Environment variables
 
-| Variable   | Description |
-|------------|-------------|
-| `VTA_URL`  | Override the VTA base URL |
+| Variable   | Description                          |
+| ---------- | ------------------------------------ |
+| `VTA_URL`  | Override the VTA base URL            |
 | `RUST_LOG` | Set log level (e.g. `debug`, `info`) |
 
 ## CLI Reference
 
 ### Global flags
 
-| Flag | Description |
-|------|-------------|
-| `--url <URL>` | Override VTA base URL (or set `VTA_URL`) |
+| Flag                     | Description                                |
+| ------------------------ | ------------------------------------------ |
+| `--url <URL>`            | Override VTA base URL (or set `VTA_URL`)   |
 | `-c, --community <slug>` | Override active community for this command |
-| `-v, --verbose` | Enable debug logging |
+| `-v, --verbose`          | Enable debug logging                       |
 
 ### Setup & Communities
 
-| Command | Description |
-|---------|-------------|
-| `setup` | Interactive first-time setup wizard |
-| `community list` | List configured communities |
-| `community use <slug>` | Set default community |
-| `community add` | Add a new community interactively |
-| `community remove <slug>` | Remove a community |
-| `community status` | Show active community info and auth status |
+| Command                   | Description                                |
+| ------------------------- | ------------------------------------------ |
+| `setup`                   | Interactive first-time setup wizard        |
+| `community list`          | List configured communities                |
+| `community use <slug>`    | Set default community                      |
+| `community add`           | Add a new community interactively          |
+| `community remove <slug>` | Remove a community                         |
+| `community status`        | Show active community info and auth status |
 
 ### Authentication
 
-| Command | Description |
-|---------|-------------|
-| `auth login <credential>` | Import credential and authenticate |
-| `auth logout` | Clear stored credentials and tokens |
-| `auth status` | Show current authentication status |
+| Command                   | Description                         |
+| ------------------------- | ----------------------------------- |
+| `auth login <credential>` | Import credential and authenticate  |
+| `auth logout`             | Clear stored credentials and tokens |
+| `auth status`             | Show current authentication status  |
 
 ### Health
 
-| Command | Description |
-|---------|-------------|
+| Command  | Description                                            |
+| -------- | ------------------------------------------------------ |
 | `health` | Check VTA service health, resolve DIDs, show endpoints |
 
 ### Configuration
 
-| Command | Description |
-|---------|-------------|
-| `config get` | Show current VTA configuration |
+| Command                   | Description                                       |
+| ------------------------- | ------------------------------------------------- |
+| `config get`              | Show current VTA configuration                    |
 | `config update [options]` | Update VTA metadata (DID, name, description, URL) |
 
 ### Keys
 
-| Command | Description |
-|---------|-------------|
-| `keys list [--status active\|revoked] [--limit N] [--offset N]` | List keys |
-| `keys create --key-type ed25519\|x25519 [--context-id ID] [--label LABEL]` | Create a key |
-| `keys get <key_id>` | Get a key by ID |
-| `keys revoke <key_id>` | Revoke a key |
-| `keys rename <key_id> <new_key_id>` | Rename a key |
+| Command                                                                    | Description     |
+| -------------------------------------------------------------------------- | --------------- |
+| `keys list [--status active\|revoked] [--limit N] [--offset N]`            | List keys       |
+| `keys create --key-type ed25519\|x25519 [--context-id ID] [--label LABEL]` | Create a key    |
+| `keys get <key_id>`                                                        | Get a key by ID |
+| `keys revoke <key_id>`                                                     | Revoke a key    |
+| `keys rename <key_id> <new_key_id>`                                        | Rename a key    |
 
 ### Contexts
 
-| Command | Description |
-|---------|-------------|
-| `contexts list` | List application contexts |
-| `contexts get <id>` | Get a context by ID |
-| `contexts create --id ID --name NAME [--description DESC]` | Create a context |
-| `contexts update <id> [--name ...] [--did ...] [--description ...]` | Update a context |
-| `contexts delete <id>` | Delete a context |
-| `contexts bootstrap --id ID --name NAME [--admin-label LABEL]` | Create context + first admin credential |
+| Command                                                             | Description                             |
+| ------------------------------------------------------------------- | --------------------------------------- |
+| `contexts list`                                                     | List application contexts               |
+| `contexts get <id>`                                                 | Get a context by ID                     |
+| `contexts create --id ID --name NAME [--description DESC]`          | Create a context                        |
+| `contexts update <id> [--name ...] [--did ...] [--description ...]` | Update a context                        |
+| `contexts delete <id>`                                              | Delete a context                        |
+| `contexts bootstrap --id ID --name NAME [--admin-label LABEL]`      | Create context + first admin credential |
 
 ### ACL
 
-| Command | Description |
-|---------|-------------|
-| `acl list [--context ID]` | List ACL entries |
-| `acl get <did>` | Get an ACL entry by DID |
-| `acl create --did DID --role ROLE [--label LABEL] [--contexts ctx1,ctx2]` | Create an ACL entry |
-| `acl update <did> [--role ROLE] [--label LABEL] [--contexts ctx1,ctx2]` | Update an ACL entry |
-| `acl delete <did>` | Delete an ACL entry |
+| Command                                                                   | Description             |
+| ------------------------------------------------------------------------- | ----------------------- |
+| `acl list [--context ID]`                                                 | List ACL entries        |
+| `acl get <did>`                                                           | Get an ACL entry by DID |
+| `acl create --did DID --role ROLE [--label LABEL] [--contexts ctx1,ctx2]` | Create an ACL entry     |
+| `acl update <did> [--role ROLE] [--label LABEL] [--contexts ctx1,ctx2]`   | Update an ACL entry     |
+| `acl delete <did>`                                                        | Delete an ACL entry     |
 
 Roles: `admin`, `initiator`, `application`. An admin with no contexts listed
 has unrestricted access across all contexts.
 
 ### Auth Credentials
 
-| Command | Description |
-|---------|-------------|
+| Command                                                                     | Description                                  |
+| --------------------------------------------------------------------------- | -------------------------------------------- |
 | `auth-credential create --role ROLE [--label LABEL] [--contexts ctx1,ctx2]` | Generate a did:key credential with ACL entry |
 
 ## Additional Resources

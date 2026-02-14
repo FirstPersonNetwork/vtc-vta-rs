@@ -175,9 +175,7 @@ fn prompt_aws_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
 
 #[cfg(feature = "gcp-secrets")]
 fn prompt_gcp_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
-    let project: String = Input::new()
-        .with_prompt("GCP project ID")
-        .interact_text()?;
+    let project: String = Input::new().with_prompt("GCP project ID").interact_text()?;
 
     let secret_name: String = Input::new()
         .with_prompt("GCP Secret Manager secret name")
@@ -299,7 +297,7 @@ pub async fn run_setup_wizard(
     let contexts_ks = store.keyspace("contexts")?;
 
     // Create seed application contexts
-    let mut vta_ctx = create_seed_context(&contexts_ks, "vta", "Verified Trust Agent").await?;
+    let mut vta_ctx = create_seed_context(&contexts_ks, "vta", "Verifiable Trust Agent").await?;
     let mut med_ctx =
         create_seed_context(&contexts_ks, "mediator", "DIDComm Messaging Mediator").await?;
     let _tr_ctx = create_seed_context(&contexts_ks, "trust-registry", "Trust Registry").await?;
@@ -1011,7 +1009,7 @@ async fn create_webvh_did(
     if let Some(url) = vta_public_url {
         services.push(json!({
             "id": format!("{did_id}#vta"),
-            "type": "VerifiedTrustAgent",
+            "type": "VerifiableTrustAgent",
             "serviceEndpoint": url
         }));
     }

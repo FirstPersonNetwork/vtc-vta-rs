@@ -80,9 +80,6 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
                                 .into_iter()
                                 .map(|u| u.trim_matches('"').to_string())
                                 .find(|u| u.starts_with("did:"));
-                            if let Some(ref m) = discovered_mediator {
-                                eprintln!("           mediator: {GREEN}✓{RESET} {m}");
-                            }
                         }
                     }
                 }
@@ -93,8 +90,14 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
         eprintln!("VTA DID:   (not set)");
     }
 
-    // 4. Mediator + resolution check
-    // Use discovered mediator from VTA DID, fall back to config
+    // 4. URL + Store path
+    eprintln!(
+        "URL:       {}",
+        config.public_url.as_deref().unwrap_or("(not set)")
+    );
+    eprintln!("Store:     {}", config.store.data_dir.display());
+
+    // 5. Mediator section (grouped: display + resolution + trust-ping)
     let mediator_did = discovered_mediator
         .as_deref()
         .or(config.messaging.as_ref().map(|m| m.mediator_did.as_str()));
@@ -120,13 +123,7 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
         eprintln!("Mediator:  (not configured)");
     }
 
-    eprintln!(
-        "URL:       {}",
-        config.public_url.as_deref().unwrap_or("(not set)")
-    );
-    eprintln!("Store:     {}", config.store.data_dir.display());
-
-    // 5. Open store (may fail if VTA is already running)
+    // 6. Open store (may fail if VTA is already running)
     let store = match Store::open(&config.store) {
         Ok(s) => s,
         Err(_) => {
@@ -135,14 +132,14 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
                 "Note: Could not open the data store (is VTA already running?)."
             );
             eprintln!(
-                "      Stop the VTA service and re-run `vta status` for full statistics."
+                "      Stop the VTA service and re-run `vta status` for full diagnostics."
             );
             eprintln!();
             return Ok(());
         }
     };
 
-    // 6. Trust-ping to mediator (needs secrets from store)
+    // 7. Trust-ping to mediator (needs key records from store)
     if let (Some(vta_did), Some(mediator)) = (&config.vta_did, mediator_did) {
         match tokio::time::timeout(
             Duration::from_secs(10),
@@ -162,7 +159,7 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
         }
     }
 
-    // 7. Gather stats from store
+    // 8. Gather stats from store
     let contexts_ks = store.keyspace("contexts")?;
     let keys_ks = store.keyspace("keys")?;
     let acl_ks = store.keyspace("acl")?;

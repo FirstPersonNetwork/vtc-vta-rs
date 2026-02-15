@@ -158,12 +158,7 @@ pub async fn run_didcomm_loop(
     }
 }
 
-async fn dispatch_message(
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
-    msg: &Message,
-) {
+async fn dispatch_message(atm: &ATM, profile: &Arc<ATMProfile>, vta_did: &str, msg: &Message) {
     match msg.type_.as_str() {
         TRUST_PING_TYPE => {
             if let Err(e) = handle_trust_ping(atm, profile, vta_did, msg).await {
@@ -175,10 +170,12 @@ async fn dispatch_message(
         }
         other => {
             warn!(msg_type = other, "unknown message type — ignoring");
-            if let Err(e) = atm.delete_message_background(profile, &msg.id).await {
-                warn!("failed to delete unknown message: {e}");
-            }
         }
+    }
+
+    // Always delete the message from the mediator after processing
+    if let Err(e) = atm.delete_message_background(profile, &msg.id).await {
+        warn!("failed to delete message from mediator: {e}");
     }
 }
 

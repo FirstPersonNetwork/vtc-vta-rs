@@ -125,6 +125,12 @@ configured in `config.toml` (or environment variables):
 cargo build --workspace
 ```
 
+#### Building docker image
+
+```sh
+docker build -t vtc-vta-rs .
+```
+
 ### Run the Setup Wizard
 
 The setup wizard bootstraps a new VTA instance. It is behind the `setup`
@@ -132,6 +138,12 @@ feature flag:
 
 ```sh
 cargo run --package vta-service --features setup -- setup
+```
+
+Or, if using docker:
+
+```sh
+docker run --rm -ti --name vta-service -v ./data:/data vtc-vta-rs setup
 ```
 
 The wizard walks through these steps:
@@ -158,6 +170,12 @@ The wizard walks through these steps:
 
 ```sh
 cargo run --package vta-service
+```
+
+Or, if using docker:
+
+```sh
+docker run --rm -ti --name vta-service -v ./data:/data vtc-vta-rs
 ```
 
 The service listens on the host and port configured during setup (default

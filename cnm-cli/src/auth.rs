@@ -110,24 +110,18 @@ fn clear_session_for(key: &str) {
     }
 }
 
-fn load_session() -> Option<Session> {
-    load_session_for(LEGACY_KEYRING_KEY)
-}
-
 /// Returns true if the legacy single-session keyring entry exists.
 pub fn has_legacy_session() -> bool {
-    load_session().is_some()
+    load_session_for(LEGACY_KEYRING_KEY).is_some()
 }
 
 /// Import a base64-encoded credential and authenticate.
-///
-/// When `keyring_key` is `None`, the legacy `"session"` key is used (backward compat).
 pub async fn login(
     credential_b64: &str,
     base_url: &str,
-    keyring_key: Option<&str>,
+    keyring_key: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let key = keyring_key.unwrap_or(LEGACY_KEYRING_KEY);
+    let key = keyring_key;
 
     #[cfg(all(feature = "config-session", not(feature = "keyring")))]
     eprintln!(
@@ -205,16 +199,9 @@ pub fn store_session_direct(
 }
 
 /// Clear stored credentials and cached tokens.
-///
-/// When `keyring_key` is `None`, clears the legacy `"session"` key.
-pub fn logout(keyring_key: Option<&str>) {
-    clear_session_for(keyring_key.unwrap_or(LEGACY_KEYRING_KEY));
+pub fn logout(keyring_key: &str) {
+    clear_session_for(keyring_key);
     println!("Logged out. Credentials and tokens removed.");
-}
-
-/// Return the stored VTA URL from the session, if any.
-pub fn stored_url() -> Option<String> {
-    load_session().and_then(|s| s.vta_url)
 }
 
 /// Loaded session info exposed for health/diagnostics.
@@ -225,13 +212,8 @@ pub struct SessionInfo {
 }
 
 /// Load the stored session for diagnostics (DID resolution, etc.).
-///
-/// When `keyring_key` is `None`, loads the legacy `"session"` key.
-pub fn loaded_session(keyring_key: Option<&str>) -> Option<SessionInfo> {
-    let session = match keyring_key {
-        Some(key) => load_session_for(key),
-        None => load_session(),
-    };
+pub fn loaded_session(keyring_key: &str) -> Option<SessionInfo> {
+    let session = load_session_for(keyring_key);
     session.map(|s| SessionInfo {
         client_did: s.client_did,
         vta_did: s.vta_did,
@@ -240,13 +222,8 @@ pub fn loaded_session(keyring_key: Option<&str>) -> Option<SessionInfo> {
 }
 
 /// Show current authentication status.
-///
-/// When `keyring_key` is `None`, shows the legacy session.
-pub fn status(keyring_key: Option<&str>) {
-    let session = match keyring_key {
-        Some(key) => load_session_for(key),
-        None => load_session(),
-    };
+pub fn status(keyring_key: &str) {
+    let session = load_session_for(keyring_key);
     match session {
         Some(session) => {
             println!("Client DID: {}", session.client_did);
@@ -281,13 +258,11 @@ pub fn status(keyring_key: Option<&str>) {
 /// If no credentials are stored, returns an error prompting the user to log in.
 /// If a cached token is still valid (>30s remaining), returns it.
 /// Otherwise, performs a full challenge-response authentication.
-///
-/// When `keyring_key` is `None`, the legacy `"session"` key is used.
 pub async fn ensure_authenticated(
     base_url: &str,
-    keyring_key: Option<&str>,
+    keyring_key: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    let key = keyring_key.unwrap_or(LEGACY_KEYRING_KEY);
+    let key = keyring_key;
     debug!(base_url, keyring_key = key, "ensuring authentication");
 
     let mut session = load_session_for(key).ok_or(

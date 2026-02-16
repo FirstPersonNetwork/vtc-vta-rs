@@ -101,7 +101,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
     auth::login(
         &personal_credential,
         &personal_url,
-        Some(PERSONAL_KEYRING_KEY),
+        PERSONAL_KEYRING_KEY,
     )
     .await?;
 
@@ -138,7 +138,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
 
             let keyring_key = community_keyring_key(&community_slug);
             eprintln!();
-            auth::login(&credential, &community_url, Some(&keyring_key)).await?;
+            auth::login(&credential, &community_url, &keyring_key).await?;
 
             None
         }
@@ -150,7 +150,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
             // Authenticate personal VTA client
             let mut personal_client = VtaClient::new(&personal_url);
             let token =
-                auth::ensure_authenticated(&personal_url, Some(PERSONAL_KEYRING_KEY)).await?;
+                auth::ensure_authenticated(&personal_url, PERSONAL_KEYRING_KEY).await?;
             personal_client.set_token(token);
 
             // Create context in personal VTA
@@ -286,7 +286,7 @@ pub async fn add_community() -> Result<(), Box<dyn std::error::Error>> {
 
     let keyring_key = community_keyring_key(&community_slug);
     eprintln!();
-    auth::login(&credential, &community_url, Some(&keyring_key)).await?;
+    auth::login(&credential, &community_url, &keyring_key).await?;
 
     config.communities.insert(
         community_slug.clone(),
@@ -332,7 +332,7 @@ pub async fn bootstrap_community_session(
         .ok_or("community has no vta_did in config (setup ran before this feature was added)")?;
 
     // Authenticate to personal VTA
-    let token = auth::ensure_authenticated(personal_url, Some(PERSONAL_KEYRING_KEY)).await?;
+    let token = auth::ensure_authenticated(personal_url, PERSONAL_KEYRING_KEY).await?;
     let mut personal_client = VtaClient::new(personal_url);
     personal_client.set_token(token);
 

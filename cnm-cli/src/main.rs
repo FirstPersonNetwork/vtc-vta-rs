@@ -380,28 +380,47 @@ async fn main() {
     // Legacy migration notice
     if cnm_config.communities.is_empty() && auth::has_legacy_session() {
         eprintln!(
-            "{YELLOW}Detected legacy single-community session. Run `cnm setup` to migrate.{RESET}\n"
+            "{YELLOW}Detected legacy single-community session.\n\
+             Legacy sessions are no longer used. Run `cnm setup` to configure a community.{RESET}\n"
         );
     }
 
     // Resolve community URL and keyring key for commands that need a VTA connection.
     // Setup and Community commands handle their own URL resolution.
-    let (url, keyring_key) = if requires_auth(&cli.command)
-        || matches!(cli.command, Commands::Health | Commands::Auth { .. })
+    let (url, keyring_key): (String, String) = if requires_auth(&cli.command)
+        || matches!(cli.command, Commands::Auth { .. })
     {
+        // Auth-required and Auth commands always need a community
         match resolve_community(cli.community.as_deref(), &cnm_config) {
             Ok((slug, community)) => {
                 let url = cli.url.unwrap_or_else(|| community.url.clone());
                 let key = community_keyring_key(&slug);
-                (url, Some(key))
+                (url, key)
+            }
+            Err(e) => {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+    } else if matches!(cli.command, Commands::Health) {
+        // Health: use community if available, otherwise require --url
+        match resolve_community(cli.community.as_deref(), &cnm_config) {
+            Ok((slug, community)) => {
+                let url = cli.url.unwrap_or_else(|| community.url.clone());
+                let key = community_keyring_key(&slug);
+                (url, key)
             }
             Err(_) => {
-                // Fall back to legacy behavior: --url, stored URL, or localhost
-                let url = cli
-                    .url
-                    .or_else(auth::stored_url)
-                    .unwrap_or_else(|| "http://localhost:8100".to_string());
-                (url, None)
+                let url = match cli.url {
+                    Some(url) => url,
+                    None => {
+                        eprintln!("Error: no community configured and no --url provided.\n");
+                        eprintln!("Either configure a community with `cnm setup`, or provide a URL:");
+                        eprintln!("  cnm health --url http://localhost:8100");
+                        std::process::exit(1);
+                    }
+                };
+                (url, String::new())
             }
         }
     } else {
@@ -409,7 +428,7 @@ async fn main() {
         let url = cli
             .url
             .unwrap_or_else(|| "http://localhost:8100".to_string());
-        (url, None)
+        (url, String::new())
     };
 
     let mut client = VtaClient::new(&url);
@@ -417,18 +436,27 @@ async fn main() {
     // Transparent authentication for protected commands
     if requires_auth(&cli.command) {
         // Bootstrap session from personal VTA if needed
-        if let Some(ref key) = keyring_key
-            && auth::loaded_session(Some(key)).is_none()
-            && let Ok((slug, community)) = resolve_community(cli.community.as_deref(), &cnm_config)
-            && community.context_id.is_some()
-            && let Some(ref personal) = cnm_config.personal_vta
-            && let Err(e) =
-                setup::bootstrap_community_session(&slug, community, &personal.url).await
-        {
-            eprintln!("Warning: could not bootstrap session: {e}");
+        if auth::loaded_session(&keyring_key).is_none() {
+            if let Ok((slug, community)) =
+                resolve_community(cli.community.as_deref(), &cnm_config)
+                && community.context_id.is_some()
+                && let Some(ref personal) = cnm_config.personal_vta
+            {
+                if let Err(e) =
+                    setup::bootstrap_community_session(&slug, community, &personal.url).await
+                {
+                    eprintln!(
+                        "Error: could not bootstrap session from personal VTA: {e}\n\n\
+                         To fix this, either:\n  \
+                         1. Import a credential: cnm auth login <credential>\n  \
+                         2. Re-run setup: cnm setup"
+                    );
+                    std::process::exit(1);
+                }
+            }
         }
 
-        match auth::ensure_authenticated(client.base_url(), keyring_key.as_deref()).await {
+        match auth::ensure_authenticated(client.base_url(), &keyring_key).await {
             Ok(token) => client.set_token(token),
             Err(e) => {
                 eprintln!("Error: {e}");
@@ -440,17 +468,17 @@ async fn main() {
     let result = match cli.command {
         Commands::Setup => setup::run_setup_wizard().await,
         Commands::Community { command } => cmd_community(command, &cnm_config).await,
-        Commands::Health => cmd_health(&client, keyring_key.as_deref(), &cnm_config).await,
+        Commands::Health => cmd_health(&client, &keyring_key, &cnm_config).await,
         Commands::Auth { command } => match command {
             AuthCommands::Login { credential } => {
-                auth::login(&credential, client.base_url(), keyring_key.as_deref()).await
+                auth::login(&credential, client.base_url(), &keyring_key).await
             }
             AuthCommands::Logout => {
-                auth::logout(keyring_key.as_deref());
+                auth::logout(&keyring_key);
                 Ok(())
             }
             AuthCommands::Status => {
-                auth::status(keyring_key.as_deref());
+                auth::status(&keyring_key);
                 Ok(())
             }
         },
@@ -600,16 +628,31 @@ async fn cmd_community(
         }
         CommunityCommands::Add => setup::add_community().await,
         CommunityCommands::Remove { name } => {
-            let mut config = config::load_config()?;
-            if config.communities.remove(&name).is_none() {
+            let config = config::load_config()?;
+            if !config.communities.contains_key(&name) {
                 return Err(format!("community '{name}' not found.").into());
             }
+
+            let confirm = dialoguer::Confirm::new()
+                .with_prompt(format!(
+                    "Remove community '{name}'? This will delete its stored credentials."
+                ))
+                .default(false)
+                .interact()?;
+
+            if !confirm {
+                println!("Cancelled.");
+                return Ok(());
+            }
+
+            let mut config = config;
+            config.communities.remove(&name);
             // Clear default if it was the removed community
             if config.default_community.as_deref() == Some(&name) {
                 config.default_community = config.communities.keys().next().cloned();
             }
             // Clear the keyring entry
-            auth::logout(Some(&community_keyring_key(&name)));
+            auth::logout(&community_keyring_key(&name));
             config::save_config(&config)?;
             println!("Community '{name}' removed.");
             Ok(())
@@ -624,7 +667,7 @@ async fn cmd_community(
                         println!("  Context: {ctx}");
                     }
                     let key = community_keyring_key(&slug);
-                    auth::status(Some(&key));
+                    auth::status(&key);
                 }
                 Err(_) => {
                     println!("No community configured.");
@@ -648,7 +691,7 @@ async fn cmd_community_ping(
 
     // Need a session to get client DID + VTA DID
     let key = community_keyring_key(&slug);
-    let session = match auth::loaded_session(Some(&key)) {
+    let session = match auth::loaded_session(&key) {
         Some(s) => s,
         None => {
             return Err("not authenticated — run `cnm auth login` first".into());
@@ -830,7 +873,7 @@ fn print_section(title: &str) {
 
 async fn cmd_health(
     client: &VtaClient,
-    keyring_key: Option<&str>,
+    keyring_key: &str,
     cnm_config: &config::CnmConfig,
 ) -> Result<(), Box<dyn std::error::Error>> {
     use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
@@ -870,7 +913,11 @@ async fn cmd_health(
     };
 
     // Community DID resolution + trust-ping
-    let session = auth::loaded_session(keyring_key);
+    let session = if keyring_key.is_empty() {
+        None
+    } else {
+        auth::loaded_session(keyring_key)
+    };
     if let Some(ref session) = session {
         if let Some(ref resolver) = resolver {
             print_did_resolution(resolver, "Client DID", &session.client_did, false).await;
@@ -924,7 +971,7 @@ async fn print_personal_vta_section(
     println!("  {CYAN}{:<13}{RESET} {}", "URL", personal.url);
 
     // Personal DID resolution + trust-ping
-    let personal_session = auth::loaded_session(Some(config::PERSONAL_KEYRING_KEY));
+    let personal_session = auth::loaded_session(config::PERSONAL_KEYRING_KEY);
     if let Some(ref session) = personal_session {
         if let Some(resolver) = resolver {
             print_did_resolution(resolver, "Client DID", &session.client_did, false).await;

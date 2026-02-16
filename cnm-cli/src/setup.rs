@@ -6,8 +6,8 @@ use dialoguer::{Input, Select};
 use crate::auth;
 use crate::client::{CreateContextRequest, GenerateCredentialsRequest, VtaClient};
 use crate::config::{
-    CommunityConfig, PersonalVtaConfig, community_keyring_key, load_config, save_config,
-    PERSONAL_KEYRING_KEY,
+    CommunityConfig, PERSONAL_KEYRING_KEY, PersonalVtaConfig, community_keyring_key, load_config,
+    save_config,
 };
 
 /// Derive a URL-safe slug from a community name.
@@ -44,7 +44,9 @@ async fn resolve_vta_url(did: &str) -> Option<String> {
 ///
 /// `label` is a human-readable prefix like "Personal" or "Community".
 /// Returns `(Option<did>, url)`.
-async fn prompt_vta_url(label: &str) -> Result<(Option<String>, String), Box<dyn std::error::Error>> {
+async fn prompt_vta_url(
+    label: &str,
+) -> Result<(Option<String>, String), Box<dyn std::error::Error>> {
     let did: String = Input::new()
         .with_prompt(format!("{label} VTA DID (press Enter to skip)"))
         .allow_empty(true)
@@ -96,16 +98,19 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
 
     // Authenticate against personal VTA
     eprintln!();
-    auth::login(&personal_credential, &personal_url, Some(PERSONAL_KEYRING_KEY)).await?;
+    auth::login(
+        &personal_credential,
+        &personal_url,
+        Some(PERSONAL_KEYRING_KEY),
+    )
+    .await?;
 
     config.personal_vta = Some(PersonalVtaConfig {
         url: personal_url.clone(),
     });
 
     // ── Community ───────────────────────────────────────────────────
-    let community_name: String = Input::new()
-        .with_prompt("Community name")
-        .interact_text()?;
+    let community_name: String = Input::new().with_prompt("Community name").interact_text()?;
 
     let default_slug = slugify(&community_name);
     let community_slug: String = Input::new()
@@ -115,10 +120,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
 
     let (community_did, community_url) = prompt_vta_url("Community").await?;
 
-    let join_options = &[
-        "Import existing credential",
-        "Generate from personal VTA",
-    ];
+    let join_options = &["Import existing credential", "Generate from personal VTA"];
     let join_choice = Select::new()
         .with_prompt("How do you want to join this community?")
         .items(join_options)
@@ -131,7 +133,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
         // Import existing credential
         0 => {
             let credential: String = Input::new()
-                .with_prompt("Community credential (base64)")
+                .with_prompt("Community admin credential (base64)")
                 .interact_text()?;
 
             let keyring_key = community_keyring_key(&community_slug);
@@ -156,10 +158,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
             let ctx_req = CreateContextRequest {
                 id: context_slug.clone(),
                 name: context_name,
-                description: Some(format!(
-                    "Community admin identity for {}",
-                    community_name
-                )),
+                description: Some(format!("Community admin identity for {}", community_name)),
             };
             match personal_client.create_context(ctx_req).await {
                 Ok(ctx) => {
@@ -217,7 +216,10 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
             )?;
 
             eprintln!();
-            eprintln!("\x1b[1;32mGenerated community admin DID:\x1b[0m {}", resp.did);
+            eprintln!(
+                "\x1b[1;32mGenerated community admin DID:\x1b[0m {}",
+                resp.did
+            );
             eprintln!();
             eprintln!("Share this DID with the community administrator.");
             eprintln!("They will run:");
@@ -262,9 +264,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
 pub async fn add_community() -> Result<(), Box<dyn std::error::Error>> {
     let mut config = load_config()?;
 
-    let community_name: String = Input::new()
-        .with_prompt("Community name")
-        .interact_text()?;
+    let community_name: String = Input::new().with_prompt("Community name").interact_text()?;
 
     let default_slug = slugify(&community_name);
     let community_slug: String = Input::new()
@@ -273,16 +273,15 @@ pub async fn add_community() -> Result<(), Box<dyn std::error::Error>> {
         .interact_text()?;
 
     if config.communities.contains_key(&community_slug) {
-        return Err(format!(
-            "community '{community_slug}' already exists. Use a different slug."
-        )
-        .into());
+        return Err(
+            format!("community '{community_slug}' already exists. Use a different slug.").into(),
+        );
     }
 
     let (_community_did, community_url) = prompt_vta_url("Community").await?;
 
     let credential: String = Input::new()
-        .with_prompt("Community credential (base64)")
+        .with_prompt("Community admin credential (base64)")
         .interact_text()?;
 
     let keyring_key = community_keyring_key(&community_slug);
@@ -358,10 +357,19 @@ pub async fn bootstrap_community_session(
 
     // Store community session
     let keyring_key = community_keyring_key(slug);
-    auth::store_session_direct(&keyring_key, &resp.did, private_key, community_vta_did, &community.url)?;
+    auth::store_session_direct(
+        &keyring_key,
+        &resp.did,
+        private_key,
+        community_vta_did,
+        &community.url,
+    )?;
 
     eprintln!();
-    eprintln!("\x1b[1;32mBootstrapped community session with new DID:\x1b[0m {}", resp.did);
+    eprintln!(
+        "\x1b[1;32mBootstrapped community session with new DID:\x1b[0m {}",
+        resp.did
+    );
     eprintln!();
     eprintln!("This is a NEW DID. You must grant it access on the community VTA:");
     eprintln!("  vta import-did --did {}", resp.did);

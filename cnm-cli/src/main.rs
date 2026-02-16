@@ -10,11 +10,11 @@ use client::{
 };
 use config::{community_keyring_key, resolve_community};
 use ratatui::{
-    TerminalOptions, Viewport,
-    layout::Constraint,
+    buffer::Buffer,
+    layout::{Constraint, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Block, Cell, Row, Table},
+    widgets::{Block, Cell, Row, Table, Widget},
 };
 use vta_sdk::keys::KeyType;
 
@@ -575,6 +575,7 @@ async fn cmd_community(
                 if let Some(ref ctx) = community.context_id {
                     println!("    Context: {ctx}");
                 }
+                println!();
             }
             Ok(())
         }
@@ -632,9 +633,7 @@ async fn cmd_community(
             }
             Ok(())
         }
-        CommunityCommands::Ping => {
-            cmd_community_ping(cnm_config).await
-        }
+        CommunityCommands::Ping => cmd_community_ping(cnm_config).await,
     }
 }
 
@@ -659,9 +658,10 @@ async fn cmd_community_ping(
     // Check the VTA DID has a DIDCommMessaging service with a mediator
     let resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await?;
 
-    let resolved = resolver.resolve(&session.vta_did).await.map_err(|e| {
-        format!("failed to resolve VTA DID {}: {e}", session.vta_did)
-    })?;
+    let resolved = resolver
+        .resolve(&session.vta_did)
+        .await
+        .map_err(|e| format!("failed to resolve VTA DID {}: {e}", session.vta_did))?;
 
     let mediator_did = resolved
         .doc
@@ -683,7 +683,13 @@ async fn cmd_community_ping(
     println!("  {CYAN}{:<13}{RESET} {}", "VTA DID", session.vta_did);
     println!("  {CYAN}{:<13}{RESET} {mediator_did}", "Mediator DID");
 
-    print_trust_ping(&session, &session.vta_did, &mediator_did, Duration::from_secs(10)).await;
+    print_trust_ping(
+        &session,
+        &session.vta_did,
+        &mediator_did,
+        Duration::from_secs(10),
+    )
+    .await;
     Ok(())
 }
 
@@ -695,9 +701,131 @@ const CYAN: &str = "\x1b[36m";
 const YELLOW: &str = "\x1b[33m";
 const RESET: &str = "\x1b[0m";
 
+/// Render a ratatui widget to stdout with ANSI colors.
+///
+/// This avoids ratatui's `Viewport::Inline` + raw mode, which introduces blank-line
+/// gaps between prior output and the table.
+fn print_widget(widget: impl Widget, height: u16) {
+    let width = ratatui::crossterm::terminal::size().map_or(120, |(w, _)| w);
+    let area = Rect::new(0, 0, width, height);
+    let mut buf = Buffer::empty(area);
+    widget.render(area, &mut buf);
+
+    let mut out = String::new();
+    for y in 0..height {
+        let mut cur_fg = Color::Reset;
+        let mut cur_bg = Color::Reset;
+        let mut cur_mod = Modifier::empty();
+
+        for x in 0..width {
+            let cell = &buf[(x, y)];
+            if cell.skip {
+                continue;
+            }
+
+            if cell.fg != cur_fg || cell.bg != cur_bg || cell.modifier != cur_mod {
+                out.push_str("\x1b[0m");
+                push_ansi_fg(&mut out, cell.fg);
+                push_ansi_bg(&mut out, cell.bg);
+                push_ansi_mod(&mut out, cell.modifier);
+                cur_fg = cell.fg;
+                cur_bg = cell.bg;
+                cur_mod = cell.modifier;
+            }
+
+            out.push_str(cell.symbol());
+        }
+        out.push_str("\x1b[0m\n");
+    }
+
+    print!("{out}");
+}
+
+fn push_ansi_fg(out: &mut String, color: Color) {
+    use std::fmt::Write as _;
+    match color {
+        Color::Reset => {}
+        Color::Black => out.push_str("\x1b[30m"),
+        Color::Red => out.push_str("\x1b[31m"),
+        Color::Green => out.push_str("\x1b[32m"),
+        Color::Yellow => out.push_str("\x1b[33m"),
+        Color::Blue => out.push_str("\x1b[34m"),
+        Color::Magenta => out.push_str("\x1b[35m"),
+        Color::Cyan => out.push_str("\x1b[36m"),
+        Color::Gray => out.push_str("\x1b[37m"),
+        Color::DarkGray => out.push_str("\x1b[90m"),
+        Color::LightRed => out.push_str("\x1b[91m"),
+        Color::LightGreen => out.push_str("\x1b[92m"),
+        Color::LightYellow => out.push_str("\x1b[93m"),
+        Color::LightBlue => out.push_str("\x1b[94m"),
+        Color::LightMagenta => out.push_str("\x1b[95m"),
+        Color::LightCyan => out.push_str("\x1b[96m"),
+        Color::White => out.push_str("\x1b[97m"),
+        Color::Rgb(r, g, b) => {
+            let _ = write!(out, "\x1b[38;2;{r};{g};{b}m");
+        }
+        Color::Indexed(i) => {
+            let _ = write!(out, "\x1b[38;5;{i}m");
+        }
+    }
+}
+
+fn push_ansi_bg(out: &mut String, color: Color) {
+    use std::fmt::Write as _;
+    match color {
+        Color::Reset => {}
+        Color::Black => out.push_str("\x1b[40m"),
+        Color::Red => out.push_str("\x1b[41m"),
+        Color::Green => out.push_str("\x1b[42m"),
+        Color::Yellow => out.push_str("\x1b[43m"),
+        Color::Blue => out.push_str("\x1b[44m"),
+        Color::Magenta => out.push_str("\x1b[45m"),
+        Color::Cyan => out.push_str("\x1b[46m"),
+        Color::Gray => out.push_str("\x1b[47m"),
+        Color::DarkGray => out.push_str("\x1b[100m"),
+        Color::LightRed => out.push_str("\x1b[101m"),
+        Color::LightGreen => out.push_str("\x1b[102m"),
+        Color::LightYellow => out.push_str("\x1b[103m"),
+        Color::LightBlue => out.push_str("\x1b[104m"),
+        Color::LightMagenta => out.push_str("\x1b[105m"),
+        Color::LightCyan => out.push_str("\x1b[106m"),
+        Color::White => out.push_str("\x1b[107m"),
+        Color::Rgb(r, g, b) => {
+            let _ = write!(out, "\x1b[48;2;{r};{g};{b}m");
+        }
+        Color::Indexed(i) => {
+            let _ = write!(out, "\x1b[48;5;{i}m");
+        }
+    }
+}
+
+fn push_ansi_mod(out: &mut String, modifier: Modifier) {
+    if modifier.contains(Modifier::BOLD) {
+        out.push_str("\x1b[1m");
+    }
+    if modifier.contains(Modifier::DIM) {
+        out.push_str("\x1b[2m");
+    }
+    if modifier.contains(Modifier::ITALIC) {
+        out.push_str("\x1b[3m");
+    }
+    if modifier.contains(Modifier::UNDERLINED) {
+        out.push_str("\x1b[4m");
+    }
+    if modifier.contains(Modifier::REVERSED) {
+        out.push_str("\x1b[7m");
+    }
+    if modifier.contains(Modifier::CROSSED_OUT) {
+        out.push_str("\x1b[9m");
+    }
+}
+
 fn print_section(title: &str) {
     let pad = 46usize.saturating_sub(title.len());
-    println!("\n{DIM}──{RESET} {BOLD}{title}{RESET} {DIM}{}{RESET}", "─".repeat(pad));
+    println!(
+        "\n{DIM}──{RESET} {BOLD}{title}{RESET} {DIM}{}{RESET}",
+        "─".repeat(pad)
+    );
 }
 
 async fn cmd_health(
@@ -715,10 +843,16 @@ async fn cmd_health(
 
     match client.health().await {
         Ok(resp) => {
-            println!("  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} ok (v{})", "Service", resp.version);
+            println!(
+                "  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} ok (v{})",
+                "Service", resp.version
+            );
         }
         Err(e) => {
-            println!("  {CYAN}{:<13}{RESET} {RED}✗{RESET} unreachable ({e})", "Service");
+            println!(
+                "  {CYAN}{:<13}{RESET} {RED}✗{RESET} unreachable ({e})",
+                "Service"
+            );
             // Continue to personal VTA section instead of returning error
             print_personal_vta_section(cnm_config, None, ping_timeout).await;
             return Ok(());
@@ -774,10 +908,16 @@ async fn print_personal_vta_section(
     let personal_client = VtaClient::new(&personal.url);
     match personal_client.health().await {
         Ok(resp) => {
-            println!("  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} ok (v{})", "Service", resp.version);
+            println!(
+                "  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} ok (v{})",
+                "Service", resp.version
+            );
         }
         Err(e) => {
-            println!("  {CYAN}{:<13}{RESET} {RED}✗{RESET} unreachable ({e})", "Service");
+            println!(
+                "  {CYAN}{:<13}{RESET} {RED}✗{RESET} unreachable ({e})",
+                "Service"
+            );
             return;
         }
     };
@@ -919,9 +1059,18 @@ async fn print_trust_ping(
     };
 
     match tokio::time::timeout(timeout, ping).await {
-        Ok(Ok(latency)) => println!("  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} pong ({latency}ms)", "Trust-ping"),
-        Ok(Err(e)) => println!("  {CYAN}{:<13}{RESET} {RED}✗{RESET} failed: {e}", "Trust-ping"),
-        Err(_) => println!("  {CYAN}{:<13}{RESET} {RED}✗{RESET} timed out", "Trust-ping"),
+        Ok(Ok(latency)) => println!(
+            "  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} pong ({latency}ms)",
+            "Trust-ping"
+        ),
+        Ok(Err(e)) => println!(
+            "  {CYAN}{:<13}{RESET} {RED}✗{RESET} failed: {e}",
+            "Trust-ping"
+        ),
+        Err(_) => println!(
+            "  {CYAN}{:<13}{RESET} {RED}✗{RESET} timed out",
+            "Trust-ping"
+        ),
     }
 }
 
@@ -1139,12 +1288,7 @@ async fn cmd_key_list(
 
     // Each key = 2 lines + 1 bottom_margin, last key's margin clipped, + 2 for borders
     let height = (resp.keys.len() as u16 * 3).saturating_sub(1) + 2;
-    let mut terminal = ratatui::init_with_options(TerminalOptions {
-        viewport: Viewport::Inline(height),
-    });
-    terminal.draw(|frame| frame.render_widget(table, frame.area()))?;
-    ratatui::restore();
-    println!();
+    print_widget(table, height);
 
     Ok(())
 }
@@ -1232,12 +1376,7 @@ async fn cmd_acl_list(
     );
 
     let height = resp.entries.len() as u16 + 4;
-    let mut terminal = ratatui::init_with_options(TerminalOptions {
-        viewport: Viewport::Inline(height),
-    });
-    terminal.draw(|frame| frame.render_widget(table, frame.area()))?;
-    ratatui::restore();
-    println!();
+    print_widget(table, height);
 
     Ok(())
 }
@@ -1441,12 +1580,7 @@ async fn cmd_context_list(client: &VtaClient) -> Result<(), Box<dyn std::error::
     );
 
     let height = resp.contexts.len() as u16 + 4;
-    let mut terminal = ratatui::init_with_options(TerminalOptions {
-        viewport: Viewport::Inline(height),
-    });
-    terminal.draw(|frame| frame.render_widget(table, frame.area()))?;
-    ratatui::restore();
-    println!();
+    print_widget(table, height);
 
     Ok(())
 }

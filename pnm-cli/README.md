@@ -1,19 +1,17 @@
-# Community Network Manager (CNM) CLI
+# Personal Network Manager (PNM) CLI
 
-The CNM CLI is the primary client for operating a
-[Verifiable Trust Agent (VTA)](../README.md) and participating in
-[Verifiable Trust Communities](https://www.firstperson.network/white-paper).
-It provides authentication, key management, access control, and
-multi-community support from a single command-line tool.
+The PNM CLI is a single-VTA client for managing a personal
+[Verifiable Trust Agent (VTA)](../README.md). Unlike the
+[CNM CLI](../cnm-cli/README.md) which supports multiple communities and a
+personal VTA, PNM focuses on managing one VTA instance with a simpler
+non-interactive setup flow.
 
 ## Table of Contents
 
 - [Feature Flags](#feature-flags)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
-- [Multi-Community Support](#multi-community-support)
 - [Authentication](#authentication)
-- [Configuration](#configuration)
 - [CLI Reference](#cli-reference)
 - [Additional Resources](#additional-resources)
 
@@ -22,7 +20,7 @@ multi-community support from a single command-line tool.
 | Feature          | Description                                                                                                                                                                                    | Default |
 | ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `keyring`        | Store sessions in the OS keyring (macOS Keychain, GNOME Keyring, Windows Credential Manager)                                                                                                   | Yes     |
-| `config-session` | Store sessions in `~/.config/cnm/sessions.json`. Useful for containers and CI where no keyring is available. **Warning:** sessions are stored on disk unprotected -- do not use in production. | No      |
+| `config-session` | Store sessions in `~/.config/pnm/sessions.json`. Useful for containers and CI where no keyring is available. **Warning:** sessions are stored on disk unprotected -- do not use in production. | No      |
 
 At least one of `keyring` or `config-session` must be enabled. When `keyring`
 is enabled it takes priority over `config-session`.
@@ -31,10 +29,10 @@ is enabled it takes priority over `config-session`.
 
 ```sh
 # Default build (keyring)
-cargo build --package cnm-cli --release
+cargo build --package pnm-cli --release
 
 # Keyring-free build for containers / CI
-cargo build --package cnm-cli --release --no-default-features --features config-session
+cargo build --package pnm-cli --release --no-default-features --features config-session
 ```
 
 ## Installation
@@ -44,104 +42,58 @@ cargo build --package cnm-cli --release --no-default-features --features config-
 Requires **Rust 1.91.0+**.
 
 ```sh
-cargo build --package cnm-cli --release
+cargo build --package pnm-cli --release
 ```
 
-The binary is at `target/release/cnm`.
+The binary is at `target/release/pnm`.
 
 ### During development
 
-All examples below use `cnm` directly. When developing from the workspace,
-substitute `cargo run --package cnm-cli --` for `cnm`.
+All examples below use `pnm` directly. When developing from the workspace,
+substitute `cargo run --package pnm-cli --` for `pnm`.
 
 ## Quick Start
 
-### 1. Run the setup wizard
-
-The setup wizard walks you through connecting to your first community:
+### 1. Set up the VTA connection
 
 ```sh
-cnm setup
+pnm setup --url http://localhost:3000 --credential <credential>
 ```
 
-The wizard prompts for:
+This saves the URL to `~/.config/pnm/config.toml` and authenticates using the
+provided credential. You can also set up without a credential and log in later:
 
-1. **Personal VTA URL** and **credential** -- your personal VTA instance.
-2. **Community name**, **slug**, and **VTA URL** -- the community you want to join.
-3. **Join method** -- import an existing credential from a community admin, or
-   generate a DID via your personal VTA and request access.
-
-Configuration is saved to `~/.config/cnm/config.toml`.
+```sh
+pnm setup --url http://localhost:3000
+pnm auth login <credential>
+```
 
 ### 2. Verify connectivity
 
 ```sh
-cnm health
+pnm health
 ```
 
 ### 3. Start using the CLI
 
 ```sh
 # List application contexts
-cnm contexts list
+pnm contexts list
 
 # Create a signing key
-cnm keys create --key-type ed25519 --context-id myapp --label "Signing Key"
+pnm keys create --key-type ed25519 --context-id myapp --label "Signing Key"
 
 # List keys
-cnm keys list
-```
-
-## Multi-Community Support
-
-CNM supports connecting to multiple communities simultaneously. Each community
-has its own VTA service, credentials, and session stored independently in the
-OS keyring.
-
-### Add a community
-
-```sh
-# Interactive wizard
-cnm community add
-```
-
-### List communities
-
-```sh
-cnm community list
-```
-
-### Switch the default community
-
-```sh
-cnm community use <slug>
-```
-
-### Override community per-command
-
-```sh
-cnm -c acme keys list
-```
-
-### Show active community status
-
-```sh
-cnm community status
-```
-
-### Remove a community
-
-```sh
-cnm community remove <slug>
+pnm keys list
 ```
 
 ## Authentication
 
-CNM uses **DID-based challenge-response authentication** with short-lived JWT
+PNM uses **DID-based challenge-response authentication** with short-lived JWT
 tokens:
 
 1. **Import a credential** -- a base64-encoded bundle containing your client
-   DID, private key, and the community's VTA DID.
+   DID, private key, and the VTA DID.
 2. **Challenge-response** -- the CLI requests a nonce from the VTA, signs a
    DIDComm v2 message, and receives a JWT.
 3. **Token caching** -- tokens are cached in the OS keyring and refreshed
@@ -149,13 +101,13 @@ tokens:
 
 ```sh
 # Import credential and authenticate
-cnm auth login <credential>
+pnm auth login <credential>
 
 # Check auth status
-cnm auth status
+pnm auth status
 
 # Clear credentials
-cnm auth logout
+pnm auth logout
 ```
 
 After initial login, all subsequent commands authenticate transparently.
@@ -172,41 +124,17 @@ credential manager:
 | Windows  | Credential Manager                  |
 
 When built with `--features config-session` (and without `keyring`), sessions
-are stored in `~/.config/cnm/sessions.json` instead. See
+are stored in `~/.config/pnm/sessions.json` instead. See
 [Feature Flags](#feature-flags) for details.
 
 ## Configuration
 
 ### Config file
 
-`~/.config/cnm/config.toml`
+`~/.config/pnm/config.toml`
 
 ```toml
-default_community = "storm"
-
-[personal_vta]
-url = "https://personal.vta.example.com"
-
-[communities.storm]
-name = "Storm Network"
-url = "https://vta.storm.ws"
-context_id = "cnm-storm-network"
-vta_did = "did:webvh:..."
-
-[communities.acme]
-name = "Acme Corp"
-url = "https://vta.acme.example.com"
-# vta_did and context_id are optional
-```
-
-### VTA service configuration
-
-```sh
-# View current VTA config
-cnm config get
-
-# Update VTA metadata
-cnm config update --community-vta-name "My VTA" --public-url "https://vta.example.com"
+url = "http://localhost:3000"
 ```
 
 ### Environment variables
@@ -220,22 +148,16 @@ cnm config update --community-vta-name "My VTA" --public-url "https://vta.exampl
 
 ### Global flags
 
-| Flag                     | Description                                |
-| ------------------------ | ------------------------------------------ |
-| `--url <URL>`            | Override VTA base URL (or set `VTA_URL`)   |
-| `-c, --community <slug>` | Override active community for this command |
-| `-v, --verbose`          | Enable debug logging                       |
+| Flag            | Description                              |
+| --------------- | ---------------------------------------- |
+| `--url <URL>`   | Override VTA base URL (or set `VTA_URL`) |
+| `-v, --verbose` | Enable debug logging                     |
 
-### Setup & Communities
+### Setup
 
-| Command                   | Description                                |
-| ------------------------- | ------------------------------------------ |
-| `setup`                   | Interactive first-time setup wizard        |
-| `community list`          | List configured communities                |
-| `community use <slug>`    | Set default community                      |
-| `community add`           | Add a new community interactively          |
-| `community remove <slug>` | Remove a community                         |
-| `community status`        | Show active community info and auth status |
+| Command                               | Description                                   |
+| ------------------------------------- | --------------------------------------------- |
+| `setup --url URL [--credential CRED]` | Configure VTA URL and optionally authenticate |
 
 ### Authentication
 
@@ -249,7 +171,7 @@ cnm config update --community-vta-name "My VTA" --public-url "https://vta.exampl
 
 | Command  | Description                                            |
 | -------- | ------------------------------------------------------ |
-| `health` | Check VTA service health, resolve DIDs, show endpoints |
+| `health` | Check VTA service health and version                   |
 
 ### Configuration
 
@@ -301,7 +223,7 @@ has unrestricted access across all contexts.
 ## Additional Resources
 
 - [VTA Service & Architecture](../README.md)
-- [PNM CLI (single-VTA)](../pnm-cli/README.md) -- simpler alternative for personal use
+- [CNM CLI (multi-community)](../cnm-cli/README.md)
 - [First Person Network White Paper](https://www.firstperson.network/white-paper)
 - [Design Document](../docs/design.md)
 - [BIP-32 Path Specification](../docs/bip32_paths.md)

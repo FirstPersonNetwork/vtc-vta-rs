@@ -17,17 +17,22 @@ Manager (CNM) CLI.
 - [Getting Started](#getting-started)
 - [Example: Creating a New Application Context](#example-creating-a-new-application-context)
 - [CLI Reference](#cli-reference)
+  - [VTA Service CLI](#vta-service-cli-vta)
+  - [CNM CLI](#cnm-cli-cnm) (multi-community)
+  - [PNM CLI](#pnm-cli-pnm) (single VTA)
+  - [Shared VTA commands](#shared-vta-commands-both-cnm-and-pnm)
 - [Additional Resources](#additional-resources)
 
 ## Overview
 
-The repository is a Rust workspace with three crates:
+The repository is a Rust workspace with four crates:
 
 | Crate           | Description                                                                                             |
 | --------------- | ------------------------------------------------------------------------------------------------------- |
 | **vta-service** | Axum HTTP service -- the VTA itself. Manages keys, contexts, ACL, sessions, and DIDComm authentication. |
-| **vta-sdk**     | Shared types (`KeyRecord`, `ContextRecord`, protocol constants) used by both the service and CLI.       |
-| **cnm-cli**     | Community Network Manager CLI -- the primary client for operating a VTA.                                |
+| **vta-sdk**     | Shared SDK: types, VTA HTTP client, session/auth logic, and protocol constants.                         |
+| **cnm-cli**     | Community Network Manager CLI -- multi-community client for operating VTAs.                             |
+| **pnm-cli**     | Personal Network Manager CLI -- simpler single-VTA client for personal use.                             |
 
 ## Architecture
 
@@ -72,6 +77,13 @@ uses the OS keyring for both `vta-service` (seed storage) and `cnm-cli`
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
 | `keyring`        | Store sessions in the OS keyring                                                                                                                                | Yes     |
 | `config-session` | Store sessions in `~/.config/cnm/sessions.json` (useful for containers / CI). **Warning:** sessions are stored on disk unprotected -- do not use in production. | No      |
+
+### pnm-cli
+
+| Feature          | Description                                                                                                                                                     | Default |
+| ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| `keyring`        | Store sessions in the OS keyring                                                                                                                                | Yes     |
+| `config-session` | Store sessions in `~/.config/pnm/sessions.json` (useful for containers / CI). **Warning:** sessions are stored on disk unprotected -- do not use in production. | No      |
 
 ### Build examples
 
@@ -164,15 +176,23 @@ The service listens on the host and port configured during setup (default
 `127.0.0.1:3000`). Verify it is running:
 
 ```sh
+# Using the Community Network Manager (multi-community):
 cargo run --package cnm-cli -- health
+
+# Or using the Personal Network Manager (single VTA):
+cargo run --package pnm-cli -- health --url http://localhost:3000
 ```
 
-### Authenticate the CLI
+### Authenticate a CLI
 
 Use the admin credential printed during setup:
 
 ```sh
+# CNM -- multi-community, interactive setup
 cargo run --package cnm-cli -- auth login <credential>
+
+# PNM -- single VTA, non-interactive setup
+cargo run --package pnm-cli -- setup --url http://localhost:3000 --credential <credential>
 ```
 
 This imports the credential into the OS keyring, performs a DIDComm
@@ -234,17 +254,11 @@ During development use `cargo run --package vta-service --` in place of `vta`.
 
 ### CNM CLI (`cnm`)
 
-The CNM binary is the primary client for operating a VTA over the network.
+The CNM binary is the multi-community client for operating VTAs over the network.
 During development use `cargo run --package cnm-cli --` in place of `cnm`.
 See the [cnm-cli README](cnm-cli/README.md) for full documentation.
 
-#### General
-
-| Command  | Description                          |
-| -------- | ------------------------------------ |
-| `health` | Check VTA service health and version |
-
-#### Setup & Communities
+#### CNM-specific commands
 
 | Command                   | Description                                |
 | ------------------------- | ------------------------------------------ |
@@ -254,14 +268,34 @@ See the [cnm-cli README](cnm-cli/README.md) for full documentation.
 | `community add`           | Add a new community interactively          |
 | `community remove <slug>` | Remove a community                         |
 | `community status`        | Show active community info and auth status |
+| `community ping`          | Send a DIDComm trust-ping to the VTA       |
 
-#### Authentication
+### PNM CLI (`pnm`)
 
-| Command                   | Description                         |
-| ------------------------- | ----------------------------------- |
-| `auth login <credential>` | Import credential and authenticate  |
-| `auth logout`             | Clear stored credentials and tokens |
-| `auth status`             | Show current authentication status  |
+The PNM binary is a simpler single-VTA client for personal use. It has the same
+VTA management commands (keys, contexts, ACL, credentials) but no community or
+personal-VTA concepts. During development use `cargo run --package pnm-cli --`
+in place of `pnm`. See the [pnm-cli README](pnm-cli/README.md) for full
+documentation.
+
+#### PNM-specific commands
+
+| Command                                  | Description                                    |
+| ---------------------------------------- | ---------------------------------------------- |
+| `setup --url URL [--credential CRED]`    | Configure VTA URL and optionally authenticate  |
+
+### Shared VTA commands (both `cnm` and `pnm`)
+
+Both CLIs share the following commands for VTA management:
+
+#### Health & Authentication
+
+| Command                   | Description                          |
+| ------------------------- | ------------------------------------ |
+| `health`                  | Check VTA service health and version |
+| `auth login <credential>` | Import credential and authenticate   |
+| `auth logout`             | Clear stored credentials and tokens  |
+| `auth status`             | Show current authentication status   |
 
 #### Configuration
 

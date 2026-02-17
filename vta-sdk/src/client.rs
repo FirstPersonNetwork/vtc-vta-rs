@@ -1,7 +1,7 @@
 use chrono::{DateTime, Utc};
 use reqwest::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
-use vta_sdk::keys::{KeyRecord, KeyStatus, KeyType};
+use crate::keys::{KeyRecord, KeyStatus, KeyType};
 
 /// HTTP client for the VTA service API.
 pub struct VtaClient {
@@ -550,7 +550,6 @@ mod tests {
 
     #[test]
     fn test_encode_hash_in_did_fragment() {
-        // DID verification method IDs use # as fragment delimiter
         assert_eq!(
             encode_path_segment("did:key:z6Mk123#z6Mk123"),
             "did:key:z6Mk123%23z6Mk123"
@@ -564,13 +563,11 @@ mod tests {
 
     #[test]
     fn test_encode_percent_is_escaped_first() {
-        // % must be encoded before other replacements to avoid double-encoding
         assert_eq!(encode_path_segment("100%#done"), "100%25%23done");
     }
 
     #[test]
     fn test_encode_colon_preserved() {
-        // Colons are allowed in path segments per RFC 3986
         assert_eq!(encode_path_segment("did:key:z6Mk"), "did:key:z6Mk");
     }
 

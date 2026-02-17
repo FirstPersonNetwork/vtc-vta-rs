@@ -2,9 +2,9 @@ use vta_sdk::session::{SessionStore, TokenStatus};
 
 pub use vta_sdk::session::SessionInfo;
 
-const SERVICE_NAME: &str = "cnm-cli";
-/// Legacy keyring key (pre multi-community).
-const LEGACY_KEYRING_KEY: &str = "session";
+use crate::config::SESSION_KEY;
+
+const SERVICE_NAME: &str = "pnm-cli";
 
 fn store() -> SessionStore {
     SessionStore::new(
@@ -13,24 +13,18 @@ fn store() -> SessionStore {
     )
 }
 
-/// Returns true if the legacy single-session keyring entry exists.
-pub fn has_legacy_session() -> bool {
-    store().has_session(LEGACY_KEYRING_KEY)
-}
-
 /// Import a base64-encoded credential and authenticate.
 pub async fn login(
     credential_b64: &str,
     base_url: &str,
-    keyring_key: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(all(feature = "config-session", not(feature = "keyring")))]
     eprintln!(
-        "Warning: sessions are stored unprotected on disk (~/.config/cnm/sessions.json).\n         \
+        "Warning: sessions are stored unprotected on disk (~/.config/pnm/sessions.json).\n         \
          Do not use config-session in production."
     );
 
-    let result = store().login(credential_b64, base_url, keyring_key).await?;
+    let result = store().login(credential_b64, base_url, SESSION_KEY).await?;
 
     println!("Credential imported:");
     println!("  Client DID: {}", result.client_did);
@@ -42,31 +36,21 @@ pub async fn login(
     Ok(())
 }
 
-/// Store a session directly (without performing authentication).
-pub fn store_session_direct(
-    keyring_key: &str,
-    did: &str,
-    private_key: &str,
-    vta_did: &str,
-    vta_url: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    store().store_direct(keyring_key, did, private_key, vta_did, vta_url)
-}
-
 /// Clear stored credentials and cached tokens.
-pub fn logout(keyring_key: &str) {
-    store().logout(keyring_key);
+pub fn logout() {
+    store().logout(SESSION_KEY);
     println!("Logged out. Credentials and tokens removed.");
 }
 
-/// Load the stored session for diagnostics (DID resolution, etc.).
-pub fn loaded_session(keyring_key: &str) -> Option<SessionInfo> {
-    store().loaded_session(keyring_key)
+/// Load the stored session for diagnostics.
+#[allow(dead_code)]
+pub fn loaded_session() -> Option<SessionInfo> {
+    store().loaded_session(SESSION_KEY)
 }
 
 /// Show current authentication status.
-pub fn status(keyring_key: &str) {
-    match store().session_status(keyring_key) {
+pub fn status() {
+    match store().session_status(SESSION_KEY) {
         Some(status) => {
             println!("Client DID: {}", status.client_did);
             println!("VTA DID:    {}", status.vta_did);
@@ -88,8 +72,8 @@ pub fn status(keyring_key: &str) {
         }
         None => {
             println!("Not authenticated.");
-            println!("\nTo authenticate, import a credential from your VTA administrator:");
-            println!("  cnm auth login <credential-string>");
+            println!("\nTo authenticate, import a credential:");
+            println!("  pnm auth login <credential-string>");
         }
     }
 }
@@ -97,7 +81,6 @@ pub fn status(keyring_key: &str) {
 /// Ensure we have a valid access token. Returns the token string.
 pub async fn ensure_authenticated(
     base_url: &str,
-    keyring_key: &str,
 ) -> Result<String, Box<dyn std::error::Error>> {
-    store().ensure_authenticated(base_url, keyring_key).await
+    store().ensure_authenticated(base_url, SESSION_KEY).await
 }

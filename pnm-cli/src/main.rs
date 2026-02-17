@@ -3,11 +3,6 @@ mod config;
 mod setup;
 
 use clap::{Parser, Subcommand};
-use vta_sdk::client::{
-    CreateAclRequest, CreateContextRequest, CreateKeyRequest, GenerateCredentialsRequest,
-    UpdateAclRequest, UpdateConfigRequest, UpdateContextRequest, VtaClient,
-};
-use config::{community_keyring_key, resolve_community};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Rect},
@@ -15,18 +10,18 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, Cell, Row, Table, Widget},
 };
+use vta_sdk::client::{
+    CreateAclRequest, CreateContextRequest, CreateKeyRequest, GenerateCredentialsRequest,
+    UpdateAclRequest, UpdateConfigRequest, UpdateContextRequest, VtaClient,
+};
 use vta_sdk::keys::KeyType;
 
 #[derive(Parser)]
-#[command(name = "cnm-cli", about = "CLI for VTC Verifiable Trust Agents")]
+#[command(name = "pnm-cli", about = "CLI for managing a personal Verifiable Trust Agent")]
 struct Cli {
     /// Base URL of the VTA service (overrides config)
     #[arg(long, env = "VTA_URL")]
     url: Option<String>,
-
-    /// Override the active community for this command
-    #[arg(short = 'c', long, global = true)]
-    community: Option<String>,
 
     /// Enable verbose debug output (can also set RUST_LOG=debug)
     #[arg(short, long, global = true)]
@@ -38,13 +33,14 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Initial setup wizard
-    Setup,
-
-    /// Community management
-    Community {
-        #[command(subcommand)]
-        command: CommunityCommands,
+    /// Configure VTA URL and credentials
+    Setup {
+        /// VTA service URL
+        #[arg(long)]
+        url: String,
+        /// Base64-encoded credential string
+        #[arg(long)]
+        credential: Option<String>,
     },
 
     /// Check service health
@@ -85,28 +81,6 @@ enum Commands {
         #[command(subcommand)]
         command: AuthCredentialCommands,
     },
-}
-
-#[derive(Subcommand)]
-enum CommunityCommands {
-    /// List configured communities
-    List,
-    /// Switch default community
-    Use {
-        /// Community slug to set as default
-        name: String,
-    },
-    /// Add a new community
-    Add,
-    /// Remove a community
-    Remove {
-        /// Community slug to remove
-        name: String,
-    },
-    /// Show current community info
-    Status,
-    /// Send a DIDComm trust-ping to the community VTA
-    Ping,
 }
 
 #[derive(Subcommand)]
@@ -320,7 +294,7 @@ enum KeyCommands {
 }
 
 fn print_banner() {
-    let green = "\x1b[32m";
+    let cyan = "\x1b[36m";
     let magenta = "\x1b[35m";
     let yellow = "\x1b[33m";
     let dim = "\x1b[2m";
@@ -328,13 +302,13 @@ fn print_banner() {
 
     eprintln!(
         r#"
-{green}  ██████╗ {magenta}███╗   ██╗ {yellow}███╗   ███╗{reset}
-{green} ██╔════╝ {magenta}████╗  ██║ {yellow}████╗ ████║{reset}
-{green} ██║      {magenta}██╔██╗ ██║ {yellow}██╔████╔██║{reset}
-{green} ██║      {magenta}██║╚██╗██║ {yellow}██║╚██╔╝██║{reset}
-{green} ╚██████╗ {magenta}██║ ╚████║ {yellow}██║ ╚═╝ ██║{reset}
-{green}  ╚═════╝ {magenta}╚═╝  ╚═══╝ {yellow}╚═╝     ╚═╝{reset}
-{dim}  Community Network Manager v{version}{reset}
+{cyan} ██████╗  {magenta}███╗   ██╗ {yellow}███╗   ███╗{reset}
+{cyan} ██╔══██╗ {magenta}████╗  ██║ {yellow}████╗ ████║{reset}
+{cyan} ██████╔╝ {magenta}██╔██╗ ██║ {yellow}██╔████╔██║{reset}
+{cyan} ██╔═══╝  {magenta}██║╚██╗██║ {yellow}██║╚██╔╝██║{reset}
+{cyan} ██║      {magenta}██║ ╚████║ {yellow}██║ ╚═╝ ██║{reset}
+{cyan} ╚═╝      {magenta}╚═╝  ╚═══╝ {yellow}╚═╝     ╚═╝{reset}
+{dim}  Personal Network Manager v{version}{reset}
 "#,
         version = env!("CARGO_PKG_VERSION"),
     );
@@ -344,7 +318,7 @@ fn print_banner() {
 fn requires_auth(cmd: &Commands) -> bool {
     !matches!(
         cmd,
-        Commands::Health | Commands::Auth { .. } | Commands::Setup | Commands::Community { .. }
+        Commands::Health | Commands::Auth { .. } | Commands::Setup { .. }
     )
 }
 
@@ -352,9 +326,9 @@ fn requires_auth(cmd: &Commands) -> bool {
 async fn main() {
     let cli = Cli::parse();
 
-    // Initialize tracing: --verbose sets cnm_cli=debug, or respect RUST_LOG
+    // Initialize tracing: --verbose sets pnm_cli=debug, or respect RUST_LOG
     let filter = if cli.verbose {
-        tracing_subscriber::EnvFilter::new("cnm_cli=debug")
+        tracing_subscriber::EnvFilter::new("pnm_cli=debug")
     } else {
         tracing_subscriber::EnvFilter::from_default_env()
     };
@@ -367,95 +341,39 @@ async fn main() {
 
     print_banner();
 
-    // Load CNM config (multi-community)
-    let cnm_config = match config::load_config() {
+    // Load PNM config
+    let pnm_config = match config::load_config() {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Warning: could not load config: {e}");
-            config::CnmConfig::default()
+            config::PnmConfig::default()
         }
     };
 
-    // Legacy migration notice
-    if cnm_config.communities.is_empty() && auth::has_legacy_session() {
-        eprintln!(
-            "{YELLOW}Detected legacy single-community session.\n\
-             Legacy sessions are no longer used. Run `cnm setup` to configure a community.{RESET}\n"
-        );
-    }
-
-    // Resolve community URL and keyring key for commands that need a VTA connection.
-    // Setup and Community commands handle their own URL resolution.
-    let (url, keyring_key): (String, String) = if requires_auth(&cli.command)
-        || matches!(cli.command, Commands::Auth { .. })
-    {
-        // Auth-required and Auth commands always need a community
-        match resolve_community(cli.community.as_deref(), &cnm_config) {
-            Ok((slug, community)) => {
-                let url = cli.url.unwrap_or_else(|| community.url.clone());
-                let key = community_keyring_key(&slug);
-                (url, key)
-            }
-            Err(e) => {
-                eprintln!("Error: {e}");
+    // Resolve URL: CLI flag > config > error
+    let url = cli
+        .url
+        .or(pnm_config.url.clone())
+        .unwrap_or_else(|| {
+            if requires_auth(&cli.command)
+                || matches!(cli.command, Commands::Health)
+                || matches!(cli.command, Commands::Auth { .. })
+            {
+                eprintln!("Error: no VTA URL configured and no --url provided.\n");
+                eprintln!("Either run setup first, or provide a URL:");
+                eprintln!("  pnm setup --url http://localhost:8100");
+                eprintln!("  pnm health --url http://localhost:8100");
                 std::process::exit(1);
             }
-        }
-    } else if matches!(cli.command, Commands::Health) {
-        // Health: use community if available, otherwise require --url
-        match resolve_community(cli.community.as_deref(), &cnm_config) {
-            Ok((slug, community)) => {
-                let url = cli.url.unwrap_or_else(|| community.url.clone());
-                let key = community_keyring_key(&slug);
-                (url, key)
-            }
-            Err(_) => {
-                let url = match cli.url {
-                    Some(url) => url,
-                    None => {
-                        eprintln!("Error: no community configured and no --url provided.\n");
-                        eprintln!("Either configure a community with `cnm setup`, or provide a URL:");
-                        eprintln!("  cnm health --url http://localhost:8100");
-                        std::process::exit(1);
-                    }
-                };
-                (url, String::new())
-            }
-        }
-    } else {
-        // Setup/Community commands don't need a pre-resolved URL
-        let url = cli
-            .url
-            .unwrap_or_else(|| "http://localhost:8100".to_string());
-        (url, String::new())
-    };
+            // Setup command provides its own URL
+            String::new()
+        });
 
     let mut client = VtaClient::new(&url);
 
     // Transparent authentication for protected commands
     if requires_auth(&cli.command) {
-        // Bootstrap session from personal VTA if needed
-        if auth::loaded_session(&keyring_key).is_none() {
-            if let Ok((slug, community)) =
-                resolve_community(cli.community.as_deref(), &cnm_config)
-                && community.context_id.is_some()
-                && let Some(ref personal) = cnm_config.personal_vta
-            {
-                if let Err(e) =
-                    setup::bootstrap_community_session(&slug, community, &personal.url).await
-                {
-                    eprintln!(
-                        "Error: could not bootstrap session from personal VTA: {e}\n\n\
-                         To fix this, either:\n  \
-                         1. Import a credential: cnm auth login <credential>\n  \
-                         2. Re-run setup: cnm setup"
-                    );
-                    std::process::exit(1);
-                }
-            }
-        }
-
-        match auth::ensure_authenticated(client.base_url(), &keyring_key).await {
+        match auth::ensure_authenticated(client.base_url()).await {
             Ok(token) => client.set_token(token),
             Err(e) => {
                 eprintln!("Error: {e}");
@@ -465,19 +383,20 @@ async fn main() {
     }
 
     let result = match cli.command {
-        Commands::Setup => setup::run_setup_wizard().await,
-        Commands::Community { command } => cmd_community(command, &cnm_config).await,
-        Commands::Health => cmd_health(&client, &keyring_key, &cnm_config).await,
+        Commands::Setup { url, credential } => {
+            setup::run_setup(&url, credential.as_deref()).await
+        }
+        Commands::Health => cmd_health(&client).await,
         Commands::Auth { command } => match command {
             AuthCommands::Login { credential } => {
-                auth::login(&credential, client.base_url(), &keyring_key).await
+                auth::login(&credential, client.base_url()).await
             }
             AuthCommands::Logout => {
-                auth::logout(&keyring_key);
+                auth::logout();
                 Ok(())
             }
             AuthCommands::Status => {
-                auth::status(&keyring_key);
+                auth::status();
                 Ok(())
             }
         },
@@ -582,171 +501,17 @@ async fn main() {
     }
 }
 
-async fn cmd_community(
-    command: CommunityCommands,
-    cnm_config: &config::CnmConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    match command {
-        CommunityCommands::List => {
-            if cnm_config.communities.is_empty() {
-                println!("No communities configured.");
-                println!("\nRun `cnm setup` to configure your first community.");
-                return Ok(());
-            }
-            let default = cnm_config.default_community.as_deref().unwrap_or("");
-            for (slug, community) in &cnm_config.communities {
-                let marker = if slug == default { " (default)" } else { "" };
-                println!("  {slug}{marker}");
-                println!("    Name: {}", community.name);
-                println!("    URL:  {}", community.url);
-                if let Some(ref ctx) = community.context_id {
-                    println!("    Context: {ctx}");
-                }
-                println!();
-            }
-            Ok(())
-        }
-        CommunityCommands::Use { name } => {
-            if !cnm_config.communities.contains_key(&name) {
-                return Err(format!(
-                    "community '{name}' not found.\n\nConfigured communities: {}",
-                    cnm_config
-                        .communities
-                        .keys()
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-                .into());
-            }
-            let mut config = config::load_config()?;
-            config.default_community = Some(name.clone());
-            config::save_config(&config)?;
-            println!("Default community set to '{name}'.");
-            Ok(())
-        }
-        CommunityCommands::Add => setup::add_community().await,
-        CommunityCommands::Remove { name } => {
-            let config = config::load_config()?;
-            if !config.communities.contains_key(&name) {
-                return Err(format!("community '{name}' not found.").into());
-            }
-
-            let confirm = dialoguer::Confirm::new()
-                .with_prompt(format!(
-                    "Remove community '{name}'? This will delete its stored credentials."
-                ))
-                .default(false)
-                .interact()?;
-
-            if !confirm {
-                println!("Cancelled.");
-                return Ok(());
-            }
-
-            let mut config = config;
-            config.communities.remove(&name);
-            // Clear default if it was the removed community
-            if config.default_community.as_deref() == Some(&name) {
-                config.default_community = config.communities.keys().next().cloned();
-            }
-            // Clear the keyring entry
-            auth::logout(&community_keyring_key(&name));
-            config::save_config(&config)?;
-            println!("Community '{name}' removed.");
-            Ok(())
-        }
-        CommunityCommands::Status => {
-            match resolve_community(None, cnm_config) {
-                Ok((slug, community)) => {
-                    println!("Active community: {slug}");
-                    println!("  Name: {}", community.name);
-                    println!("  URL:  {}", community.url);
-                    if let Some(ref ctx) = community.context_id {
-                        println!("  Context: {ctx}");
-                    }
-                    let key = community_keyring_key(&slug);
-                    auth::status(&key);
-                }
-                Err(_) => {
-                    println!("No community configured.");
-                    println!("\nRun `cnm setup` to get started.");
-                }
-            }
-            Ok(())
-        }
-        CommunityCommands::Ping => cmd_community_ping(cnm_config).await,
-    }
-}
-
-async fn cmd_community_ping(
-    cnm_config: &config::CnmConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
-    use std::time::Duration;
-
-    let (slug, community) = resolve_community(None, cnm_config)?;
-    println!("Community: {} ({slug})", community.name);
-
-    // Need a session to get client DID + VTA DID
-    let key = community_keyring_key(&slug);
-    let session = match auth::loaded_session(&key) {
-        Some(s) => s,
-        None => {
-            return Err("not authenticated — run `cnm auth login` first".into());
-        }
-    };
-
-    // Check the VTA DID has a DIDCommMessaging service with a mediator
-    let resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await?;
-
-    let resolved = resolver
-        .resolve(&session.vta_did)
-        .await
-        .map_err(|e| format!("failed to resolve VTA DID {}: {e}", session.vta_did))?;
-
-    let mediator_did = resolved
-        .doc
-        .service
-        .iter()
-        .filter(|svc| svc.type_.iter().any(|t| t == "DIDCommMessaging"))
-        .flat_map(|svc| svc.service_endpoint.get_uris())
-        .map(|u| u.trim_matches('"').to_string())
-        .find(|u| u.starts_with("did:"));
-
-    let mediator_did = match mediator_did {
-        Some(did) => did,
-        None => {
-            println!("  This community is not using DIDComm Messaging.");
-            return Ok(());
-        }
-    };
-
-    println!("  {CYAN}{:<13}{RESET} {}", "VTA DID", session.vta_did);
-    println!("  {CYAN}{:<13}{RESET} {mediator_did}", "Mediator DID");
-
-    print_trust_ping(
-        &session,
-        &session.vta_did,
-        &mediator_did,
-        Duration::from_secs(10),
-    )
-    .await;
-    Ok(())
-}
+// ── ANSI constants ──────────────────────────────────────────────────
 
 const BOLD: &str = "\x1b[1m";
 const DIM: &str = "\x1b[2m";
 const GREEN: &str = "\x1b[32m";
 const RED: &str = "\x1b[31m";
 const CYAN: &str = "\x1b[36m";
-const YELLOW: &str = "\x1b[33m";
 const RESET: &str = "\x1b[0m";
 
-/// Render a ratatui widget to stdout with ANSI colors.
-///
-/// This avoids ratatui's `Viewport::Inline` + raw mode, which introduces blank-line
-/// gaps between prior output and the table.
+// ── Ratatui rendering helpers ───────────────────────────────────────
+
 fn print_widget(widget: impl Widget, height: u16) {
     let width = ratatui::crossterm::terminal::size().map_or(120, |(w, _)| w);
     let area = Rect::new(0, 0, width, height);
@@ -870,18 +635,10 @@ fn print_section(title: &str) {
     );
 }
 
-async fn cmd_health(
-    client: &VtaClient,
-    keyring_key: &str,
-    cnm_config: &config::CnmConfig,
-) -> Result<(), Box<dyn std::error::Error>> {
-    use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
-    use std::time::Duration;
+// ── Command handlers ────────────────────────────────────────────────
 
-    let ping_timeout = Duration::from_secs(10);
-
-    // ── Community VTA ──────────────────────────────────────────────
-    print_section("Community VTA");
+async fn cmd_health(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>> {
+    print_section("VTA");
 
     match client.health().await {
         Ok(resp) => {
@@ -895,249 +652,32 @@ async fn cmd_health(
                 "  {CYAN}{:<13}{RESET} {RED}✗{RESET} unreachable ({e})",
                 "Service"
             );
-            // Continue to personal VTA section instead of returning error
-            print_personal_vta_section(cnm_config, None, ping_timeout).await;
             return Ok(());
         }
     }
     println!("  {CYAN}{:<13}{RESET} {}", "URL", client.base_url());
 
-    // Create a shared DID resolver for both sections
-    let resolver = match DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await {
-        Ok(r) => Some(r),
-        Err(e) => {
-            println!("  {DIM}DID resolution skipped (resolver unavailable: {e}){RESET}");
-            None
-        }
-    };
-
-    // Community DID resolution + trust-ping
-    let session = if keyring_key.is_empty() {
-        None
-    } else {
-        auth::loaded_session(keyring_key)
-    };
-    if let Some(ref session) = session {
-        if let Some(ref resolver) = resolver {
-            print_did_resolution(resolver, "Client DID", &session.client_did, false).await;
-
-            let mediator_did =
-                print_did_resolution(resolver, "VTA DID", &session.vta_did, true).await;
-
-            if let Some(ref mediator_did) = mediator_did {
-                print_did_resolution(resolver, "Mediator DID", mediator_did, false).await;
-                print_trust_ping(session, mediator_did, mediator_did, ping_timeout).await;
-            }
-        }
-    } else {
-        println!("  {DIM}(not authenticated — DID resolution skipped){RESET}");
-    }
-
-    // ── Personal VTA ───────────────────────────────────────────────
-    print_personal_vta_section(cnm_config, resolver.as_ref(), ping_timeout).await;
-
     Ok(())
-}
-
-async fn print_personal_vta_section(
-    cnm_config: &config::CnmConfig,
-    resolver: Option<&affinidi_did_resolver_cache_sdk::DIDCacheClient>,
-    ping_timeout: std::time::Duration,
-) {
-    print_section("Personal VTA");
-
-    let Some(ref personal) = cnm_config.personal_vta else {
-        println!("  {DIM}Not configured.{RESET}");
-        return;
-    };
-
-    let personal_client = VtaClient::new(&personal.url);
-    match personal_client.health().await {
-        Ok(resp) => {
-            println!(
-                "  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} ok (v{})",
-                "Service", resp.version
-            );
-        }
-        Err(e) => {
-            println!(
-                "  {CYAN}{:<13}{RESET} {RED}✗{RESET} unreachable ({e})",
-                "Service"
-            );
-            return;
-        }
-    };
-    println!("  {CYAN}{:<13}{RESET} {}", "URL", personal.url);
-
-    // Personal DID resolution + trust-ping
-    let personal_session = auth::loaded_session(config::PERSONAL_KEYRING_KEY);
-    if let Some(ref session) = personal_session {
-        if let Some(resolver) = resolver {
-            print_did_resolution(resolver, "Client DID", &session.client_did, false).await;
-
-            let mediator_did =
-                print_did_resolution(resolver, "VTA DID", &session.vta_did, true).await;
-
-            if let Some(ref mediator_did) = mediator_did {
-                print_did_resolution(resolver, "Mediator DID", mediator_did, false).await;
-                print_trust_ping(session, mediator_did, mediator_did, ping_timeout).await;
-            }
-        }
-    } else {
-        println!("  {DIM}(not authenticated — DID resolution skipped){RESET}");
-    }
-}
-
-/// Resolve a DID and print the result with colored ✓/✗.
-///
-/// Prints label + DID, then resolution status and detail lines.
-/// When `find_mediator` is true, looks for a DIDCommMessaging service and
-/// extracts the mediator DID from its endpoint URI (if the URI is a `did:`).
-async fn print_did_resolution(
-    resolver: &affinidi_did_resolver_cache_sdk::DIDCacheClient,
-    label: &str,
-    did: &str,
-    find_mediator: bool,
-) -> Option<String> {
-    let method = did
-        .strip_prefix("did:")
-        .and_then(|s| s.split(':').next())
-        .unwrap_or("unknown");
-
-    println!("  {CYAN}{:<13}{RESET} {did}", label);
-
-    let resolved = match resolver.resolve(did).await {
-        Ok(r) => r,
-        Err(e) => {
-            println!("                {RED}✗{RESET} resolution failed: {e}");
-            return None;
-        }
-    };
-
-    println!("                {GREEN}✓{RESET} resolves ({method})");
-
-    for ka in &resolved.doc.key_agreement {
-        println!("                {DIM}keyAgreement: {}{RESET}", ka.get_id());
-    }
-
-    let mut mediator_did: Option<String> = None;
-    for svc in &resolved.doc.service {
-        let types = svc.type_.join(", ");
-        // Endpoint::get_uris() wraps Map-sourced values in JSON quotes; strip them.
-        let uris: Vec<String> = svc
-            .service_endpoint
-            .get_uris()
-            .into_iter()
-            .map(|u| u.trim_matches('"').to_string())
-            .collect();
-
-        if uris.is_empty() {
-            println!("                {DIM}service: {types}{RESET}");
-        } else {
-            for uri in &uris {
-                println!("                {DIM}service: {types} -> {uri}{RESET}");
-            }
-        }
-
-        if find_mediator
-            && svc.type_.iter().any(|t| t == "DIDCommMessaging")
-            && mediator_did.is_none()
-        {
-            mediator_did = uris.into_iter().find(|u| u.starts_with("did:"));
-            if let Some(ref m) = mediator_did {
-                println!("                mediator {GREEN}✓{RESET} {m}");
-            } else {
-                println!("                mediator {RED}✗{RESET} no DID found in service endpoint");
-            }
-        }
-    }
-    mediator_did
-}
-
-/// Send a DIDComm trust-ping and print the result with colored ✓/✗.
-///
-/// `target_did` is the DID to ping. The message is routed through
-/// `mediator_did` (which is also the mediator on the ATM profile).
-async fn print_trust_ping(
-    session: &auth::SessionInfo,
-    target_did: &str,
-    mediator_did: &str,
-    timeout: std::time::Duration,
-) {
-    use affinidi_tdk::common::TDKSharedState;
-    use affinidi_tdk::messaging::ATM;
-    use affinidi_tdk::messaging::config::ATMConfig;
-    use affinidi_tdk::messaging::profiles::ATMProfile;
-    use affinidi_tdk::messaging::protocols::trust_ping::TrustPing;
-    use affinidi_tdk::secrets_resolver::SecretsResolver;
-    use std::sync::Arc;
-    use std::time::Instant;
-
-    let client_did = session.client_did.clone();
-    let private_key = session.private_key_multibase.clone();
-    let mediator = mediator_did.to_string();
-    let target = target_did.to_string();
-
-    let ping = async {
-        let seed = vta_sdk::did_key::decode_private_key_multibase(&private_key)?;
-        let secrets = vta_sdk::did_key::secrets_from_did_key(&client_did, &seed)?;
-
-        let tdk = TDKSharedState::default().await;
-        tdk.secrets_resolver.insert(secrets.signing).await;
-        tdk.secrets_resolver.insert(secrets.key_agreement).await;
-
-        let atm = ATM::new(ATMConfig::builder().build()?, Arc::new(tdk)).await?;
-
-        let profile = ATMProfile::new(&atm, None, client_did, Some(mediator.clone())).await?;
-        let profile = Arc::new(profile);
-
-        // The mediator may only expose a wss:// endpoint (no REST/https).
-        atm.profile_enable_websocket(&profile).await?;
-
-        let start = Instant::now();
-        TrustPing::default()
-            .send_ping(&atm, &profile, &target, true, true, true)
-            .await?;
-        let elapsed = start.elapsed().as_millis();
-
-        atm.graceful_shutdown().await;
-        Ok::<_, Box<dyn std::error::Error>>(elapsed)
-    };
-
-    match tokio::time::timeout(timeout, ping).await {
-        Ok(Ok(latency)) => println!(
-            "  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} pong ({latency}ms)",
-            "Trust-ping"
-        ),
-        Ok(Err(e)) => println!(
-            "  {CYAN}{:<13}{RESET} {RED}✗{RESET} failed: {e}",
-            "Trust-ping"
-        ),
-        Err(_) => println!(
-            "  {CYAN}{:<13}{RESET} {RED}✗{RESET} timed out",
-            "Trust-ping"
-        ),
-    }
 }
 
 async fn cmd_config_get(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>> {
     let resp = client.get_config().await?;
     println!(
-        "Community VTA DID:         {}",
+        "VTA DID:         {}",
         resp.community_vta_did.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "Community VTA Name:        {}",
+        "VTA Name:        {}",
         resp.community_vta_name.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "Community VTA Description: {}",
+        "VTA Description: {}",
         resp.community_vta_description
             .as_deref()
             .unwrap_or("(not set)")
     );
     println!(
-        "Community Public URL:      {}",
+        "Public URL:      {}",
         resp.public_url.as_deref().unwrap_or("(not set)")
     );
     Ok(())
@@ -1159,15 +699,15 @@ async fn cmd_config_update(
     let resp = client.update_config(req).await?;
     println!("Configuration updated:");
     println!(
-        "  Community VTA DID:         {}",
+        "  VTA DID:         {}",
         resp.community_vta_did.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "  Community VTA Name:        {}",
+        "  VTA Name:        {}",
         resp.community_vta_name.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "  Community VTA Description: {}",
+        "  VTA Description: {}",
         resp.community_vta_description
             .as_deref()
             .unwrap_or("(not set)")
@@ -1332,7 +872,6 @@ async fn cmd_key_list(
     let table = Table::new(rows, [Constraint::Min(1)])
         .block(Block::bordered().title(title).border_style(dim));
 
-    // Each key = 2 lines + 1 bottom_margin, last key's margin clipped, + 2 for borders
     let height = (resp.keys.len() as u16 * 3).saturating_sub(1) + 2;
     print_widget(table, height);
 
@@ -1543,7 +1082,6 @@ async fn cmd_context_bootstrap(
     description: Option<String>,
     admin_label: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    // 1. Create the context
     let ctx_req = CreateContextRequest {
         id: id.to_string(),
         name: name.to_string(),
@@ -1555,7 +1093,6 @@ async fn cmd_context_bootstrap(
     println!("  Name:      {}", ctx.name);
     println!("  Base Path: {}", ctx.base_path);
 
-    // 2. Generate credentials for the first admin
     let cred_req = GenerateCredentialsRequest {
         role: "admin".to_string(),
         label: admin_label,
@@ -1798,6 +1335,15 @@ mod tests {
     }
 
     #[test]
+    fn test_requires_auth_setup_false() {
+        let cmd = Commands::Setup {
+            url: "http://localhost".into(),
+            credential: None,
+        };
+        assert!(!requires_auth(&cmd));
+    }
+
+    #[test]
     fn test_requires_auth_keys_true() {
         let cmd = Commands::Keys {
             command: KeyCommands::List {
@@ -1831,18 +1377,5 @@ mod tests {
             command: ContextCommands::List,
         };
         assert!(requires_auth(&cmd));
-    }
-
-    #[test]
-    fn test_requires_auth_setup_false() {
-        assert!(!requires_auth(&Commands::Setup));
-    }
-
-    #[test]
-    fn test_requires_auth_community_false() {
-        let cmd = Commands::Community {
-            command: CommunityCommands::List,
-        };
-        assert!(!requires_auth(&cmd));
     }
 }

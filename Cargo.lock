@@ -1495,22 +1495,16 @@ dependencies = [
  "affinidi-did-resolver-cache-sdk",
  "affinidi-tdk",
  "base64 0.22.1",
- "chrono",
  "clap",
  "dialoguer",
  "dirs",
- "ed25519-dalek",
- "keyring",
- "multibase",
  "ratatui",
- "reqwest 0.13.2",
  "serde",
  "serde_json",
  "tokio",
  "toml",
  "tracing",
  "tracing-subscriber",
- "uuid",
  "vta-sdk",
 ]
 
@@ -4774,6 +4768,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7edddbd0b52d732b21ad9a5fab5c704c14cd949e5e9a1ec5929a24fded1b904c"
 
 [[package]]
+name = "pnm-cli"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "dirs",
+ "ratatui",
+ "serde",
+ "serde_json",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+ "vta-sdk",
+]
+
+[[package]]
 name = "poly1305"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7307,12 +7317,17 @@ checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
 name = "vta-sdk"
 version = "0.1.0"
 dependencies = [
+ "affinidi-did-resolver-cache-sdk",
  "affinidi-tdk",
  "base64 0.22.1",
  "chrono",
+ "keyring",
  "multibase",
+ "reqwest 0.13.2",
  "serde",
  "serde_json",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

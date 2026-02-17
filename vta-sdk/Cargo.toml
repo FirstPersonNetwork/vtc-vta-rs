@@ -12,6 +12,10 @@ repository.workspace = true
 
 [features]
 didcomm = ["dep:affinidi-tdk"]
+client = ["dep:reqwest", "dep:tracing", "dep:uuid"]
+session = ["client", "didcomm", "dep:affinidi-did-resolver-cache-sdk"]
+keyring = ["dep:keyring"]
+config-session = []
 
 [dependencies]
 serde = { workspace = true }
@@ -20,3 +24,8 @@ chrono = { workspace = true }
 base64 = { workspace = true }
 multibase = { workspace = true }
 affinidi-tdk = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
+tracing = { workspace = true, optional = true }
+uuid = { workspace = true, optional = true }
+affinidi-did-resolver-cache-sdk = { version = "0.7", optional = true }
+keyring = { version = "3", optional = true }

@@ -4,7 +4,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use dialoguer::{Input, Select};
 
 use crate::auth;
-use crate::client::{CreateContextRequest, GenerateCredentialsRequest, VtaClient};
+use vta_sdk::client::{CreateContextRequest, GenerateCredentialsRequest, VtaClient};
 use crate::config::{
     CommunityConfig, PERSONAL_KEYRING_KEY, PersonalVtaConfig, community_keyring_key, load_config,
     save_config,

@@ -9,19 +9,13 @@ use affinidi_tdk::messaging::config::ATMConfig;
 use affinidi_tdk::messaging::profiles::ATMProfile;
 use affinidi_tdk::messaging::protocols::trust_ping::TrustPing;
 use affinidi_tdk::secrets_resolver::SecretsResolver;
-use ed25519_dalek_bip32::ExtendedSigningKey;
+use affinidi_tdk::secrets_resolver::secrets::Secret;
 
 use crate::acl::{self, Role};
 use crate::auth::session::{self, SessionState};
 use crate::config::AppConfig;
-use crate::keys::derivation::Bip32Extension;
-use crate::keys::seed_store::create_seed_store;
+use crate::keys::seed_store::create_secret_store;
 use crate::store::Store;
-
-/// VTC signing key derivation path: purpose 26, coin type 3 (VTC), account 1
-const VTC_SIGNING_PATH: &str = "m/26'/3'/1'";
-/// VTC key-agreement key derivation path: purpose 26, coin type 3 (VTC), account 2
-const VTC_KA_PATH: &str = "m/26'/3'/2'";
 
 const BOLD: &str = "\x1b[1m";
 const DIM: &str = "\x1b[2m";
@@ -141,7 +135,7 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
         }
     };
 
-    // 7. Trust-ping to mediator (uses fixed derivation paths)
+    // 7. Trust-ping to mediator
     if let (Some(vtc_did), Some(mediator)) = (&config.vtc_did, mediator_did) {
         match tokio::time::timeout(
             Duration::from_secs(10),
@@ -203,27 +197,36 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
 
 /// Send a DIDComm trust-ping to the mediator and return latency in milliseconds.
 ///
-/// Uses fixed VTC derivation paths (no key records needed).
+/// Loads key material from the secret store directly (no BIP-32 derivation).
 async fn send_trust_ping(
     config: &AppConfig,
     vtc_did: &str,
     mediator_did: &str,
 ) -> Result<u128, Box<dyn std::error::Error>> {
-    let seed_store = create_seed_store(config)?;
-    let seed = seed_store
+    let secret_store = create_secret_store(config)?;
+    let key_material = secret_store
         .get()
         .await?
-        .ok_or("no master seed available")?;
+        .ok_or("no key material available")?;
 
-    let root = ExtendedSigningKey::from_seed(&seed)?;
+    if key_material.len() != 64 {
+        return Err(format!(
+            "key material is {} bytes, expected 64",
+            key_material.len()
+        )
+        .into());
+    }
+
+    let ed25519_bytes: &[u8; 32] = key_material[..32].try_into().unwrap();
+    let x25519_bytes: &[u8; 32] = key_material[32..].try_into().unwrap();
 
     let tdk = TDKSharedState::default().await;
 
-    let mut signing_secret = root.derive_ed25519(VTC_SIGNING_PATH)?;
+    let mut signing_secret = Secret::generate_ed25519(None, Some(ed25519_bytes));
     signing_secret.id = format!("{vtc_did}#key-0");
     tdk.secrets_resolver.insert(signing_secret).await;
 
-    let mut ka_secret = root.derive_x25519(VTC_KA_PATH)?;
+    let mut ka_secret = Secret::generate_x25519(None, Some(x25519_bytes))?;
     ka_secret.id = format!("{vtc_did}#key-1");
     tdk.secrets_resolver.insert(ka_secret).await;
 

@@ -4,38 +4,38 @@ use std::pin::Pin;
 use crate::error::AppError;
 use tracing::debug;
 
-/// Seed store that reads a hex-encoded seed from the config.
+/// Secret store that reads hex-encoded VTC key material from the config.
 ///
-/// Initialized from `[secrets] seed` in the config file. The seed is
+/// Initialized from `[secrets] secret` in the config file. The secret is
 /// read-only at runtime — to change it, update the config and restart.
-pub struct ConfigSeedStore {
-    hex_seed: String,
+pub struct ConfigSecretStore {
+    hex_secret: String,
 }
 
-impl ConfigSeedStore {
-    pub fn new(hex_seed: String) -> Self {
-        Self { hex_seed }
+impl ConfigSecretStore {
+    pub fn new(hex_secret: String) -> Self {
+        Self { hex_secret }
     }
 }
 
-impl super::SeedStore for ConfigSeedStore {
+impl super::SecretStore for ConfigSecretStore {
     fn get(&self) -> Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>, AppError>> + Send + '_>> {
         Box::pin(async {
-            let bytes = hex::decode(&self.hex_seed).map_err(|e| {
-                AppError::SeedStore(format!("failed to decode hex seed from config: {e}"))
+            let bytes = hex::decode(&self.hex_secret).map_err(|e| {
+                AppError::SecretStore(format!("failed to decode hex secret from config: {e}"))
             })?;
-            debug!("seed loaded from config");
+            debug!("secret loaded from config");
             Ok(Some(bytes))
         })
     }
 
     fn set(
         &self,
-        _seed: &[u8],
+        _secret: &[u8],
     ) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
         Box::pin(async {
-            Err(AppError::SeedStore(
-                "config-seed backend is read-only at runtime; update [secrets] seed in config.toml"
+            Err(AppError::SecretStore(
+                "config-secret backend is read-only at runtime; update [secrets] secret in config.toml"
                     .into(),
             ))
         })

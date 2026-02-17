@@ -4,17 +4,17 @@ use std::pin::Pin;
 use crate::error::AppError;
 use tracing::debug;
 
-/// Seed store backed by GCP Secret Manager.
+/// Secret store backed by GCP Secret Manager.
 ///
-/// The seed is stored as a hex-encoded string in the named secret.
+/// The VTC key material is stored as a hex-encoded string in the named secret.
 /// GCP auth is resolved from the environment (service account, workload
 /// identity, application default credentials, etc.).
-pub struct GcpSeedStore {
+pub struct GcpSecretStore {
     project: String,
     secret_name: String,
 }
 
-impl GcpSeedStore {
+impl GcpSecretStore {
     pub fn new(project: String, secret_name: String) -> Self {
         Self {
             project,
@@ -36,11 +36,11 @@ impl GcpSeedStore {
         google_cloud_secretmanager_v1::client::SecretManagerService::builder()
             .build()
             .await
-            .map_err(|e| AppError::SeedStore(format!("GCP Secret Manager client error: {e}")))
+            .map_err(|e| AppError::SecretStore(format!("GCP Secret Manager client error: {e}")))
     }
 }
 
-impl super::SeedStore for GcpSeedStore {
+impl super::SecretStore for GcpSecretStore {
     fn get(&self) -> Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>, AppError>> + Send + '_>> {
         Box::pin(async {
             let client = self.client().await?;
@@ -53,15 +53,15 @@ impl super::SeedStore for GcpSeedStore {
             match result {
                 Ok(response) => {
                     let payload = response.payload.ok_or_else(|| {
-                        AppError::SeedStore("GCP secret version has no payload".into())
+                        AppError::SecretStore("GCP secret version has no payload".into())
                     })?;
-                    let hex_seed = String::from_utf8(payload.data.to_vec()).map_err(|e| {
-                        AppError::SeedStore(format!("GCP secret payload is not valid UTF-8: {e}"))
+                    let hex_val = String::from_utf8(payload.data.to_vec()).map_err(|e| {
+                        AppError::SecretStore(format!("GCP secret payload is not valid UTF-8: {e}"))
                     })?;
-                    let bytes = hex::decode(hex_seed.trim()).map_err(|e| {
-                        AppError::SeedStore(format!("failed to decode hex seed from GCP: {e}"))
+                    let bytes = hex::decode(hex_val.trim()).map_err(|e| {
+                        AppError::SecretStore(format!("failed to decode hex secret from GCP: {e}"))
                     })?;
-                    debug!(secret = %self.secret_name, "seed loaded from GCP Secret Manager");
+                    debug!(secret = %self.secret_name, "secret loaded from GCP Secret Manager");
                     Ok(Some(bytes))
                 }
                 Err(e) => {
@@ -70,7 +70,7 @@ impl super::SeedStore for GcpSeedStore {
                         debug!(secret = %self.secret_name, "secret not found in GCP Secret Manager");
                         Ok(None)
                     } else {
-                        Err(AppError::SeedStore(format!(
+                        Err(AppError::SecretStore(format!(
                             "GCP Secret Manager error: {e}"
                         )))
                     }
@@ -79,14 +79,14 @@ impl super::SeedStore for GcpSeedStore {
         })
     }
 
-    fn set(&self, seed: &[u8]) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
-        let hex_seed = hex::encode(seed);
+    fn set(&self, secret: &[u8]) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
+        let hex_val = hex::encode(secret);
         Box::pin(async move {
             let client = self.client().await?;
 
             // Try to add a new version to the existing secret
             let payload = google_cloud_secretmanager_v1::model::SecretPayload::new()
-                .set_data(bytes::Bytes::from(hex_seed.clone()));
+                .set_data(bytes::Bytes::from(hex_val.clone()));
             let result = client
                 .add_secret_version()
                 .set_parent(self.secret_path())
@@ -96,7 +96,7 @@ impl super::SeedStore for GcpSeedStore {
 
             match result {
                 Ok(_) => {
-                    debug!(secret = %self.secret_name, "seed stored in GCP Secret Manager");
+                    debug!(secret = %self.secret_name, "secret stored in GCP Secret Manager");
                     Ok(())
                 }
                 Err(e) => {
@@ -118,7 +118,7 @@ impl super::SeedStore for GcpSeedStore {
                             .send()
                             .await
                             .map_err(|e| {
-                                AppError::SeedStore(format!("failed to create GCP secret: {e}"))
+                                AppError::SecretStore(format!("failed to create GCP secret: {e}"))
                             })?;
 
                         // Now add the version
@@ -129,16 +129,16 @@ impl super::SeedStore for GcpSeedStore {
                             .send()
                             .await
                             .map_err(|e| {
-                                AppError::SeedStore(format!(
+                                AppError::SecretStore(format!(
                                     "failed to add secret version in GCP: {e}"
                                 ))
                             })?;
 
-                        debug!(secret = %self.secret_name, "seed created in GCP Secret Manager");
+                        debug!(secret = %self.secret_name, "secret created in GCP Secret Manager");
                         Ok(())
                     } else {
-                        Err(AppError::SeedStore(format!(
-                            "failed to store seed in GCP: {e}"
+                        Err(AppError::SecretStore(format!(
+                            "failed to store secret in GCP: {e}"
                         )))
                     }
                 }

@@ -17,11 +17,10 @@ mod status;
 mod store;
 
 use std::path::PathBuf;
-use std::sync::Arc;
 
 use clap::{Parser, Subcommand};
 use config::{AppConfig, LogFormat};
-use keys::seed_store::create_seed_store;
+use keys::seed_store::create_secret_store;
 use tracing_subscriber::EnvFilter;
 
 #[derive(Parser)]
@@ -223,10 +222,10 @@ async fn main() {
             init_tracing(&config);
 
             let store = store::Store::open(&config.store).expect("failed to open store");
-            let seed_store: Arc<dyn keys::seed_store::SeedStore> =
-                Arc::from(create_seed_store(&config).expect("failed to create seed store"));
+            let secret_store =
+                create_secret_store(&config).expect("failed to create secret store");
 
-            if let Err(e) = server::run(config, store, seed_store).await {
+            if let Err(e) = server::run(config, store, secret_store).await {
                 tracing::error!("server error: {e}");
                 std::process::exit(1);
             }

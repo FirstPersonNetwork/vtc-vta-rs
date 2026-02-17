@@ -1,15 +1,15 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use affinidi_tdk::secrets_resolver::secrets::Secret;
+use affinidi_tdk::{
+    affinidi_crypto::ed25519::ed25519_private_to_x25519, secrets_resolver::secrets::Secret,
+};
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
-use bip39::Mnemonic;
 use dialoguer::{Confirm, Input, Select};
 use didwebvh_rs::DIDWebVHState;
 use didwebvh_rs::log_entry::LogEntryMethods;
 use didwebvh_rs::parameters::Parameters as WebVHParameters;
-use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
 use rand::Rng;
 use serde_json::json;
 use url::Url;
@@ -24,16 +24,10 @@ use crate::config::{
     AppConfig, AuthConfig, LogConfig, LogFormat, MessagingConfig, SecretsConfig, ServerConfig,
     StoreConfig,
 };
-use crate::keys::derivation::Bip32Extension;
-use crate::keys::seed_store::create_seed_store;
+use crate::keys::seed_store::create_secret_store;
 use crate::store::Store;
 
-/// VTC signing key derivation path: purpose 26, coin type 3 (VTC), account 1
-const VTC_SIGNING_PATH: &str = "m/26'/3'/1'";
-/// VTC key-agreement key derivation path: purpose 26, coin type 3 (VTC), account 2
-const VTC_KA_PATH: &str = "m/26'/3'/2'";
-
-/// Prompt for seed store backend configuration based on compiled features.
+/// Prompt for secret store backend configuration based on compiled features.
 fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
     let mut labels: Vec<&str> = Vec::new();
     let mut tags: Vec<&str> = Vec::new();
@@ -50,9 +44,9 @@ fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
         tags.push("gcp");
     }
 
-    #[cfg(feature = "config-seed")]
+    #[cfg(feature = "config-secret")]
     {
-        labels.push("Config file (hex-encoded seed in config.toml)");
+        labels.push("Config file (hex-encoded secret in config.toml)");
         tags.push("config");
     }
 
@@ -63,7 +57,7 @@ fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
     }
 
     if labels.is_empty() {
-        return Err("no seed storage backend available — compile with at least one of: keyring, config-seed, aws-secrets, gcp-secrets".into());
+        return Err("no secret storage backend available — compile with at least one of: keyring, config-secret, aws-secrets, gcp-secrets".into());
     }
 
     // If only one backend is compiled, use it without prompting
@@ -71,7 +65,7 @@ fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
         0
     } else {
         Select::new()
-            .with_prompt("Seed storage backend")
+            .with_prompt("Secret storage backend")
             .items(&labels)
             .default(0)
             .interact()?
@@ -89,11 +83,11 @@ fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
         return prompt_gcp_secrets();
     }
 
-    #[cfg(feature = "config-seed")]
+    #[cfg(feature = "config-secret")]
     if tag == "config" {
-        // Marker: seed field will be populated with hex after mnemonic derivation
+        // Marker: secret field will be populated with hex after key generation
         return Ok(SecretsConfig {
-            seed: Some(String::new()),
+            secret: Some(String::new()),
             ..Default::default()
         });
     }
@@ -123,7 +117,7 @@ fn prompt_keyring_service(
 fn prompt_aws_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
     let secret_name: String = Input::new()
         .with_prompt("AWS Secrets Manager secret name")
-        .default("vtc-master-seed".into())
+        .default("vtc-secret".into())
         .interact_text()?;
 
     let region: String = Input::new()
@@ -149,7 +143,7 @@ fn prompt_gcp_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
 
     let secret_name: String = Input::new()
         .with_prompt("GCP Secret Manager secret name")
-        .default("vtc-master-seed".into())
+        .default("vtc-secret".into())
         .interact_text()?;
 
     Ok(SecretsConfig {
@@ -157,6 +151,18 @@ fn prompt_gcp_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
         gcp_secret_name: Some(secret_name),
         ..Default::default()
     })
+}
+
+/// Generate 64 bytes of VTC key material: 32 random Ed25519 bytes + 32 X25519 bytes
+/// derived from the Ed25519 key via clamped SHA-512.
+fn generate_key_material() -> [u8; 64] {
+    let mut ed25519_bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut ed25519_bytes);
+    let x25519_bytes = ed25519_private_to_x25519(&ed25519_bytes);
+    let mut material = [0u8; 64];
+    material[..32].copy_from_slice(&ed25519_bytes);
+    material[32..].copy_from_slice(&x25519_bytes);
+    material
 }
 
 pub async fn run_setup_wizard(
@@ -264,66 +270,19 @@ pub async fn run_setup_wizard(
         data_dir: PathBuf::from(&data_dir),
     })?;
 
-    // 11. BIP-39 mnemonic
-    let mnemonic_options = &["Generate new 24-word mnemonic", "Import existing mnemonic"];
-    let mnemonic_choice = Select::new()
-        .with_prompt("BIP-39 mnemonic")
-        .items(mnemonic_options)
-        .default(0)
-        .interact()?;
+    // 11. Generate VTC key material (32 Ed25519 + 32 X25519)
+    let key_material = generate_key_material();
 
-    let mnemonic: Mnemonic = match mnemonic_choice {
-        0 => {
-            let mut entropy = [0u8; 32];
-            rand::rng().fill_bytes(&mut entropy);
-            let m = Mnemonic::from_entropy(&entropy)?;
-
-            eprintln!();
-            eprintln!("\x1b[1;33m╔══════════════════════════════════════════════════════════╗");
-            eprintln!("║  WARNING: Write down your mnemonic phrase and store it   ║");
-            eprintln!("║  securely. It is the ONLY way to recover your keys.      ║");
-            eprintln!("╚══════════════════════════════════════════════════════════╝\x1b[0m");
-            eprintln!();
-            eprintln!("\x1b[1m{}\x1b[0m", m);
-            eprintln!();
-
-            let confirmed = Confirm::new()
-                .with_prompt("I have saved my mnemonic phrase")
-                .default(false)
-                .interact()?;
-            if !confirmed {
-                eprintln!("Setup cancelled — please save your mnemonic before proceeding.");
-                return Ok(());
-            }
-
-            m
-        }
-        _ => {
-            let phrase: String = Input::new()
-                .with_prompt("Enter your BIP-39 mnemonic phrase")
-                .validate_with(|input: &String| -> Result<(), String> {
-                    Mnemonic::parse(input.as_str())
-                        .map(|_| ())
-                        .map_err(|e| format!("Invalid mnemonic: {e}"))
-                })
-                .interact_text()?;
-            Mnemonic::parse(&phrase)?
-        }
-    };
-
-    // Prompt for seed store backend configuration
+    // Prompt for secret store backend configuration
     let mut secrets_config = configure_secrets()?;
 
-    // Derive BIP-39 seed
-    let seed = mnemonic.to_seed("");
-
-    // Store seed via the configured backend
-    if secrets_config.seed.is_some() {
-        // config-seed backend: hex-encode seed into the config (persisted when config is saved)
-        secrets_config.seed = Some(hex::encode(seed));
+    // Store key material via the configured backend
+    if secrets_config.secret.is_some() {
+        // config-secret backend: hex-encode into the config (persisted when config is saved)
+        secrets_config.secret = Some(hex::encode(key_material));
     } else {
-        // All other backends: store via the seed store
-        let seed_store = create_seed_store(&AppConfig {
+        // All other backends: store via the secret store
+        let secret_store = create_secret_store(&AppConfig {
             vtc_did: None,
             vtc_name: None,
             vtc_description: None,
@@ -337,7 +296,10 @@ pub async fn run_setup_wizard(
             config_path: config_path.clone(),
         })
         .map_err(|e| format!("{e}"))?;
-        seed_store.set(&seed).await.map_err(|e| format!("{e}"))?;
+        secret_store
+            .set(&key_material)
+            .await
+            .map_err(|e| format!("{e}"))?;
     }
 
     // 12. Generate random JWT signing key
@@ -350,7 +312,7 @@ pub async fn run_setup_wizard(
 
     // 14. VTC DID
     let vtc_did =
-        create_vtc_did(&seed, messaging.as_ref(), &public_url).await?;
+        create_vtc_did(&key_material, messaging.as_ref(), &public_url).await?;
 
     // 15. Bootstrap admin DID in ACL
     let (admin_did, admin_credential) =
@@ -402,8 +364,8 @@ pub async fn run_setup_wizard(
     eprintln!();
     eprintln!("\x1b[1;32mSetup complete!\x1b[0m");
     eprintln!("  Config saved to: {}", config_path.display());
-    eprintln!("  Seed stored in configured backend");
-    // Print which seed backend was chosen
+    eprintln!("  Key material stored in configured backend");
+    // Print which secret backend was chosen
     {
         let mut _printed = false;
         #[cfg(feature = "aws-secrets")]
@@ -413,23 +375,23 @@ pub async fn run_setup_wizard(
                 .aws_region
                 .as_deref()
                 .unwrap_or("SDK default");
-            eprintln!("  Seed backend: AWS Secrets Manager ({name} in {region})");
+            eprintln!("  Secret backend: AWS Secrets Manager ({name} in {region})");
             _printed = true;
         }
         #[cfg(feature = "gcp-secrets")]
         if !_printed && let Some(ref name) = config.secrets.gcp_secret_name {
             let project = config.secrets.gcp_project.as_deref().unwrap_or("unknown");
-            eprintln!("  Seed backend: GCP Secret Manager ({project}/{name})");
+            eprintln!("  Secret backend: GCP Secret Manager ({project}/{name})");
             _printed = true;
         }
-        if !_printed && config.secrets.seed.is_some() {
-            eprintln!("  Seed backend: config file (hex-encoded in config.toml)");
+        if !_printed && config.secrets.secret.is_some() {
+            eprintln!("  Secret backend: config file (hex-encoded in config.toml)");
             _printed = true;
         }
         #[cfg(feature = "keyring")]
         if !_printed {
             eprintln!(
-                "  Seed backend: OS keyring (service: \"{}\")",
+                "  Secret backend: OS keyring (service: \"{}\")",
                 config.secrets.keyring_service
             );
         }
@@ -531,11 +493,11 @@ async fn create_admin_did(
     }
 }
 
-/// Guide the user through creating (or entering) a did:webvh DID for the VTC.
+/// Guide the user through creating (or entering) a DID for the VTC.
 ///
-/// The VTC uses fixed derivation paths for its signing and key-agreement keys.
+/// Uses raw key material (32 Ed25519 + 32 X25519 bytes) directly.
 async fn create_vtc_did(
-    seed: &[u8],
+    key_material: &[u8; 64],
     messaging: Option<&MessagingConfig>,
     public_url: &Option<String>,
 ) -> Result<Option<String>, Box<dyn std::error::Error>> {
@@ -552,23 +514,22 @@ async fn create_vtc_did(
 
     match choice {
         0 => {
-            let root = ExtendedSigningKey::from_seed(seed)
-                .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
+            let ed25519_bytes: &[u8; 32] = key_material[..32].try_into().unwrap();
+            let x25519_bytes: &[u8; 32] = key_material[32..].try_into().unwrap();
 
-            // Derive fixed VTC keys
-            let mut signing_secret = root.derive_ed25519(VTC_SIGNING_PATH)?;
+            let mut signing_secret = Secret::generate_ed25519(None, Some(ed25519_bytes));
             let signing_pub = signing_secret
                 .get_public_keymultibase()
                 .map_err(|e| format!("{e}"))?;
+            let signing_priv = signing_secret
+                .get_private_keymultibase()
+                .map_err(|e| format!("{e}"))?;
 
-            let ka_secret = root.derive_x25519(VTC_KA_PATH)?;
+            let ka_secret = Secret::generate_x25519(None, Some(x25519_bytes))?;
             let ka_pub = ka_secret
                 .get_public_keymultibase()
                 .map_err(|e| format!("{e}"))?;
             let ka_priv = ka_secret
-                .get_private_keymultibase()
-                .map_err(|e| format!("{e}"))?;
-            let signing_priv = signing_secret
                 .get_private_keymultibase()
                 .map_err(|e| format!("{e}"))?;
 
@@ -670,89 +631,9 @@ pub(crate) fn prompt_webvh_url(label: &str) -> Result<WebVHURL, Box<dyn std::err
     }
 }
 
-/// Prompt the user to optionally generate pre-rotation keys.
-pub(crate) fn prompt_pre_rotation_keys(
-    seed: &[u8],
-    _signing_pub: &str,
-) -> Result<(Vec<String>, Vec<PreRotationKeyData>), Box<dyn std::error::Error>> {
-    eprintln!();
-    eprintln!("  Pre-rotation protects against an attacker changing your authorization keys.");
-    eprintln!("  You generate future keys now and only publish their hashes.  When you later");
-    eprintln!("  need to rotate keys, you reveal the actual key that matches the hash.");
-
-    if !Confirm::new()
-        .with_prompt("Enable key pre-rotation?")
-        .default(true)
-        .interact()?
-    {
-        return Ok((vec![], vec![]));
-    }
-
-    let root = ExtendedSigningKey::from_seed(seed)
-        .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
-
-    let mut hashes: Vec<String> = Vec::new();
-    let mut key_data: Vec<PreRotationKeyData> = Vec::new();
-
-    // Use a counter for pre-rotation key paths under VTC's base path
-    let mut counter = 10u32; // Start at offset 10 to avoid clashing with fixed paths
-
-    loop {
-        let path = format!("m/26'/3'/{counter}'");
-        counter += 1;
-        let derivation_path: DerivationPath = path
-            .parse()
-            .map_err(|e| format!("Invalid derivation path: {e}"))?;
-        let derived = root
-            .derive(&derivation_path)
-            .map_err(|e| format!("Key derivation failed: {e}"))?;
-
-        let secret = Secret::generate_ed25519(None, Some(derived.signing_key.as_bytes()));
-
-        let pub_mb = secret
-            .get_public_keymultibase()
-            .map_err(|e| format!("{e}"))?;
-        let hash = secret
-            .get_public_keymultibase_hash()
-            .map_err(|e| format!("{e}"))?;
-
-        let idx = hashes.len();
-        key_data.push(PreRotationKeyData {
-            path,
-            public_key: pub_mb.clone(),
-            label: format!("VTC pre-rotation key {idx}"),
-        });
-
-        eprintln!();
-        eprintln!("  publicKeyMultibase: {pub_mb}");
-
-        hashes.push(hash);
-
-        if !Confirm::new()
-            .with_prompt(format!(
-                "Generated {} pre-rotation key(s). Generate another?",
-                hashes.len()
-            ))
-            .default(false)
-            .interact()?
-        {
-            break;
-        }
-    }
-
-    Ok((hashes, key_data))
-}
-
-#[allow(dead_code)]
-pub(crate) struct PreRotationKeyData {
-    pub path: String,
-    pub public_key: String,
-    pub label: String,
-}
-
 /// Interactive did:webvh creation flow for the VTC DID.
 ///
-/// Uses pre-derived keys (fixed derivation paths) instead of allocating key records.
+/// Uses pre-generated keys (from secret store) instead of BIP-32 derivation.
 #[allow(clippy::too_many_arguments)]
 async fn create_webvh_did(
     signing_secret: &mut Secret,

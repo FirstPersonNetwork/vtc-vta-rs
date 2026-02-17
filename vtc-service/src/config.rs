@@ -27,8 +27,8 @@ pub struct AppConfig {
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct SecretsConfig {
-    /// Hex-encoded BIP-32 seed (config-seed feature)
-    pub seed: Option<String>,
+    /// Hex-encoded VTC key material (config-secret feature)
+    pub secret: Option<String>,
     /// AWS Secrets Manager secret name (aws-secrets feature)
     pub aws_secret_name: Option<String>,
     /// AWS region override (aws-secrets feature)
@@ -50,7 +50,7 @@ fn default_keyring_service() -> String {
 impl Default for SecretsConfig {
     fn default() -> Self {
         Self {
-            seed: None,
+            secret: None,
             aws_secret_name: None,
             aws_region: None,
             gcp_project: None,
@@ -261,8 +261,8 @@ impl AppConfig {
         }
 
         // Secrets env var overrides
-        if let Ok(seed) = std::env::var("VTC_SECRETS_SEED") {
-            config.secrets.seed = Some(seed);
+        if let Ok(secret) = std::env::var("VTC_SECRETS_SECRET") {
+            config.secrets.secret = Some(secret);
         }
         if let Ok(name) = std::env::var("VTC_SECRETS_AWS_SECRET_NAME") {
             config.secrets.aws_secret_name = Some(name);

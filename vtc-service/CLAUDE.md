@@ -24,7 +24,7 @@ Both service crates share configuration via `workspace.package` in the root `Car
 - **VTC_ env prefix** — all environment variables use `VTC_` instead of `VTA_`
 - **JWT audience** — `"VTC"` instead of `"VTA"`
 - **Default port** — 8200 (VTA uses 8100)
-- **BIP-32 base paths** — `m/26'/3'/...` (VTA uses `m/26'/2'/...`)
+- **No BIP-32** — VTC receives key material from the VTA (no local key derivation)
 
 ## Build Commands
 

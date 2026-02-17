@@ -1,6 +1,6 @@
 #[cfg(feature = "aws-secrets")]
 mod aws;
-#[cfg(feature = "config-seed")]
+#[cfg(feature = "config-secret")]
 mod config;
 #[cfg(feature = "keyring")]
 mod keyring;
@@ -8,13 +8,13 @@ mod keyring;
 mod gcp;
 
 #[cfg(feature = "aws-secrets")]
-pub use aws::AwsSeedStore;
-#[cfg(feature = "config-seed")]
-pub use config::ConfigSeedStore;
+pub use aws::AwsSecretStore;
+#[cfg(feature = "config-secret")]
+pub use config::ConfigSecretStore;
 #[cfg(feature = "gcp-secrets")]
-pub use gcp::GcpSeedStore;
+pub use gcp::GcpSecretStore;
 #[cfg(feature = "keyring")]
-pub use keyring::KeyringSeedStore;
+pub use keyring::KeyringSecretStore;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -24,23 +24,24 @@ use crate::error::AppError;
 
 type BoxFuture<'a, T> = Pin<Box<dyn Future<Output = T> + Send + 'a>>;
 
-pub trait SeedStore: Send + Sync {
+/// Store for VTC key material (64 bytes: 32 Ed25519 + 32 X25519).
+pub trait SecretStore: Send + Sync {
     fn get(&self) -> BoxFuture<'_, Result<Option<Vec<u8>>, AppError>>;
-    fn set(&self, seed: &[u8]) -> BoxFuture<'_, Result<(), AppError>>;
+    fn set(&self, secret: &[u8]) -> BoxFuture<'_, Result<(), AppError>>;
 }
 
-/// Create a seed store backend based on compiled features and configuration.
+/// Create a secret store backend based on compiled features and configuration.
 ///
 /// Priority:
 /// 1. AWS Secrets Manager (if `aws-secrets` compiled + `secrets.aws_secret_name` set)
 /// 2. GCP Secret Manager (if `gcp-secrets` compiled + `secrets.gcp_secret_name` set)
-/// 3. Config file seed (if `config-seed` compiled + `secrets.seed` set)
+/// 3. Config file secret (if `config-secret` compiled + `secrets.secret` set)
 /// 4. OS keyring (if `keyring` compiled — the default)
 #[allow(unused_variables)]
-pub fn create_seed_store(config: &AppConfig) -> Result<Box<dyn SeedStore>, AppError> {
+pub fn create_secret_store(config: &AppConfig) -> Result<Box<dyn SecretStore>, AppError> {
     #[cfg(feature = "aws-secrets")]
     if config.secrets.aws_secret_name.is_some() {
-        let store = AwsSeedStore::new(
+        let store = AwsSecretStore::new(
             config.secrets.aws_secret_name.clone().unwrap(),
             config.secrets.aws_region.clone(),
         );
@@ -54,24 +55,24 @@ pub fn create_seed_store(config: &AppConfig) -> Result<Box<dyn SeedStore>, AppEr
                 "secrets.gcp_project is required when secrets.gcp_secret_name is set".into(),
             )
         })?;
-        let store = GcpSeedStore::new(project, config.secrets.gcp_secret_name.clone().unwrap());
+        let store = GcpSecretStore::new(project, config.secrets.gcp_secret_name.clone().unwrap());
         return Ok(Box::new(store));
     }
 
-    #[cfg(feature = "config-seed")]
-    if config.secrets.seed.is_some() {
-        let store = ConfigSeedStore::new(config.secrets.seed.clone().unwrap());
+    #[cfg(feature = "config-secret")]
+    if config.secrets.secret.is_some() {
+        let store = ConfigSecretStore::new(config.secrets.secret.clone().unwrap());
         return Ok(Box::new(store));
     }
 
     #[cfg(feature = "keyring")]
     {
-        let store = KeyringSeedStore::new(&config.secrets.keyring_service, "master_seed");
+        let store = KeyringSecretStore::new(&config.secrets.keyring_service, "vtc_secret");
         return Ok(Box::new(store));
     }
 
     #[allow(unreachable_code)]
     Err(AppError::Config(
-        "no seed store backend available — compile with at least one of: keyring, config-seed, aws-secrets, gcp-secrets".into(),
+        "no secret store backend available — compile with at least one of: keyring, config-secret, aws-secrets, gcp-secrets".into(),
     ))
 }

@@ -14,7 +14,7 @@ repository.workspace = true
 default = ["setup", "keyring"]
 setup = ["dep:dialoguer", "dep:didwebvh-rs", "dep:url"]
 keyring = ["dep:keyring"]
-config-seed = []
+config-secret = []
 aws-secrets = ["dep:aws-sdk-secretsmanager", "dep:aws-config"]
 gcp-secrets = [
   "dep:google-cloud-secretmanager-v1",
@@ -43,9 +43,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-bip39 = "2"
 ed25519-dalek = "2"
-ed25519-dalek-bip32 = { workspace = true }
 hex = "0.4"
 keyring = { version = "3", optional = true }
 aws-sdk-secretsmanager = { version = "1", optional = true }

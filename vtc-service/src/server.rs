@@ -2,8 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
-use affinidi_tdk::secrets_resolver::{SecretsResolver, ThreadedSecretsResolver};
-use ed25519_dalek_bip32::ExtendedSigningKey;
+use affinidi_tdk::secrets_resolver::{SecretsResolver, ThreadedSecretsResolver, secrets::Secret};
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
@@ -12,8 +11,7 @@ use crate::auth::jwt::JwtKeys;
 use crate::auth::session::cleanup_expired_sessions;
 use crate::config::{AppConfig, AuthConfig};
 use crate::error::AppError;
-use crate::keys::derivation::Bip32Extension;
-use crate::keys::seed_store::SeedStore;
+use crate::keys::seed_store::SecretStore;
 use crate::messaging;
 use crate::routes;
 use crate::store::{KeyspaceHandle, Store};
@@ -21,18 +19,12 @@ use tokio::sync::{RwLock, watch};
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, warn};
 
-/// VTC signing key derivation path: purpose 26, coin type 3 (VTC), account 1
-const VTC_SIGNING_PATH: &str = "m/26'/3'/1'";
-/// VTC key-agreement key derivation path: purpose 26, coin type 3 (VTC), account 2
-const VTC_KA_PATH: &str = "m/26'/3'/2'";
-
 #[derive(Clone)]
 #[allow(dead_code)]
 pub struct AppState {
     pub sessions_ks: KeyspaceHandle,
     pub acl_ks: KeyspaceHandle,
     pub config: Arc<RwLock<AppConfig>>,
-    pub seed_store: Arc<dyn SeedStore>,
     pub did_resolver: Option<DIDCacheClient>,
     pub secrets_resolver: Option<Arc<ThreadedSecretsResolver>>,
     pub jwt_keys: Option<Arc<JwtKeys>>,
@@ -41,7 +33,7 @@ pub struct AppState {
 pub async fn run(
     config: AppConfig,
     store: Store,
-    seed_store: Arc<dyn SeedStore>,
+    secret_store: Box<dyn SecretStore>,
 ) -> Result<(), AppError> {
     // Open cached keyspace handles
     let sessions_ks = store.keyspace("sessions")?;
@@ -49,7 +41,7 @@ pub async fn run(
 
     // Initialize auth infrastructure
     let (did_resolver, secrets_resolver, jwt_keys) =
-        init_auth(&config, &*seed_store).await;
+        init_auth(&config, &*secret_store).await;
 
     // Bind TCP listener on the main thread for early port validation
     let addr = format!("{}:{}", config.server.host, config.server.port);
@@ -84,7 +76,6 @@ pub async fn run(
         sessions_ks,
         acl_ks,
         config: Arc::new(RwLock::new(config)),
-        seed_store,
         did_resolver,
         secrets_resolver,
         jwt_keys,
@@ -310,11 +301,11 @@ fn run_didcomm_thread(
 /// Returns `None` values if the VTC DID is not configured (server still starts
 /// so the setup wizard can be run first).
 ///
-/// Unlike VTA, the VTC uses fixed derivation paths for its DID keys instead of
-/// looking them up from stored key records.
+/// Loads 64 raw bytes from the secret store: first 32 = Ed25519 signing key,
+/// last 32 = X25519 key-agreement key.
 async fn init_auth(
     config: &AppConfig,
-    seed_store: &dyn SeedStore,
+    secret_store: &dyn SecretStore,
 ) -> (
     Option<DIDCacheClient>,
     Option<Arc<ThreadedSecretsResolver>>,
@@ -328,26 +319,29 @@ async fn init_auth(
         }
     };
 
-    // Load seed from store
-    let seed = match seed_store.get().await {
+    // Load key material from secret store (64 bytes: 32 Ed25519 + 32 X25519)
+    let key_material = match secret_store.get().await {
         Ok(Some(s)) => s,
         Ok(None) => {
-            warn!("no master seed found — auth endpoints will not work (run setup first)");
+            warn!("no key material found — auth endpoints will not work (run setup first)");
             return (None, None, None);
         }
         Err(e) => {
-            warn!("failed to load seed: {e} — auth endpoints will not work");
+            warn!("failed to load key material: {e} — auth endpoints will not work");
             return (None, None, None);
         }
     };
 
-    let root = match ExtendedSigningKey::from_seed(&seed) {
-        Ok(r) => r,
-        Err(e) => {
-            warn!("failed to create BIP-32 root key: {e} — auth endpoints will not work");
-            return (None, None, None);
-        }
-    };
+    if key_material.len() != 64 {
+        warn!(
+            "key material is {} bytes, expected 64 — auth endpoints will not work",
+            key_material.len()
+        );
+        return (None, None, None);
+    }
+
+    let ed25519_bytes: &[u8; 32] = key_material[..32].try_into().unwrap();
+    let x25519_bytes: &[u8; 32] = key_material[32..].try_into().unwrap();
 
     // 1. DID resolver (local mode)
     let did_resolver = match DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await {
@@ -361,25 +355,19 @@ async fn init_auth(
     // 2. Secrets resolver with VTC's Ed25519 + X25519 secrets
     let (secrets_resolver, _handle) = ThreadedSecretsResolver::new(None).await;
 
-    // Derive and insert VTC signing secret (Ed25519) using fixed path
-    match root.derive_ed25519(VTC_SIGNING_PATH) {
-        Ok(mut signing_secret) => {
-            signing_secret.id = format!("{vtc_did}#key-0");
-            secrets_resolver.insert(signing_secret).await;
-        }
-        Err(e) => warn!("failed to derive VTC signing key: {e}"),
-    }
+    let mut signing_secret = Secret::generate_ed25519(None, Some(ed25519_bytes));
+    signing_secret.id = format!("{vtc_did}#key-0");
+    secrets_resolver.insert(signing_secret).await;
 
-    // Derive and insert VTC key-agreement secret (X25519) using fixed path
-    match root.derive_x25519(VTC_KA_PATH) {
+    match Secret::generate_x25519(None, Some(x25519_bytes)) {
         Ok(mut ka_secret) => {
             ka_secret.id = format!("{vtc_did}#key-1");
             secrets_resolver.insert(ka_secret).await;
         }
-        Err(e) => warn!("failed to derive VTC key-agreement key: {e}"),
+        Err(e) => warn!("failed to create VTC key-agreement secret: {e}"),
     }
 
-    // 3. JWT signing key from config (random key, not BIP-32 derived)
+    // 3. JWT signing key from config (random key, not derived from VTC keys)
     let jwt_keys = match &config.auth.jwt_signing_key {
         Some(b64) => match decode_jwt_key(b64) {
             Ok(k) => k,

@@ -21,11 +21,8 @@ pub enum AppError {
     #[error("internal error: {0}")]
     Internal(String),
 
-    #[error("key derivation error: {0}")]
-    KeyDerivation(String),
-
-    #[error("seed store error: {0}")]
-    SeedStore(String),
+    #[error("secret store error: {0}")]
+    SecretStore(String),
 
     #[error("not found: {0}")]
     NotFound(String),
@@ -57,8 +54,7 @@ impl IntoResponse for AppError {
             AppError::Store(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Serialization(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
-            AppError::KeyDerivation(_) => StatusCode::BAD_REQUEST,
-            AppError::SeedStore(_) => StatusCode::INTERNAL_SERVER_ERROR,
+            AppError::SecretStore(_) => StatusCode::INTERNAL_SERVER_ERROR,
             AppError::NotFound(_) => StatusCode::NOT_FOUND,
             AppError::Conflict(_) => StatusCode::CONFLICT,
             AppError::Secrets(_) => StatusCode::INTERNAL_SERVER_ERROR,

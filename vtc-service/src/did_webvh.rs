@@ -1,26 +1,20 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use affinidi_tdk::secrets_resolver::secrets::Secret;
 use dialoguer::{Confirm, Input, Select};
 use didwebvh_rs::DIDWebVHState;
 use didwebvh_rs::log_entry::LogEntryMethods;
 use didwebvh_rs::parameters::Parameters as WebVHParameters;
-use ed25519_dalek_bip32::ExtendedSigningKey;
 use serde_json::json;
 
 use vta_sdk::did_secrets::{DidSecretsBundle, SecretEntry};
 use vta_sdk::keys::KeyType as SdkKeyType;
 
 use crate::config::AppConfig;
-use crate::keys::derivation::Bip32Extension;
-use crate::keys::seed_store::create_seed_store;
+use crate::keys::seed_store::create_secret_store;
 use crate::setup;
 use crate::store::Store;
-
-/// VTC signing key derivation path: purpose 26, coin type 3 (VTC), account 1
-const VTC_SIGNING_PATH: &str = "m/26'/3'/1'";
-/// VTC key-agreement key derivation path: purpose 26, coin type 3 (VTC), account 2
-const VTC_KA_PATH: &str = "m/26'/3'/2'";
 
 pub struct CreateDidWebvhArgs {
     pub config_path: Option<PathBuf>,
@@ -33,21 +27,29 @@ pub async fn run_create_did_webvh(
     let config = AppConfig::load(args.config_path)?;
     let store = Store::open(&config.store)?;
 
-    // Load seed from configured backend
-    let seed_store = create_seed_store(&config)?;
-    let seed = seed_store
+    // Load key material from configured backend (64 bytes: 32 Ed25519 + 32 X25519)
+    let secret_store = create_secret_store(&config)?;
+    let key_material = secret_store
         .get()
         .await
         .map_err(|e| format!("{e}"))?
-        .ok_or("No seed found. Run `vtc setup` first.")?;
+        .ok_or("No key material found. Run `vtc setup` first.")?;
 
-    let root = ExtendedSigningKey::from_seed(&seed)
-        .map_err(|e| format!("Failed to create BIP-32 root key: {e}"))?;
+    if key_material.len() != 64 {
+        return Err(format!(
+            "key material is {} bytes, expected 64. Run `vtc setup` to regenerate.",
+            key_material.len()
+        )
+        .into());
+    }
+
+    let ed25519_bytes: &[u8; 32] = key_material[..32].try_into().unwrap();
+    let x25519_bytes: &[u8; 32] = key_material[32..].try_into().unwrap();
 
     let label = args.label.as_deref().unwrap_or("VTC");
 
-    // Derive VTC keys using fixed paths
-    let mut signing_secret = root.derive_ed25519(VTC_SIGNING_PATH)?;
+    // Create secrets from raw key material
+    let mut signing_secret = Secret::generate_ed25519(None, Some(ed25519_bytes));
     let signing_pub = signing_secret
         .get_public_keymultibase()
         .map_err(|e| format!("{e}"))?;
@@ -55,7 +57,7 @@ pub async fn run_create_did_webvh(
         .get_private_keymultibase()
         .map_err(|e| format!("{e}"))?;
 
-    let ka_secret = root.derive_x25519(VTC_KA_PATH)?;
+    let ka_secret = Secret::generate_x25519(None, Some(x25519_bytes))?;
     let ka_pub = ka_secret
         .get_public_keymultibase()
         .map_err(|e| format!("{e}"))?;
@@ -164,19 +166,10 @@ pub async fn run_create_did_webvh(
         .default(true)
         .interact()?;
 
-    // Pre-rotation keys
-    let (next_key_hashes, _pre_rotation_keys) =
-        setup::prompt_pre_rotation_keys(&seed, &signing_pub)?;
-
     // Build parameters
     let parameters = WebVHParameters {
         update_keys: Some(Arc::new(vec![signing_pub.clone()])),
         portable: Some(portable),
-        next_key_hashes: if next_key_hashes.is_empty() {
-            None
-        } else {
-            Some(Arc::new(next_key_hashes))
-        },
         ..Default::default()
     };
 

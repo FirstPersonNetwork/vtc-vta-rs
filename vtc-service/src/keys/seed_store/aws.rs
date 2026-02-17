@@ -12,20 +12,20 @@ fn format_aws_error<E: std::error::Error>(context: &str, err: E) -> AppError {
         msg.push_str(&format!("\n  caused by: {cause}"));
         source = cause.source();
     }
-    AppError::SeedStore(msg)
+    AppError::SecretStore(msg)
 }
 
-/// Seed store backed by AWS Secrets Manager.
+/// Secret store backed by AWS Secrets Manager.
 ///
-/// The seed is stored as a hex-encoded string in the named secret.
+/// The VTC key material is stored as a hex-encoded string in the named secret.
 /// AWS credentials are resolved from the environment (IAM role, env vars, etc.)
 /// via the default credential provider chain.
-pub struct AwsSeedStore {
+pub struct AwsSecretStore {
     secret_name: String,
     region: Option<String>,
 }
 
-impl AwsSeedStore {
+impl AwsSecretStore {
     pub fn new(secret_name: String, region: Option<String>) -> Self {
         Self {
             secret_name,
@@ -43,7 +43,7 @@ impl AwsSeedStore {
     }
 }
 
-impl super::SeedStore for AwsSeedStore {
+impl super::SecretStore for AwsSecretStore {
     fn get(&self) -> Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>, AppError>> + Send + '_>> {
         Box::pin(async {
             let client = self.client().await?;
@@ -55,13 +55,13 @@ impl super::SeedStore for AwsSeedStore {
 
             match result {
                 Ok(output) => {
-                    let hex_seed = output.secret_string().ok_or_else(|| {
-                        AppError::SeedStore("AWS secret exists but has no string value".into())
+                    let hex_val = output.secret_string().ok_or_else(|| {
+                        AppError::SecretStore("AWS secret exists but has no string value".into())
                     })?;
-                    let bytes = hex::decode(hex_seed).map_err(|e| {
-                        AppError::SeedStore(format!("failed to decode hex seed from AWS: {e}"))
+                    let bytes = hex::decode(hex_val).map_err(|e| {
+                        AppError::SecretStore(format!("failed to decode hex secret from AWS: {e}"))
                     })?;
-                    debug!(secret_name = %self.secret_name, "seed loaded from AWS Secrets Manager");
+                    debug!(secret_name = %self.secret_name, "secret loaded from AWS Secrets Manager");
                     Ok(Some(bytes))
                 }
                 Err(e) => {
@@ -71,7 +71,7 @@ impl super::SeedStore for AwsSeedStore {
                         Ok(None)
                     } else {
                         Err(format_aws_error(
-                        "failed to read seed from AWS Secrets Manager",
+                        "failed to read secret from AWS Secrets Manager",
                         service_error,
                     ))
                     }
@@ -80,8 +80,8 @@ impl super::SeedStore for AwsSeedStore {
         })
     }
 
-    fn set(&self, seed: &[u8]) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
-        let hex_seed = hex::encode(seed);
+    fn set(&self, secret: &[u8]) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
+        let hex_val = hex::encode(secret);
         Box::pin(async move {
             let client = self.client().await?;
 
@@ -89,13 +89,13 @@ impl super::SeedStore for AwsSeedStore {
             let result = client
                 .put_secret_value()
                 .secret_id(&self.secret_name)
-                .secret_string(&hex_seed)
+                .secret_string(&hex_val)
                 .send()
                 .await;
 
             match result {
                 Ok(_) => {
-                    debug!(secret_name = %self.secret_name, "seed stored in AWS Secrets Manager");
+                    debug!(secret_name = %self.secret_name, "secret stored in AWS Secrets Manager");
                     Ok(())
                 }
                 Err(e) => {
@@ -105,7 +105,7 @@ impl super::SeedStore for AwsSeedStore {
                         client
                             .create_secret()
                             .name(&self.secret_name)
-                            .secret_string(&hex_seed)
+                            .secret_string(&hex_val)
                             .send()
                             .await
                             .map_err(|e| {
@@ -114,11 +114,11 @@ impl super::SeedStore for AwsSeedStore {
                                     e.into_service_error(),
                                 )
                             })?;
-                        debug!(secret_name = %self.secret_name, "seed created in AWS Secrets Manager");
+                        debug!(secret_name = %self.secret_name, "secret created in AWS Secrets Manager");
                         Ok(())
                     } else {
                         Err(format_aws_error(
-                            "failed to store seed in AWS Secrets Manager",
+                            "failed to store secret in AWS Secrets Manager",
                             service_error,
                         ))
                     }

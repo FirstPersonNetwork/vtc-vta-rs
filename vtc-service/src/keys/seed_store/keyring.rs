@@ -4,12 +4,12 @@ use std::pin::Pin;
 use crate::error::AppError;
 use tracing::debug;
 
-pub struct KeyringSeedStore {
+pub struct KeyringSecretStore {
     service: String,
     user: String,
 }
 
-impl KeyringSeedStore {
+impl KeyringSecretStore {
     pub fn new(service: impl Into<String>, user: impl Into<String>) -> Self {
         Self {
             service: service.into(),
@@ -18,28 +18,28 @@ impl KeyringSeedStore {
     }
 }
 
-impl super::SeedStore for KeyringSeedStore {
+impl super::SecretStore for KeyringSecretStore {
     fn get(&self) -> Pin<Box<dyn Future<Output = Result<Option<Vec<u8>>, AppError>> + Send + '_>> {
         let service = self.service.clone();
         let user = self.user.clone();
         Box::pin(async move {
             tokio::task::spawn_blocking(move || {
                 let entry = keyring::Entry::new(&service, &user).map_err(|e| {
-                    AppError::SeedStore(format!("failed to create keyring entry: {e}"))
+                    AppError::SecretStore(format!("failed to create keyring entry: {e}"))
                 })?;
                 match entry.get_password() {
-                    Ok(hex_seed) => {
-                        let bytes = hex::decode(&hex_seed).map_err(|e| {
-                            AppError::SeedStore(format!("failed to decode seed: {e}"))
+                    Ok(hex_secret) => {
+                        let bytes = hex::decode(&hex_secret).map_err(|e| {
+                            AppError::SecretStore(format!("failed to decode secret: {e}"))
                         })?;
-                        debug!("seed loaded from keyring");
+                        debug!("secret loaded from keyring");
                         Ok(Some(bytes))
                     }
                     Err(keyring::Error::NoEntry) => {
-                        debug!("no seed found in keyring");
+                        debug!("no secret found in keyring");
                         Ok(None)
                     }
-                    Err(e) => Err(AppError::SeedStore(format!("failed to read seed: {e}"))),
+                    Err(e) => Err(AppError::SecretStore(format!("failed to read secret: {e}"))),
                 }
             })
             .await
@@ -47,19 +47,19 @@ impl super::SeedStore for KeyringSeedStore {
         })
     }
 
-    fn set(&self, seed: &[u8]) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
+    fn set(&self, secret: &[u8]) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
         let service = self.service.clone();
         let user = self.user.clone();
-        let hex_seed = hex::encode(seed);
+        let hex_secret = hex::encode(secret);
         Box::pin(async move {
             tokio::task::spawn_blocking(move || {
                 let entry = keyring::Entry::new(&service, &user).map_err(|e| {
-                    AppError::SeedStore(format!("failed to create keyring entry: {e}"))
+                    AppError::SecretStore(format!("failed to create keyring entry: {e}"))
                 })?;
                 entry
-                    .set_password(&hex_seed)
-                    .map_err(|e| AppError::SeedStore(format!("failed to store seed: {e}")))?;
-                debug!("seed stored in keyring");
+                    .set_password(&hex_secret)
+                    .map_err(|e| AppError::SecretStore(format!("failed to store secret: {e}")))?;
+                debug!("secret stored in keyring");
                 Ok(())
             })
             .await

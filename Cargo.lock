@@ -7374,6 +7374,49 @@ dependencies = [
 ]
 
 [[package]]
+name = "vtc-service"
+version = "0.1.0"
+dependencies = [
+ "affinidi-did-resolver-cache-sdk",
+ "affinidi-tdk",
+ "aws-config",
+ "aws-sdk-secretsmanager",
+ "axum",
+ "axum-extra",
+ "base64 0.22.1",
+ "bip39",
+ "bytes",
+ "chrono",
+ "clap",
+ "dialoguer",
+ "didwebvh-rs",
+ "ed25519-dalek",
+ "ed25519-dalek-bip32",
+ "fjall",
+ "google-cloud-auth",
+ "google-cloud-secretmanager-v1",
+ "hex",
+ "jsonwebtoken",
+ "keyring",
+ "multibase",
+ "rand 0.10.0",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "toml",
+ "tower-http",
+ "tracing",
+ "tracing-subscriber",
+ "url",
+ "uuid",
+ "vta-sdk",
+ "x25519-dalek",
+]
+
+[[package]]
 name = "vtparse"
 version = "0.6.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

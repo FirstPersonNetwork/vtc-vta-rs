@@ -90,20 +90,19 @@ impl std::error::Error for DidKeyError {}
 
 /// Convert a [`GetKeySecretResponse`](crate::client::GetKeySecretResponse) into
 /// an `affinidi_tdk` [`Secret`].
+///
+/// The response's `private_key_multibase` is a multicodec-prefixed multibase
+/// string (e.g. ed25519-priv `0x8026`). `Secret::from_multibase` handles the
+/// decoding for all supported key types.
 #[cfg(feature = "client")]
 pub fn secret_from_key_response(
     resp: &crate::client::GetKeySecretResponse,
 ) -> Result<affinidi_tdk::secrets_resolver::secrets::Secret, DidKeyError> {
-    use affinidi_tdk::secrets_resolver::secrets::Secret;
-
-    match resp.key_type {
-        crate::keys::KeyType::Ed25519 => {
-            let seed = decode_private_key_multibase(&resp.private_key_multibase)?;
-            Ok(Secret::generate_ed25519(None, Some(&seed)))
-        }
-        crate::keys::KeyType::X25519 => Secret::from_multibase(&resp.private_key_multibase, None)
-            .map_err(|e| DidKeyError::Multibase(e.to_string())),
-    }
+    affinidi_tdk::secrets_resolver::secrets::Secret::from_multibase(
+        &resp.private_key_multibase,
+        None,
+    )
+    .map_err(|e| DidKeyError::Multibase(e.to_string()))
 }
 
 #[cfg(test)]

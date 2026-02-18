@@ -6,8 +6,8 @@ use vta_sdk::session::resolve_vta_url;
 use crate::auth;
 use crate::config::{PnmConfig, save_config};
 
-/// Configure PNM with a VTA credential. The URL is extracted from the credential bundle,
-/// or resolved from the VTA DID document if not present in the bundle.
+/// Configure PNM with a VTA credential. The VTA service URL is resolved from the
+/// VTA DID in the credential bundle.
 /// If no credential is provided on the CLI, the user is prompted to paste one interactively.
 pub async fn run_setup(
     credential: Option<&str>,
@@ -27,15 +27,10 @@ pub async fn run_setup(
         }
     };
 
-    // Decode credential to extract VTA URL
+    // Decode credential and resolve VTA URL from the DID document
     let bundle = CredentialBundle::decode(&credential)?;
-    let url = match bundle.vta_url {
-        Some(url) => url,
-        None => {
-            eprintln!("No URL in credential bundle, resolving VTA DID...");
-            resolve_vta_url(&bundle.vta_did).await?
-        }
-    };
+    eprintln!("Resolving VTA DID: {}", bundle.vta_did);
+    let url = resolve_vta_url(&bundle.vta_did).await?;
     let url = url.trim_end_matches('/').to_string();
 
     let config = PnmConfig {

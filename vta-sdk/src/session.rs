@@ -470,8 +470,8 @@ pub async fn challenge_response(
 /// Resolve a VTA DID to discover its service URL.
 ///
 /// Tries these strategies in order:
-/// 1. Look for an `Authentication` service endpoint and strip `/authenticate`
-/// 2. Look for a `DIDCommMessaging` service with an HTTP(S) URI
+/// 1. Look for a `VerifiableTrustAgent` (`#vta`) service endpoint
+/// 2. Look for an `Authentication` service endpoint and strip `/authenticate`
 /// 3. Parse the domain from `did:web:` or `did:webvh:` DID strings
 pub async fn resolve_vta_url(vta_did: &str) -> Result<String, Box<dyn std::error::Error>> {
     debug!(vta_did, "resolving VTA DID to discover service URL");
@@ -482,7 +482,24 @@ pub async fn resolve_vta_url(vta_did: &str) -> Result<String, Box<dyn std::error
 
     match did_resolver.resolve(vta_did).await {
         Ok(resolved) => {
-            // Strategy 1: Authentication service endpoint
+            // Strategy 1: VerifiableTrustAgent (#vta) service endpoint
+            for svc in &resolved.doc.service {
+                if svc.type_.iter().any(|t| t == "VerifiableTrustAgent") {
+                    if let Some(url) = svc
+                        .service_endpoint
+                        .get_uris()
+                        .into_iter()
+                        .map(|u| u.trim_matches('"').to_string())
+                        .find(|u| u.starts_with("http"))
+                    {
+                        let base = url.trim_end_matches('/').to_string();
+                        debug!(url = %base, "found VTA URL from VerifiableTrustAgent service");
+                        return Ok(base);
+                    }
+                }
+            }
+
+            // Strategy 2: Authentication service endpoint
             for svc in &resolved.doc.service {
                 if svc.type_.iter().any(|t| t == "Authentication") {
                     if let Some(url) = svc
@@ -497,23 +514,6 @@ pub async fn resolve_vta_url(vta_did: &str) -> Result<String, Box<dyn std::error
                             .trim_end_matches("/authenticate")
                             .to_string();
                         debug!(url = %base, "found VTA URL from Authentication service");
-                        return Ok(base);
-                    }
-                }
-            }
-
-            // Strategy 2: DIDCommMessaging service with HTTP(S) URI
-            for svc in &resolved.doc.service {
-                if svc.type_.iter().any(|t| t == "DIDCommMessaging") {
-                    if let Some(url) = svc
-                        .service_endpoint
-                        .get_uris()
-                        .into_iter()
-                        .map(|u| u.trim_matches('"').to_string())
-                        .find(|u| u.starts_with("https://") || u.starts_with("http://"))
-                    {
-                        let base = url.trim_end_matches('/').to_string();
-                        debug!(url = %base, "found VTA URL from DIDCommMessaging service");
                         return Ok(base);
                     }
                 }

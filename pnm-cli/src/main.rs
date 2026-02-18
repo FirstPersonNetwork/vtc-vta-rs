@@ -632,8 +632,39 @@ fn print_section(title: &str) {
 // ── Command handlers ────────────────────────────────────────────────
 
 async fn cmd_health(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>> {
+    use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
+
+    let session = auth::loaded_session();
+
+    // ── VTA ────────────────────────────────────────────────────────
     print_section("VTA");
 
+    // DID resolution
+    let did_resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build())
+        .await
+        .ok();
+
+    if let Some(ref info) = session {
+        println!("  {CYAN}{:<13}{RESET} {}", "DID", info.vta_did);
+        if let Some(ref resolver) = did_resolver {
+            match resolver.resolve(&info.vta_did).await {
+                Ok(_) => {
+                    let method = info
+                        .vta_did
+                        .strip_prefix("did:")
+                        .and_then(|s| s.split(':').next())
+                        .unwrap_or("?");
+                    println!("                {GREEN}✓{RESET} resolves ({method})");
+                }
+                Err(e) => println!("                {RED}✗{RESET} resolution failed: {e}"),
+            }
+        }
+    }
+
+    // URL
+    println!("  {CYAN}{:<13}{RESET} {}", "URL", client.base_url());
+
+    // REST health check
     match client.health().await {
         Ok(resp) => {
             println!(
@@ -646,10 +677,104 @@ async fn cmd_health(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>
                 "  {CYAN}{:<13}{RESET} {RED}✗{RESET} unreachable ({e})",
                 "Service"
             );
-            return Ok(());
         }
     }
-    println!("  {CYAN}{:<13}{RESET} {}", "URL", client.base_url());
+
+    // ── Authentication ─────────────────────────────────────────────
+    print_section("Authentication");
+
+    if let Some(ref info) = session {
+        println!("  {CYAN}{:<13}{RESET} {}", "Client DID", info.client_did);
+        match auth::ensure_authenticated(client.base_url()).await {
+            Ok(_token) => {
+                // Re-check token status for display
+                if let Some(status) = auth::session_status() {
+                    match status.token_status {
+                        vta_sdk::session::TokenStatus::Valid { expires_in_secs } => {
+                            println!(
+                                "  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} valid (expires in {expires_in_secs}s)",
+                                "Token"
+                            );
+                        }
+                        _ => {
+                            println!(
+                                "  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} valid",
+                                "Token"
+                            );
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                println!(
+                    "  {CYAN}{:<13}{RESET} {RED}✗{RESET} {e}",
+                    "Token"
+                );
+            }
+        }
+    } else {
+        println!("  {DIM}Not authenticated{RESET}");
+    }
+
+    // ── Mediator ───────────────────────────────────────────────────
+    print_section("Mediator");
+
+    if let Some(ref info) = session {
+        match vta_sdk::session::resolve_mediator_did(&info.vta_did).await {
+            Ok(Some(mediator_did)) => {
+                println!("  {CYAN}{:<13}{RESET} {mediator_did}", "DID");
+
+                // Resolve mediator DID
+                if let Some(ref resolver) = did_resolver {
+                    match resolver.resolve(&mediator_did).await {
+                        Ok(_) => {
+                            let method = mediator_did
+                                .strip_prefix("did:")
+                                .and_then(|s| s.split(':').next())
+                                .unwrap_or("?");
+                            println!("                {GREEN}✓{RESET} resolves ({method})");
+                        }
+                        Err(e) => {
+                            println!("                {RED}✗{RESET} resolution failed: {e}");
+                        }
+                    }
+                }
+
+                // Trust-ping
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    vta_sdk::session::send_trust_ping(
+                        &info.client_did,
+                        &info.private_key_multibase,
+                        &mediator_did,
+                    ),
+                )
+                .await
+                {
+                    Ok(Ok(latency)) => {
+                        println!("                {GREEN}✓{RESET} pong ({latency}ms)");
+                    }
+                    Ok(Err(e)) => {
+                        println!("                {RED}✗{RESET} trust-ping failed: {e}");
+                    }
+                    Err(_) => {
+                        println!("                {RED}✗{RESET} trust-ping timed out");
+                    }
+                }
+            }
+            Ok(None) => {
+                println!("  {DIM}(not configured){RESET}");
+            }
+            Err(e) => {
+                println!(
+                    "  {CYAN}{:<13}{RESET} {RED}✗{RESET} could not resolve VTA DID: {e}",
+                    "DID"
+                );
+            }
+        }
+    } else {
+        println!("  {DIM}(no session){RESET}");
+    }
 
     Ok(())
 }

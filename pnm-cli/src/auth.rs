@@ -43,9 +43,13 @@ pub fn logout() {
 }
 
 /// Load the stored session for diagnostics.
-#[allow(dead_code)]
 pub fn loaded_session() -> Option<SessionInfo> {
     store().loaded_session(SESSION_KEY)
+}
+
+/// Return current session status (for health diagnostics).
+pub fn session_status() -> Option<vta_sdk::session::SessionStatus> {
+    store().session_status(SESSION_KEY)
 }
 
 /// Show current authentication status.

@@ -515,6 +515,83 @@ fn url_from_did(did: &str) -> Option<String> {
     Some(format!("https://{decoded}"))
 }
 
+/// Send a DIDComm trust-ping to the mediator using the client's `did:key`
+/// credentials, and return latency in milliseconds.
+pub async fn send_trust_ping(
+    client_did: &str,
+    private_key_multibase: &str,
+    mediator_did: &str,
+) -> Result<u128, Box<dyn std::error::Error>> {
+    use std::sync::Arc;
+    use std::time::Instant;
+
+    use affinidi_tdk::common::TDKSharedState;
+    use affinidi_tdk::messaging::ATM;
+    use affinidi_tdk::messaging::config::ATMConfig;
+    use affinidi_tdk::messaging::profiles::ATMProfile;
+    use affinidi_tdk::messaging::protocols::trust_ping::TrustPing;
+
+    let seed = crate::did_key::decode_private_key_multibase(private_key_multibase)?;
+    let secrets = crate::did_key::secrets_from_did_key(client_did, &seed)?;
+
+    let tdk = TDKSharedState::default().await;
+    tdk.secrets_resolver.insert(secrets.signing).await;
+    tdk.secrets_resolver.insert(secrets.key_agreement).await;
+
+    let atm = ATM::new(ATMConfig::builder().build()?, Arc::new(tdk)).await?;
+
+    let profile = ATMProfile::new(
+        &atm,
+        None,
+        client_did.to_string(),
+        Some(mediator_did.to_string()),
+    )
+    .await?;
+    let profile = Arc::new(profile);
+
+    atm.profile_enable_websocket(&profile).await?;
+
+    let start = Instant::now();
+    TrustPing::default()
+        .send_ping(&atm, &profile, mediator_did, true, true, true)
+        .await?;
+    let elapsed = start.elapsed().as_millis();
+
+    atm.graceful_shutdown().await;
+    Ok(elapsed)
+}
+
+/// Resolve the VTA DID document and extract the mediator DID from the
+/// `DIDCommMessaging` service endpoint.
+pub async fn resolve_mediator_did(
+    vta_did: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let did_resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build())
+        .await
+        .map_err(|e| format!("DID resolver init failed: {e}"))?;
+
+    let resolved = did_resolver
+        .resolve(vta_did)
+        .await
+        .map_err(|e| format!("DID resolution failed: {e}"))?;
+
+    for svc in &resolved.doc.service {
+        if svc.type_.iter().any(|t| t == "DIDCommMessaging") {
+            if let Some(did) = svc
+                .service_endpoint
+                .get_uris()
+                .into_iter()
+                .map(|u| u.trim_matches('"').to_string())
+                .find(|u| u.starts_with("did:"))
+            {
+                return Ok(Some(did));
+            }
+        }
+    }
+
+    Ok(None)
+}
+
 fn now_epoch() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)

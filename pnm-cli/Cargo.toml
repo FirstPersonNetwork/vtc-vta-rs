@@ -21,6 +21,7 @@ config-session = ["vta-sdk/config-session"]
 
 [dependencies]
 vta-sdk = { path = "../vta-sdk", features = ["session"] }
+affinidi-did-resolver-cache-sdk = "0.7"
 clap = { workspace = true, features = ["env"] }
 dirs = "6"
 ratatui = { workspace = true }

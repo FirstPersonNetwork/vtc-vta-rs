@@ -35,10 +35,7 @@ struct Cli {
 enum Commands {
     /// Configure VTA URL and credentials
     Setup {
-        /// VTA service URL
-        #[arg(long)]
-        url: String,
-        /// Base64-encoded credential string
+        /// Base64-encoded credential string (prompted interactively if omitted)
         #[arg(long)]
         credential: Option<String>,
     },
@@ -350,22 +347,19 @@ async fn main() {
         }
     };
 
-    // Resolve URL: CLI flag > config > error
+    // Resolve URL: CLI flag > config > error (not needed for setup)
     let url = cli
         .url
         .or(pnm_config.url.clone())
         .unwrap_or_else(|| {
-            if requires_auth(&cli.command)
-                || matches!(cli.command, Commands::Health)
-                || matches!(cli.command, Commands::Auth { .. })
-            {
+            if !matches!(cli.command, Commands::Setup { .. }) {
                 eprintln!("Error: no VTA URL configured and no --url provided.\n");
-                eprintln!("Either run setup first, or provide a URL:");
-                eprintln!("  pnm setup --url http://localhost:8100");
+                eprintln!("Run setup first, or provide a URL:");
+                eprintln!("  pnm setup --credential <CREDENTIAL>");
                 eprintln!("  pnm health --url http://localhost:8100");
                 std::process::exit(1);
             }
-            // Setup command provides its own URL
+            // Setup command extracts URL from credential bundle
             String::new()
         });
 
@@ -383,8 +377,8 @@ async fn main() {
     }
 
     let result = match cli.command {
-        Commands::Setup { url, credential } => {
-            setup::run_setup(&url, credential.as_deref()).await
+        Commands::Setup { credential } => {
+            setup::run_setup(credential.as_deref()).await
         }
         Commands::Health => cmd_health(&client).await,
         Commands::Auth { command } => match command {
@@ -1336,10 +1330,7 @@ mod tests {
 
     #[test]
     fn test_requires_auth_setup_false() {
-        let cmd = Commands::Setup {
-            url: "http://localhost".into(),
-            credential: None,
-        };
+        let cmd = Commands::Setup { credential: None };
         assert!(!requires_auth(&cmd));
     }
 

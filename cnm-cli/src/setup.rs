@@ -1,6 +1,3 @@
-use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use dialoguer::{Input, Select};
 
 use crate::auth;
@@ -28,15 +25,7 @@ fn slugify(name: &str) -> String {
 
 /// Try to resolve a VTA URL from a DID's `#vta` service endpoint.
 async fn resolve_vta_url(did: &str) -> Option<String> {
-    let resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build())
-        .await
-        .ok()?;
-
-    let resolved = resolver.resolve(did).await.ok()?;
-    let svc = resolved.doc.find_service("vta")?;
-    let url = svc.service_endpoint.get_uri()?;
-
-    Some(url.trim_end_matches('/').to_string())
+    vta_sdk::session::resolve_vta_url(did).await.ok()
 }
 
 /// Prompt for a VTA DID, resolve the `#vta` service URL if possible,
@@ -184,14 +173,9 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
             let resp = personal_client.generate_credentials(cred_req).await?;
 
             // Decode credential to extract the private key
-            let bundle_json = BASE64
-                .decode(&resp.credential)
-                .map_err(|e| format!("failed to decode credential: {e}"))?;
-            let bundle: serde_json::Value = serde_json::from_slice(&bundle_json)
-                .map_err(|e| format!("invalid credential format: {e}"))?;
-            let private_key = bundle["privateKeyMultibase"]
-                .as_str()
-                .ok_or("credential missing privateKeyMultibase")?;
+            let bundle = vta_sdk::credentials::CredentialBundle::decode(&resp.credential)
+                .map_err(|e| format!("failed to decode credential: {e:?}"))?;
+            let private_key = &bundle.private_key_multibase;
 
             // Ensure we have the community VTA DID (prompt if not provided earlier)
             let community_vta_did = match &community_did {
@@ -346,14 +330,9 @@ pub async fn bootstrap_community_session(
     let resp = personal_client.generate_credentials(cred_req).await?;
 
     // Decode credential to extract the private key
-    let bundle_json = BASE64
-        .decode(&resp.credential)
-        .map_err(|e| format!("failed to decode credential: {e}"))?;
-    let bundle: serde_json::Value = serde_json::from_slice(&bundle_json)
-        .map_err(|e| format!("invalid credential format: {e}"))?;
-    let private_key = bundle["privateKeyMultibase"]
-        .as_str()
-        .ok_or("credential missing privateKeyMultibase")?;
+    let bundle = vta_sdk::credentials::CredentialBundle::decode(&resp.credential)
+        .map_err(|e| format!("failed to decode credential: {e:?}"))?;
+    let private_key = &bundle.private_key_multibase;
 
     // Store community session
     let keyring_key = community_keyring_key(slug);

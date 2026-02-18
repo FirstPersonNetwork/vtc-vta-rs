@@ -21,15 +21,12 @@ config-session = ["vta-sdk/config-session"]
 
 [dependencies]
 vta-sdk = { path = "../vta-sdk", features = ["session"] }
-affinidi-tdk = { workspace = true }
+vta-cli-common = { path = "../vta-cli-common" }
 affinidi-did-resolver-cache-sdk = "0.7"
-base64 = { workspace = true }
 clap = { workspace = true, features = ["env"] }
 dialoguer = "0.12"
 dirs = "6"
-ratatui = { workspace = true }
 serde = { workspace = true }
-serde_json = { workspace = true }
 toml = "1.0"
 tokio = { workspace = true }
 tracing = { workspace = true }

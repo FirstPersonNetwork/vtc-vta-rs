@@ -12,7 +12,7 @@ repository.workspace = true
 
 [features]
 didcomm = ["dep:affinidi-tdk"]
-client = ["dep:reqwest", "dep:tracing", "dep:uuid"]
+client = ["dep:reqwest", "dep:tracing", "dep:uuid", "dep:affinidi-tdk"]
 session = ["client", "didcomm", "dep:affinidi-did-resolver-cache-sdk"]
 keyring = ["dep:keyring"]
 config-session = []

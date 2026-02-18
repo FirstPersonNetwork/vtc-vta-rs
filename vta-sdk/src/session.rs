@@ -521,6 +521,7 @@ pub async fn send_trust_ping(
     client_did: &str,
     private_key_multibase: &str,
     mediator_did: &str,
+    target_did: Option<&str>,
 ) -> Result<u128, Box<dyn std::error::Error>> {
     use std::sync::Arc;
     use std::time::Instant;
@@ -553,7 +554,7 @@ pub async fn send_trust_ping(
 
     let start = Instant::now();
     TrustPing::default()
-        .send_ping(&atm, &profile, mediator_did, true, true, true)
+        .send_ping(&atm, &profile, target_did.unwrap_or(mediator_did), true, true, true)
         .await?;
     let elapsed = start.elapsed().as_millis();
 

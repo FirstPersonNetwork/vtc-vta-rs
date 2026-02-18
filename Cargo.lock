@@ -1493,18 +1493,15 @@ name = "cnm-cli"
 version = "0.1.0"
 dependencies = [
  "affinidi-did-resolver-cache-sdk",
- "affinidi-tdk",
- "base64 0.22.1",
  "clap",
  "dialoguer",
  "dirs",
- "ratatui",
  "serde",
- "serde_json",
  "tokio",
  "toml",
  "tracing",
  "tracing-subscriber",
+ "vta-cli-common",
  "vta-sdk",
 ]
 
@@ -4774,13 +4771,13 @@ dependencies = [
  "affinidi-did-resolver-cache-sdk",
  "clap",
  "dirs",
- "ratatui",
  "serde",
  "serde_json",
  "tokio",
  "toml",
  "tracing",
  "tracing-subscriber",
+ "vta-cli-common",
  "vta-sdk",
 ]
 
@@ -7313,6 +7310,14 @@ name = "vsimd"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5c3082ca00d5a5ef149bb8b555a72ae84c9c59f7250f013ac822ac2e49b19c64"
+
+[[package]]
+name = "vta-cli-common"
+version = "0.1.0"
+dependencies = [
+ "ratatui",
+ "vta-sdk",
+]
 
 [[package]]
 name = "vta-sdk"

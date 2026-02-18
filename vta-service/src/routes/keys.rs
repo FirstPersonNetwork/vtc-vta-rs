@@ -58,14 +58,19 @@ pub async fn create_key(
     State(state): State<AppState>,
     Json(req): Json<CreateKeyRequest>,
 ) -> Result<(StatusCode, Json<CreateKeyResponse>), AppError> {
-    // Context admins can only create keys within their assigned contexts
-    if let Some(ref ctx) = req.context_id {
+    // Resolve context: explicit > super-admin (None) > single-context default
+    let context_id = if let Some(ref ctx) = req.context_id {
         auth.0.require_context(ctx)?;
-    } else if !auth.0.is_super_admin() {
+        Some(ctx.clone())
+    } else if auth.0.is_super_admin() {
+        None
+    } else if let Some(ctx) = auth.0.default_context() {
+        Some(ctx.to_string())
+    } else {
         return Err(AppError::Forbidden(
-            "only super admin can create keys without a context".into(),
+            "context_id required: admin has access to multiple contexts".into(),
         ));
-    }
+    };
 
     let keys = state.keys_ks.clone();
 
@@ -73,7 +78,7 @@ pub async fn create_key(
     let derivation_path = match req.derivation_path {
         Some(path) => path,
         None => {
-            let ctx_id = req.context_id.as_ref().ok_or_else(|| {
+            let ctx_id = context_id.as_ref().ok_or_else(|| {
                 AppError::Validation(
                     "derivation_path is required when context_id is not provided".into(),
                 )
@@ -106,7 +111,7 @@ pub async fn create_key(
         status: KeyStatus::Active,
         public_key: public_key.clone(),
         label: req.label.clone(),
-        context_id: req.context_id.clone(),
+        context_id: context_id.clone(),
         created_at: now,
         updated_at: now,
     };

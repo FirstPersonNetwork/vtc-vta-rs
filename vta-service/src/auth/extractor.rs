@@ -96,6 +96,15 @@ impl AuthClaims {
             "no access to context: {context_id}"
         )))
     }
+
+    /// If the caller has exactly one allowed context, return it.
+    pub fn default_context(&self) -> Option<&str> {
+        if self.allowed_contexts.len() == 1 {
+            Some(&self.allowed_contexts[0])
+        } else {
+            None
+        }
+    }
 }
 
 /// Extractor that requires the caller to have Admin or Initiator role.

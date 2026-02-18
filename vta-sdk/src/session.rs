@@ -469,10 +469,8 @@ pub async fn challenge_response(
 
 /// Resolve a VTA DID to discover its service URL.
 ///
-/// Tries these strategies in order:
-/// 1. Look for a `VerifiableTrustAgent` (`#vta`) service endpoint
-/// 2. Look for an `Authentication` service endpoint and strip `/authenticate`
-/// 3. Parse the domain from `did:web:` or `did:webvh:` DID strings
+/// Resolves the DID document and looks for the `#vta` service endpoint.
+/// Falls back to parsing the domain from `did:web:` or `did:webvh:` DID strings.
 pub async fn resolve_vta_url(vta_did: &str) -> Result<String, Box<dyn std::error::Error>> {
     debug!(vta_did, "resolving VTA DID to discover service URL");
 
@@ -482,51 +480,21 @@ pub async fn resolve_vta_url(vta_did: &str) -> Result<String, Box<dyn std::error
 
     match did_resolver.resolve(vta_did).await {
         Ok(resolved) => {
-            // Strategy 1: VerifiableTrustAgent (#vta) service endpoint
-            for svc in &resolved.doc.service {
-                if svc.type_.iter().any(|t| t == "VerifiableTrustAgent") {
-                    if let Some(url) = svc
-                        .service_endpoint
-                        .get_uris()
-                        .into_iter()
-                        .map(|u| u.trim_matches('"').to_string())
-                        .find(|u| u.starts_with("http"))
-                    {
-                        let base = url.trim_end_matches('/').to_string();
-                        debug!(url = %base, "found VTA URL from VerifiableTrustAgent service");
-                        return Ok(base);
-                    }
+            if let Some(svc) = resolved.doc.find_service("vta") {
+                if let Some(url) = svc.service_endpoint.get_uri() {
+                    let url = url.trim_matches('"').trim_end_matches('/').to_string();
+                    debug!(url = %url, "found VTA URL from #vta service endpoint");
+                    return Ok(url);
                 }
             }
-
-            // Strategy 2: Authentication service endpoint
-            for svc in &resolved.doc.service {
-                if svc.type_.iter().any(|t| t == "Authentication") {
-                    if let Some(url) = svc
-                        .service_endpoint
-                        .get_uris()
-                        .into_iter()
-                        .map(|u| u.trim_matches('"').to_string())
-                        .find(|u| u.starts_with("http"))
-                    {
-                        let base = url
-                            .trim_end_matches('/')
-                            .trim_end_matches("/authenticate")
-                            .to_string();
-                        debug!(url = %base, "found VTA URL from Authentication service");
-                        return Ok(base);
-                    }
-                }
-            }
-
-            debug!("no service URL found in DID document, falling back to DID parsing");
+            debug!("no #vta service found in DID document, falling back to DID parsing");
         }
         Err(e) => {
             debug!(error = %e, "DID resolution failed, falling back to DID parsing");
         }
     }
 
-    // Strategy 3: Parse domain from did:web or did:webvh DID strings
+    // Fallback: parse domain from did:web or did:webvh DID strings
     url_from_did(vta_did)
         .ok_or_else(|| format!("Could not determine VTA URL from DID: {vta_did}").into())
 }

@@ -467,6 +467,86 @@ pub async fn challenge_response(
     })
 }
 
+/// Resolve a VTA DID to discover its service URL.
+///
+/// Tries these strategies in order:
+/// 1. Look for an `Authentication` service endpoint and strip `/authenticate`
+/// 2. Look for a `DIDCommMessaging` service with an HTTP(S) URI
+/// 3. Parse the domain from `did:web:` or `did:webvh:` DID strings
+pub async fn resolve_vta_url(vta_did: &str) -> Result<String, Box<dyn std::error::Error>> {
+    debug!(vta_did, "resolving VTA DID to discover service URL");
+
+    let did_resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build())
+        .await
+        .map_err(|e| format!("DID resolver init failed: {e}"))?;
+
+    match did_resolver.resolve(vta_did).await {
+        Ok(resolved) => {
+            // Strategy 1: Authentication service endpoint
+            for svc in &resolved.doc.service {
+                if svc.type_.iter().any(|t| t == "Authentication") {
+                    if let Some(url) = svc
+                        .service_endpoint
+                        .get_uris()
+                        .into_iter()
+                        .map(|u| u.trim_matches('"').to_string())
+                        .find(|u| u.starts_with("http"))
+                    {
+                        let base = url
+                            .trim_end_matches('/')
+                            .trim_end_matches("/authenticate")
+                            .to_string();
+                        debug!(url = %base, "found VTA URL from Authentication service");
+                        return Ok(base);
+                    }
+                }
+            }
+
+            // Strategy 2: DIDCommMessaging service with HTTP(S) URI
+            for svc in &resolved.doc.service {
+                if svc.type_.iter().any(|t| t == "DIDCommMessaging") {
+                    if let Some(url) = svc
+                        .service_endpoint
+                        .get_uris()
+                        .into_iter()
+                        .map(|u| u.trim_matches('"').to_string())
+                        .find(|u| u.starts_with("https://") || u.starts_with("http://"))
+                    {
+                        let base = url.trim_end_matches('/').to_string();
+                        debug!(url = %base, "found VTA URL from DIDCommMessaging service");
+                        return Ok(base);
+                    }
+                }
+            }
+
+            debug!("no service URL found in DID document, falling back to DID parsing");
+        }
+        Err(e) => {
+            debug!(error = %e, "DID resolution failed, falling back to DID parsing");
+        }
+    }
+
+    // Strategy 3: Parse domain from did:web or did:webvh DID strings
+    url_from_did(vta_did)
+        .ok_or_else(|| format!("Could not determine VTA URL from DID: {vta_did}").into())
+}
+
+/// Extract the base URL from a `did:web:` or `did:webvh:` DID string.
+fn url_from_did(did: &str) -> Option<String> {
+    let domain = if let Some(rest) = did.strip_prefix("did:web:") {
+        // did:web:domain.com or did:web:domain.com%3A8100
+        rest.split(':').next()
+    } else if let Some(rest) = did.strip_prefix("did:webvh:") {
+        // did:webvh:SCID:domain.com or did:webvh:SCID:domain.com%3A8100
+        rest.split(':').nth(1)
+    } else {
+        None
+    }?;
+
+    let decoded = domain.replace("%3A", ":").replace("%3a", ":");
+    Some(format!("https://{decoded}"))
+}
+
 fn now_epoch() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -516,5 +596,42 @@ mod tests {
         let epoch = now_epoch();
         assert!(epoch > 1704067200, "epoch {epoch} should be after 2024");
         assert!(epoch < 4102444800, "epoch {epoch} should be before 2100");
+    }
+
+    #[test]
+    fn test_url_from_did_web() {
+        assert_eq!(
+            url_from_did("did:web:vta.example.com"),
+            Some("https://vta.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_url_from_did_web_with_port() {
+        assert_eq!(
+            url_from_did("did:web:localhost%3A8100"),
+            Some("https://localhost:8100".to_string())
+        );
+    }
+
+    #[test]
+    fn test_url_from_did_webvh() {
+        assert_eq!(
+            url_from_did("did:webvh:QmSCID123:vta.example.com"),
+            Some("https://vta.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn test_url_from_did_webvh_with_port() {
+        assert_eq!(
+            url_from_did("did:webvh:QmSCID123:localhost%3A8100"),
+            Some("https://localhost:8100".to_string())
+        );
+    }
+
+    #[test]
+    fn test_url_from_did_key_returns_none() {
+        assert_eq!(url_from_did("did:key:z6MkTest"), None);
     }
 }

@@ -202,11 +202,13 @@ pub struct GenerateCredentialsResponse {
 ///
 /// DID verification method IDs contain `#` (fragment delimiter) and potentially
 /// `?` (query delimiter) which must be encoded when used in path segments.
+/// Derivation paths contain `/` which would be interpreted as path separators.
 /// The `:` character is allowed in path segments per RFC 3986.
 fn encode_path_segment(s: &str) -> String {
     s.replace('%', "%25")
         .replace('#', "%23")
         .replace('?', "%3F")
+        .replace('/', "%2F")
 }
 
 // ── Client implementation ───────────────────────────────────────────
@@ -579,6 +581,14 @@ mod tests {
     #[test]
     fn test_encode_multiple_hashes() {
         assert_eq!(encode_path_segment("a#b#c"), "a%23b%23c");
+    }
+
+    #[test]
+    fn test_encode_slash_in_derivation_path() {
+        assert_eq!(
+            encode_path_segment("m/44'/0'/0'/0"),
+            "m%2F44'%2F0'%2F0'%2F0"
+        );
     }
 
     // ── VtaClient::new ──────────────────────────────────────────────

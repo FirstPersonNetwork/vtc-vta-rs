@@ -6,10 +6,22 @@ pub fn ed25519_multibase_pubkey(public_key_bytes: &[u8; 32]) -> String {
     multibase::encode(multibase::Base::Base58Btc, &buf)
 }
 
+/// Ed25519 private key multicodec prefix (`0x8026`).
+const ED25519_PRIV_CODEC: [u8; 2] = [0x80, 0x26];
+
 /// Decode a multibase-encoded private key seed to 32 bytes.
+///
+/// Accepts both raw 32-byte encodings and 34-byte encodings that include
+/// the `0x8026` ed25519-priv multicodec prefix (as produced by
+/// `Secret::get_private_keymultibase()`).
 pub fn decode_private_key_multibase(mb: &str) -> Result<[u8; 32], DidKeyError> {
-    let (_, seed_bytes) =
+    let (_, raw) =
         multibase::decode(mb).map_err(|e| DidKeyError::Multibase(e.to_string()))?;
+    let seed_bytes = if raw.len() == 34 && raw[..2] == ED25519_PRIV_CODEC {
+        &raw[2..]
+    } else {
+        &raw[..]
+    };
     seed_bytes
         .try_into()
         .map_err(|_| DidKeyError::InvalidSeedLength)
@@ -116,6 +128,17 @@ mod tests {
     fn test_decode_private_key_multibase_roundtrip() {
         let seed = [42u8; 32];
         let encoded = multibase::encode(multibase::Base::Base58Btc, seed);
+        let decoded = decode_private_key_multibase(&encoded).unwrap();
+        assert_eq!(decoded, seed);
+    }
+
+    #[test]
+    fn test_decode_private_key_multibase_with_codec_prefix() {
+        let seed = [42u8; 32];
+        let mut prefixed = Vec::with_capacity(34);
+        prefixed.extend_from_slice(&ED25519_PRIV_CODEC);
+        prefixed.extend_from_slice(&seed);
+        let encoded = multibase::encode(multibase::Base::Base58Btc, &prefixed);
         let decoded = decode_private_key_multibase(&encoded).unwrap();
         assert_eq!(decoded, seed);
     }

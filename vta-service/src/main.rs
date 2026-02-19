@@ -9,6 +9,7 @@ mod did_webvh;
 mod error;
 mod import_did;
 mod keys;
+mod keys_cli;
 mod messaging;
 mod routes;
 mod server;
@@ -89,6 +90,32 @@ enum Commands {
     Acl {
         #[command(subcommand)]
         command: AclCommands,
+    },
+    /// Manage keys (offline, no server required)
+    Keys {
+        #[command(subcommand)]
+        command: KeyCliCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum KeyCliCommands {
+    /// List keys
+    List {
+        /// Filter by context ID
+        #[arg(long)]
+        context: Option<String>,
+        /// Filter by status (active or revoked)
+        #[arg(long)]
+        status: Option<String>,
+    },
+    /// Export secret key material for one or more keys
+    Secrets {
+        /// Key IDs to export (omit to export all active keys in --context)
+        key_ids: Vec<String>,
+        /// Export all active keys in this context
+        #[arg(long)]
+        context: Option<String>,
     },
 }
 
@@ -215,6 +242,20 @@ async fn main() {
                 context,
             };
             if let Err(e) = import_did::run_import_did(args).await {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        Some(Commands::Keys { command }) => {
+            let result = match command {
+                KeyCliCommands::List { context, status } => {
+                    keys_cli::run_keys_list(cli.config, context, status).await
+                }
+                KeyCliCommands::Secrets { key_ids, context } => {
+                    keys_cli::run_keys_secrets(cli.config, key_ids, context).await
+                }
+            };
+            if let Err(e) = result {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }

@@ -288,10 +288,14 @@ impl VtaClient {
         offset: u64,
         limit: u64,
         status: Option<&str>,
+        context_id: Option<&str>,
     ) -> Result<ListKeysResponse, Box<dyn std::error::Error>> {
         let mut url = format!("{}/keys?offset={}&limit={}", self.base_url, offset, limit);
         if let Some(s) = status {
             url.push_str(&format!("&status={s}"));
+        }
+        if let Some(ctx) = context_id {
+            url.push_str(&format!("&context_id={ctx}"));
         }
         let req = self.client.get(url);
         let resp = self.with_auth(req).send().await?;

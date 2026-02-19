@@ -279,6 +279,17 @@ enum KeyCommands {
         /// Filter by status (active or revoked)
         #[arg(long)]
         status: Option<String>,
+        /// Filter by application context ID
+        #[arg(long)]
+        context: Option<String>,
+    },
+    /// Export secret key material for one or more keys
+    Secrets {
+        /// Key IDs to export (omit to export all active keys in --context)
+        key_ids: Vec<String>,
+        /// Export all active keys in this context
+        #[arg(long)]
+        context: Option<String>,
     },
 }
 
@@ -478,7 +489,11 @@ async fn main() {
                 limit,
                 offset,
                 status,
-            } => keys::cmd_key_list(&client, offset, limit, status).await,
+                context,
+            } => keys::cmd_key_list(&client, offset, limit, status, context).await,
+            KeyCommands::Secrets { key_ids, context } => {
+                keys::cmd_key_secrets(&client, key_ids, context).await
+            }
         },
     };
 
@@ -675,6 +690,7 @@ mod tests {
                 limit: 50,
                 offset: 0,
                 status: None,
+                context: None,
             },
         };
         assert!(requires_auth(&cmd));

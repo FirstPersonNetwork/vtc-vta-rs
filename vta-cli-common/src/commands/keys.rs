@@ -102,8 +102,11 @@ pub async fn cmd_key_list(
     offset: u64,
     limit: u64,
     status: Option<String>,
+    context_id: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let resp = client.list_keys(offset, limit, status.as_deref()).await?;
+    let resp = client
+        .list_keys(offset, limit, status.as_deref(), context_id.as_deref())
+        .await?;
 
     if resp.keys.is_empty() {
         println!("No keys found.");
@@ -165,5 +168,38 @@ pub async fn cmd_key_list(
     let height = (resp.keys.len() as u16 * 3).saturating_sub(1) + 2;
     print_widget(table, height);
 
+    Ok(())
+}
+
+pub async fn cmd_key_secrets(
+    client: &VtaClient,
+    key_ids: Vec<String>,
+    context: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let key_ids = if key_ids.is_empty() {
+        let ctx = context.as_deref().ok_or(
+            "provide key IDs as arguments, or use --context to export all active keys in a context",
+        )?;
+        let resp = client
+            .list_keys(0, 10000, Some("active"), Some(ctx))
+            .await?;
+        resp.keys.into_iter().map(|k| k.key_id).collect()
+    } else {
+        key_ids
+    };
+    if key_ids.is_empty() {
+        println!("No active keys found.");
+        return Ok(());
+    }
+    for (i, key_id) in key_ids.iter().enumerate() {
+        if i > 0 {
+            println!();
+        }
+        let resp = client.get_key_secret(key_id).await?;
+        println!("Key ID:               {}", resp.key_id);
+        println!("Key Type:             {}", resp.key_type);
+        println!("Public Key Multibase: {}", resp.public_key_multibase);
+        println!("Secret Key Multibase: {}", resp.private_key_multibase);
+    }
     Ok(())
 }

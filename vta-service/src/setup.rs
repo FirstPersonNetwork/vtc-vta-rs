@@ -60,7 +60,7 @@ async fn derive_and_store_did_key(
 /// - **gcp-secrets**: GCP Secret Manager
 /// - **config-seed**: hex-encoded seed stored in config.toml
 /// - **keyring**: OS keyring (the default)
-fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
+async fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
     let mut labels: Vec<&str> = Vec::new();
     let mut tags: Vec<&str> = Vec::new();
 
@@ -107,12 +107,12 @@ fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
 
     #[cfg(feature = "aws-secrets")]
     if tag == "aws" {
-        return prompt_aws_secrets();
+        return prompt_aws_secrets().await;
     }
 
     #[cfg(feature = "gcp-secrets")]
     if tag == "gcp" {
-        return prompt_gcp_secrets();
+        return prompt_gcp_secrets().await;
     }
 
     #[cfg(feature = "config-seed")]
@@ -150,12 +150,8 @@ fn prompt_keyring_service(
 }
 
 #[cfg(feature = "aws-secrets")]
-fn prompt_aws_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
-    let secret_name: String = Input::new()
-        .with_prompt("AWS Secrets Manager secret name")
-        .default("vta-master-seed".into())
-        .interact_text()?;
-
+async fn prompt_aws_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
+    // Prompt for region first so we can list secrets from that region
     let region: String = Input::new()
         .with_prompt("AWS region (leave empty for SDK default)")
         .allow_empty(true)
@@ -166,6 +162,41 @@ fn prompt_aws_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
         Some(region)
     };
 
+    // Try to list existing secrets
+    let secret_name = match list_aws_secrets(region.as_deref()).await {
+        Ok(names) if !names.is_empty() => {
+            let mut items: Vec<String> = names;
+            items.push("Create new secret".into());
+            let choice = Select::new()
+                .with_prompt("Select an existing secret or create a new one")
+                .items(&items)
+                .default(0)
+                .interact()?;
+            if choice == items.len() - 1 {
+                Input::new()
+                    .with_prompt("AWS Secrets Manager secret name")
+                    .default("vta-master-seed".into())
+                    .interact_text()?
+            } else {
+                items.swap_remove(choice)
+            }
+        }
+        Ok(_) => {
+            eprintln!("  No existing secrets found.");
+            Input::new()
+                .with_prompt("AWS Secrets Manager secret name")
+                .default("vta-master-seed".into())
+                .interact_text()?
+        }
+        Err(e) => {
+            eprintln!("  Warning: could not list secrets: {e}");
+            Input::new()
+                .with_prompt("AWS Secrets Manager secret name")
+                .default("vta-master-seed".into())
+                .interact_text()?
+        }
+    };
+
     Ok(SecretsConfig {
         aws_secret_name: Some(secret_name),
         aws_region: region,
@@ -173,20 +204,97 @@ fn prompt_aws_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
     })
 }
 
+/// List secret names from AWS Secrets Manager (single page).
+#[cfg(feature = "aws-secrets")]
+async fn list_aws_secrets(
+    region: Option<&str>,
+) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let mut config_loader = aws_config::from_env();
+    if let Some(region) = region {
+        config_loader = config_loader.region(aws_config::Region::new(region.to_owned()));
+    }
+    let sdk_config = config_loader.load().await;
+    let client = aws_sdk_secretsmanager::Client::new(&sdk_config);
+
+    let output = client.list_secrets().send().await?;
+    let names: Vec<String> = output
+        .secret_list()
+        .iter()
+        .filter_map(|entry| entry.name().map(String::from))
+        .collect();
+    Ok(names)
+}
+
 #[cfg(feature = "gcp-secrets")]
-fn prompt_gcp_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
+async fn prompt_gcp_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
     let project: String = Input::new().with_prompt("GCP project ID").interact_text()?;
 
-    let secret_name: String = Input::new()
-        .with_prompt("GCP Secret Manager secret name")
-        .default("vta-master-seed".into())
-        .interact_text()?;
+    // Try to list existing secrets
+    let secret_name = match list_gcp_secrets(&project).await {
+        Ok(names) if !names.is_empty() => {
+            let mut items: Vec<String> = names;
+            items.push("Create new secret".into());
+            let choice = Select::new()
+                .with_prompt("Select an existing secret or create a new one")
+                .items(&items)
+                .default(0)
+                .interact()?;
+            if choice == items.len() - 1 {
+                Input::new()
+                    .with_prompt("GCP Secret Manager secret name")
+                    .default("vta-master-seed".into())
+                    .interact_text()?
+            } else {
+                items.swap_remove(choice)
+            }
+        }
+        Ok(_) => {
+            eprintln!("  No existing secrets found.");
+            Input::new()
+                .with_prompt("GCP Secret Manager secret name")
+                .default("vta-master-seed".into())
+                .interact_text()?
+        }
+        Err(e) => {
+            eprintln!("  Warning: could not list secrets: {e}");
+            Input::new()
+                .with_prompt("GCP Secret Manager secret name")
+                .default("vta-master-seed".into())
+                .interact_text()?
+        }
+    };
 
     Ok(SecretsConfig {
         gcp_project: Some(project),
         gcp_secret_name: Some(secret_name),
         ..Default::default()
     })
+}
+
+/// List secret names from GCP Secret Manager (single page).
+#[cfg(feature = "gcp-secrets")]
+async fn list_gcp_secrets(project: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+    let client = google_cloud_secretmanager_v1::client::SecretManagerService::builder()
+        .build()
+        .await?;
+    let response = client
+        .list_secrets()
+        .set_parent(format!("projects/{project}"))
+        .send()
+        .await?;
+
+    let prefix = format!("projects/{project}/secrets/");
+    let names: Vec<String> = response
+        .secrets
+        .iter()
+        .map(|s| {
+            s.name
+                .strip_prefix(&prefix)
+                .unwrap_or(&s.name)
+                .to_owned()
+        })
+        .collect();
+    Ok(names)
 }
 
 pub async fn run_setup_wizard(
@@ -351,7 +459,7 @@ pub async fn run_setup_wizard(
     };
 
     // Prompt for seed store backend configuration
-    let mut secrets_config = configure_secrets()?;
+    let mut secrets_config = configure_secrets().await?;
 
     // Derive BIP-39 seed
     let seed = mnemonic.to_seed("");

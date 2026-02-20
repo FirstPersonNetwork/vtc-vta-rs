@@ -187,8 +187,11 @@ url = "http://localhost:3000"
 | `keys list [--status active\|revoked] [--limit N] [--offset N]`            | List keys       |
 | `keys create --key-type ed25519\|x25519 [--context-id ID] [--label LABEL]` | Create a key    |
 | `keys get <key_id>`                                                        | Get a key by ID |
-| `keys revoke <key_id>`                                                     | Revoke a key    |
-| `keys rename <key_id> <new_key_id>`                                        | Rename a key    |
+| `keys revoke <key_id>`                                                     | Revoke a key               |
+| `keys rename <key_id> <new_key_id>`                                        | Rename a key               |
+| `keys secrets [key_ids...] [--context ID]`                                 | Export secret key material |
+| `keys seeds`                                                               | List seed generations      |
+| `keys rotate-seed [--mnemonic PHRASE]`                                     | Rotate to a new seed       |
 
 ### Contexts
 

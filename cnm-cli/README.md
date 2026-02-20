@@ -267,6 +267,9 @@ cnm config update --community-vta-name "My VTA" --public-url "https://vta.exampl
 | `keys get <key_id>`                                                        | Get a key by ID |
 | `keys revoke <key_id>`                                                     | Revoke a key    |
 | `keys rename <key_id> <new_key_id>`                                        | Rename a key    |
+| `keys secrets [key_ids...] [--context ID]`                                 | Export secret key material |
+| `keys seeds`                                                               | List seed generations      |
+| `keys rotate-seed [--mnemonic PHRASE]`                                     | Rotate to a new seed       |
 
 ### Contexts
 

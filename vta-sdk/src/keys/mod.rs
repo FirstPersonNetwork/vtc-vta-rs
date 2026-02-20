@@ -25,6 +25,8 @@ pub struct KeyRecord {
     pub label: Option<String>,
     #[serde(default)]
     pub context_id: Option<String>,
+    #[serde(default)]
+    pub seed_id: Option<u32>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }

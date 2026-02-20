@@ -9,8 +9,9 @@ use tracing::{debug, info};
 use crate::auth::{AdminAuth, AuthClaims};
 use crate::contexts::get_context;
 use crate::error::AppError;
-use crate::keys::derivation::{Bip32Extension, load_or_generate_seed};
+use crate::keys::derivation::Bip32Extension;
 use crate::keys::paths::allocate_path;
+use crate::keys::seeds::{self as seeds, get_active_seed_id, load_seed_bytes};
 use crate::keys::{self, KeyRecord, KeyStatus, KeyType};
 use crate::server::AppState;
 
@@ -90,7 +91,20 @@ pub async fn create_key(
         }
     };
 
-    let bip32 = load_or_generate_seed(&*state.seed_store, req.mnemonic.as_deref()).await?;
+    if req.mnemonic.is_some() {
+        return Err(AppError::Validation(
+            "mnemonic is not accepted via the API — use seed rotation instead".into(),
+        ));
+    }
+
+    let active_id = get_active_seed_id(&state.keys_ks)
+        .await
+        .map_err(|e| AppError::Internal(format!("{e}")))?;
+    let seed = load_seed_bytes(&state.keys_ks, &*state.seed_store, Some(active_id))
+        .await
+        .map_err(|e| AppError::Internal(format!("{e}")))?;
+    let bip32 = ed25519_dalek_bip32::ExtendedSigningKey::from_seed(&seed)
+        .map_err(|e| AppError::KeyDerivation(format!("failed to create BIP-32 root key: {e}")))?;
 
     let secret = match req.key_type {
         KeyType::Ed25519 => bip32.derive_ed25519(&derivation_path)?,
@@ -112,6 +126,7 @@ pub async fn create_key(
         public_key: public_key.clone(),
         label: req.label.clone(),
         context_id: context_id.clone(),
+        seed_id: Some(active_id),
         created_at: now,
         updated_at: now,
     };
@@ -161,7 +176,11 @@ pub async fn get_key_secret(
         ));
     }
 
-    let bip32 = load_or_generate_seed(&*state.seed_store, None).await?;
+    let seed = load_seed_bytes(&state.keys_ks, &*state.seed_store, record.seed_id)
+        .await
+        .map_err(|e| AppError::Internal(format!("{e}")))?;
+    let bip32 = ed25519_dalek_bip32::ExtendedSigningKey::from_seed(&seed)
+        .map_err(|e| AppError::KeyDerivation(format!("failed to create BIP-32 root key: {e}")))?;
 
     let secret = match record.key_type {
         KeyType::Ed25519 => bip32.derive_ed25519(&record.derivation_path)?,
@@ -354,5 +373,86 @@ pub async fn list_keys(
         total,
         offset,
         limit,
+    }))
+}
+
+// ── Seed endpoints ────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct SeedInfoResponse {
+    pub id: u32,
+    pub status: String,
+    pub created_at: chrono::DateTime<Utc>,
+    pub retired_at: Option<chrono::DateTime<Utc>>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ListSeedsResponse {
+    pub seeds: Vec<SeedInfoResponse>,
+    pub active_seed_id: u32,
+}
+
+pub async fn list_seeds(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+) -> Result<Json<ListSeedsResponse>, AppError> {
+    let active_id = get_active_seed_id(&state.keys_ks)
+        .await
+        .map_err(|e| AppError::Internal(format!("{e}")))?;
+    let records = seeds::list_seed_records(&state.keys_ks)
+        .await
+        .map_err(|e| AppError::Internal(format!("{e}")))?;
+
+    let seeds_info: Vec<SeedInfoResponse> = records
+        .into_iter()
+        .map(|r| SeedInfoResponse {
+            id: r.id,
+            status: if r.retired_at.is_some() {
+                "retired".into()
+            } else {
+                "active".into()
+            },
+            created_at: r.created_at,
+            retired_at: r.retired_at,
+        })
+        .collect();
+
+    info!(count = seeds_info.len(), active_id, "seeds listed");
+
+    Ok(Json(ListSeedsResponse {
+        seeds: seeds_info,
+        active_seed_id: active_id,
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RotateSeedRequest {
+    pub mnemonic: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RotateSeedResponse {
+    pub previous_seed_id: u32,
+    pub new_seed_id: u32,
+}
+
+pub async fn rotate_seed(
+    _auth: AdminAuth,
+    State(state): State<AppState>,
+    Json(req): Json<RotateSeedRequest>,
+) -> Result<Json<RotateSeedResponse>, AppError> {
+    let previous_id = get_active_seed_id(&state.keys_ks)
+        .await
+        .map_err(|e| AppError::Internal(format!("{e}")))?;
+
+    let new_id = seeds::rotate_seed(&state.keys_ks, &*state.seed_store, req.mnemonic.as_deref())
+        .await
+        .map_err(|e| AppError::Internal(format!("{e}")))?;
+
+    info!(previous_id, new_id, "seed rotated via API");
+
+    Ok(Json(RotateSeedResponse {
+        previous_seed_id: previous_id,
+        new_seed_id: new_id,
     }))
 }

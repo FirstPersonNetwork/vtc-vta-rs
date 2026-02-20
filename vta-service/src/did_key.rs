@@ -9,6 +9,7 @@ use crate::config::AppConfig;
 use crate::contexts::{self, get_context};
 use crate::keys;
 use crate::keys::seed_store::create_seed_store;
+use crate::keys::seeds::{get_active_seed_id, load_seed_bytes};
 use crate::store::Store;
 
 pub struct CreateDidKeyArgs {
@@ -24,13 +25,10 @@ pub async fn run_create_did_key(args: CreateDidKeyArgs) -> Result<(), Box<dyn st
     let keys_ks = store.keyspace("keys")?;
     let contexts_ks = store.keyspace("contexts")?;
 
-    // Load seed from configured backend
+    // Load seed from configured backend using the active generation
     let seed_store = create_seed_store(&config)?;
-    let seed = seed_store
-        .get()
-        .await
-        .map_err(|e| format!("{e}"))?
-        .ok_or("No seed found. Run `vta setup` first.")?;
+    let active_seed_id = get_active_seed_id(&keys_ks).await?;
+    let seed = load_seed_bytes(&keys_ks, &*seed_store, Some(active_seed_id)).await?;
 
     // Resolve context
     let ctx = match get_context(&contexts_ks, &args.context).await? {
@@ -51,7 +49,7 @@ pub async fn run_create_did_key(args: CreateDidKeyArgs) -> Result<(), Box<dyn st
 
     // Derive and store the did:key
     let (did, private_key_multibase) =
-        keys::derive_and_store_did_key(&seed, &ctx.base_path, &ctx.id, label, &keys_ks).await?;
+        keys::derive_and_store_did_key(&seed, &ctx.base_path, &ctx.id, label, &keys_ks, Some(active_seed_id)).await?;
 
     // Optionally create ACL entry
     if args.admin {

@@ -145,6 +145,34 @@ pub struct ErrorResponse {
     pub error: String,
 }
 
+// ── Seed types ──────────────────────────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct SeedInfoResponse {
+    pub id: u32,
+    pub status: String,
+    pub created_at: DateTime<Utc>,
+    pub retired_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ListSeedsResponse {
+    pub seeds: Vec<SeedInfoResponse>,
+    pub active_seed_id: u32,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RotateSeedRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mnemonic: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RotateSeedResponse {
+    pub previous_seed_id: u32,
+    pub new_seed_id: u32,
+}
+
 // ── ACL types ───────────────────────────────────────────────────────
 
 #[derive(Debug, Deserialize)]
@@ -359,6 +387,29 @@ impl VtaClient {
             ))
             .json(&body);
         let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    // ── Seed methods ────────────────────────────────────────────────
+
+    /// GET /keys/seeds
+    pub async fn list_seeds(&self) -> Result<ListSeedsResponse, Box<dyn std::error::Error>> {
+        let req = self.client.get(format!("{}/keys/seeds", self.base_url));
+        let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// POST /keys/seeds/rotate
+    pub async fn rotate_seed(
+        &self,
+        mnemonic: Option<String>,
+    ) -> Result<RotateSeedResponse, Box<dyn std::error::Error>> {
+        let body = RotateSeedRequest { mnemonic };
+        let r = self
+            .client
+            .post(format!("{}/keys/seeds/rotate", self.base_url))
+            .json(&body);
+        let resp = self.with_auth(r).send().await?;
         Self::handle_response(resp).await
     }
 

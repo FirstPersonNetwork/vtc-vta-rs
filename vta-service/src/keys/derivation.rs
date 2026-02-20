@@ -54,6 +54,7 @@ impl Bip32Extension for ExtendedSigningKey {
 ///   64-byte seed via PBKDF2 (with an empty passphrase), then stores it.
 /// - If no mnemonic and a seed already exists, returns the existing seed.
 /// - If no mnemonic and no seed exists, generates 32 random bytes and stores them.
+#[allow(dead_code)]
 pub async fn load_or_generate_seed(
     seed_store: &dyn SeedStore,
     mnemonic: Option<&str>,

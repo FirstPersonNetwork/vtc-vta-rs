@@ -1,6 +1,7 @@
 pub mod derivation;
 pub mod paths;
 pub mod seed_store;
+pub mod seeds;
 
 use affinidi_tdk::secrets_resolver::secrets::Secret;
 use chrono::Utc;
@@ -19,6 +20,7 @@ pub fn store_key(key_id: &str) -> String {
 pub use vta_sdk::did_key::ed25519_multibase_pubkey;
 
 /// Persist a key as a [`KeyRecord`] in the `"keys"` keyspace.
+#[allow(clippy::too_many_arguments)]
 pub async fn save_key_record(
     keys_ks: &KeyspaceHandle,
     key_id: &str,
@@ -27,6 +29,7 @@ pub async fn save_key_record(
     public_key: &str,
     label: &str,
     context_id: Option<&str>,
+    seed_id: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let now = Utc::now();
     let record = KeyRecord {
@@ -37,6 +40,7 @@ pub async fn save_key_record(
         public_key: public_key.to_string(),
         label: Some(label.to_string()),
         context_id: context_id.map(String::from),
+        seed_id,
         created_at: now,
         updated_at: now,
     };
@@ -55,6 +59,7 @@ pub async fn derive_and_store_did_key(
     context_id: &str,
     label: &str,
     keys_ks: &KeyspaceHandle,
+    seed_id: Option<u32>,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
     let dk_path = paths::allocate_path(keys_ks, base)
         .await
@@ -85,6 +90,7 @@ pub async fn derive_and_store_did_key(
         &multibase_pubkey,
         label,
         Some(context_id),
+        seed_id,
     )
     .await?;
 
@@ -191,6 +197,7 @@ pub async fn save_entity_key_records(
     derived: &DerivedEntityKeys,
     keys_ks: &KeyspaceHandle,
     context_id: &str,
+    seed_id: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     save_key_record(
         keys_ks,
@@ -200,6 +207,7 @@ pub async fn save_entity_key_records(
         &derived.signing_pub,
         &derived.signing_label,
         Some(context_id),
+        seed_id,
     )
     .await?;
     save_key_record(
@@ -210,6 +218,7 @@ pub async fn save_entity_key_records(
         &derived.ka_pub,
         &derived.ka_label,
         Some(context_id),
+        seed_id,
     )
     .await?;
     Ok(())

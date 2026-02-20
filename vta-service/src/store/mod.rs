@@ -183,6 +183,7 @@ mod tests {
             public_key: format!("z6Mk{id}"),
             label: Some(label.to_string()),
             context_id: None,
+            seed_id: None,
             created_at: now,
             updated_at: now,
         }

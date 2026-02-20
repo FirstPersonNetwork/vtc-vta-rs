@@ -26,6 +26,7 @@ use crate::config::{
 use crate::contexts::{self, ContextRecord, store_context};
 use crate::keys::paths::allocate_path;
 use crate::keys::seed_store::create_seed_store;
+use crate::keys::seeds::{SeedRecord, save_seed_record, set_active_seed_id};
 use crate::keys::{self, DerivedEntityKeys, KeyType as SdkKeyType, PreRotationKeyData};
 use crate::store::{KeyspaceHandle, Store};
 
@@ -48,8 +49,9 @@ async fn derive_and_store_did_key(
     base: &str,
     context_id: &str,
     keys_ks: &KeyspaceHandle,
+    seed_id: Option<u32>,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
-    keys::derive_and_store_did_key(seed, base, context_id, "Admin did:key", keys_ks).await
+    keys::derive_and_store_did_key(seed, base, context_id, "Admin did:key", keys_ks, seed_id).await
 }
 
 /// Prompt for seed store backend configuration based on compiled features.
@@ -487,6 +489,16 @@ pub async fn run_setup_wizard(
         seed_store.set(&seed).await.map_err(|e| format!("{e}"))?;
     }
 
+    // Create initial seed record (generation 0)
+    let initial_seed_record = SeedRecord {
+        id: 0,
+        seed_hex: None,
+        created_at: Utc::now(),
+        retired_at: None,
+    };
+    save_seed_record(&keys_ks, &initial_seed_record).await?;
+    set_active_seed_id(&keys_ks, 0).await?;
+
     // 11. Generate random JWT signing key
     let mut jwt_key_bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut jwt_key_bytes);
@@ -659,7 +671,7 @@ async fn create_admin_did(
     match choice {
         0 => {
             let (did, private_key_multibase) =
-                derive_and_store_did_key(seed, vta_base_path, "vta", keys_ks).await?;
+                derive_and_store_did_key(seed, vta_base_path, "vta", keys_ks, Some(0)).await?;
 
             // Build credential bundle (same format as POST /auth/credentials)
             let vta_did_str = vta_did.clone().unwrap_or_default();
@@ -734,10 +746,10 @@ async fn create_admin_did(
                 keys_ks,
             )
             .await?;
-            keys::save_entity_key_records(&did, &derived, keys_ks, "vta").await?;
+            keys::save_entity_key_records(&did, &derived, keys_ks, "vta", Some(0)).await?;
 
             // Also derive and store the did:key
-            let _ = derive_and_store_did_key(seed, vta_base_path, "vta", keys_ks).await?;
+            let _ = derive_and_store_did_key(seed, vta_base_path, "vta", keys_ks, Some(0)).await?;
 
             Ok((did, None))
         }
@@ -804,7 +816,7 @@ async fn create_vta_did(
                 keys_ks,
             )
             .await?;
-            keys::save_entity_key_records(&did, &derived, keys_ks, "vta").await?;
+            keys::save_entity_key_records(&did, &derived, keys_ks, "vta", Some(0)).await?;
 
             Ok(Some(did))
         }
@@ -849,7 +861,7 @@ async fn configure_messaging(
                 keys_ks,
             )
             .await?;
-            keys::save_entity_key_records(&did, &derived, keys_ks, "mediator").await?;
+            keys::save_entity_key_records(&did, &derived, keys_ks, "mediator", Some(0)).await?;
 
             Ok(Some(MessagingConfig {
                 mediator_url: String::new(),
@@ -1193,7 +1205,7 @@ async fn create_webvh_did(
     eprintln!("\x1b[1;32mCreated DID:\x1b[0m {final_did}");
 
     // Save key records now that we have the final DID
-    keys::save_entity_key_records(&final_did, derived, keys_ks, context_id).await?;
+    keys::save_entity_key_records(&final_did, derived, keys_ks, context_id, Some(0)).await?;
 
     // Save pre-rotation key records
     for (i, pk) in pre_rotation_keys.iter().enumerate() {
@@ -1205,6 +1217,7 @@ async fn create_webvh_did(
             &pk.public_key,
             &pk.label,
             Some(context_id),
+            Some(0),
         )
         .await?;
     }

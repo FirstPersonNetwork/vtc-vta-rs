@@ -171,6 +171,52 @@ pub async fn cmd_key_list(
     Ok(())
 }
 
+pub async fn cmd_seeds_list(
+    client: &VtaClient,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let resp = client.list_seeds().await?;
+
+    if resp.seeds.is_empty() {
+        println!("No seed records found.");
+        println!("  (pre-rotation state: using external seed store as generation 0)");
+        println!("  Active seed ID: {}", resp.active_seed_id);
+        return Ok(());
+    }
+
+    println!("{} seed generation(s):\n", resp.seeds.len());
+    for seed in &resp.seeds {
+        println!("  Seed ID:     {}", seed.id);
+        println!("  Status:      {}", seed.status);
+        println!(
+            "  Created:     {}",
+            seed.created_at.format("%Y-%m-%d %H:%M:%S UTC")
+        );
+        if let Some(retired_at) = seed.retired_at {
+            println!(
+                "  Retired:     {}",
+                retired_at.format("%Y-%m-%d %H:%M:%S UTC")
+            );
+        }
+        println!();
+    }
+    println!("Active seed ID: {}", resp.active_seed_id);
+
+    Ok(())
+}
+
+pub async fn cmd_seeds_rotate(
+    client: &VtaClient,
+    mnemonic: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let resp = client.rotate_seed(mnemonic).await?;
+
+    println!("Seed rotated successfully.");
+    println!("  Previous seed ID: {} (retired)", resp.previous_seed_id);
+    println!("  New active seed ID: {}", resp.new_seed_id);
+
+    Ok(())
+}
+
 pub async fn cmd_key_secrets(
     client: &VtaClient,
     key_ids: Vec<String>,

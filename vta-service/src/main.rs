@@ -28,6 +28,7 @@ use config::{AppConfig, LogFormat};
 use ed25519_dalek::SigningKey;
 use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
 use keys::seed_store::create_seed_store;
+use keys::seeds::load_seed_bytes;
 use multibase::Base;
 use tracing_subscriber::EnvFilter;
 
@@ -116,6 +117,14 @@ enum KeyCliCommands {
         /// Export all active keys in this context
         #[arg(long)]
         context: Option<String>,
+    },
+    /// List seed generations and their status
+    Seeds,
+    /// Rotate to a new master seed (retires the current seed)
+    RotateSeed {
+        /// BIP-39 mnemonic for the new seed (generates random if omitted)
+        #[arg(long)]
+        mnemonic: Option<String>,
     },
 }
 
@@ -254,6 +263,10 @@ async fn main() {
                 KeyCliCommands::Secrets { key_ids, context } => {
                     keys_cli::run_keys_secrets(cli.config, key_ids, context).await
                 }
+                KeyCliCommands::Seeds => keys_cli::run_keys_seeds_list(cli.config).await,
+                KeyCliCommands::RotateSeed { mnemonic } => {
+                    keys_cli::run_rotate_seed(cli.config, mnemonic).await
+                }
             };
             if let Err(e) = result {
                 eprintln!("Error: {e}");
@@ -370,9 +383,6 @@ async fn export_admin(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::e
     }
     eprintln!();
 
-    // Load seed for credential reconstruction
-    let seed = seed_store.get().await.map_err(|e| format!("{e}"))?;
-
     for admin in &admins {
         eprintln!("Admin DID: {}", admin.did);
         if let Some(label) = &admin.label {
@@ -381,19 +391,15 @@ async fn export_admin(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::e
 
         // For did:key admins, reconstruct the credential
         if admin.did.starts_with("did:key:") {
-            if let Some(ref seed) = seed {
-                match reconstruct_credential(seed, &admin.did, vta_did, &keys_ks).await {
-                    Ok(credential) => {
-                        eprintln!();
-                        eprintln!("  Credential:");
-                        eprintln!("  {credential}");
-                    }
-                    Err(e) => {
-                        eprintln!("  Could not reconstruct credential: {e}");
-                    }
+            match reconstruct_credential(&*seed_store, &admin.did, vta_did, &keys_ks).await {
+                Ok(credential) => {
+                    eprintln!();
+                    eprintln!("  Credential:");
+                    eprintln!("  {credential}");
                 }
-            } else {
-                eprintln!("  No seed found — cannot reconstruct credential");
+                Err(e) => {
+                    eprintln!("  Could not reconstruct credential: {e}");
+                }
             }
         }
         eprintln!();
@@ -404,7 +410,7 @@ async fn export_admin(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::e
 
 /// Re-derive the admin private key from BIP-32 seed and build the credential bundle.
 async fn reconstruct_credential(
-    seed: &[u8],
+    seed_store: &dyn keys::seed_store::SeedStore,
     admin_did: &str,
     vta_did: &str,
     keys_ks: &store::KeyspaceHandle,
@@ -419,8 +425,11 @@ async fn reconstruct_credential(
         .await?
         .ok_or("admin key record not found in store")?;
 
+    // Load seed for this key's generation
+    let seed = load_seed_bytes(keys_ks, seed_store, record.seed_id).await?;
+
     // Re-derive the private key
-    let root = ExtendedSigningKey::from_seed(seed)
+    let root = ExtendedSigningKey::from_seed(&seed)
         .map_err(|e| format!("failed to create BIP-32 root key: {e}"))?;
     let derivation_path: DerivationPath = record
         .derivation_path

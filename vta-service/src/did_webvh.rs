@@ -13,6 +13,7 @@ use vta_sdk::did_secrets::{DidSecretsBundle, SecretEntry};
 use crate::config::AppConfig;
 use crate::contexts::{self, get_context, store_context};
 use crate::keys::seed_store::create_seed_store;
+use crate::keys::seeds::{get_active_seed_id, load_seed_bytes};
 use crate::keys::{self, KeyType as SdkKeyType};
 use crate::setup;
 use crate::store::Store;
@@ -31,13 +32,10 @@ pub async fn run_create_did_webvh(
     let keys_ks = store.keyspace("keys")?;
     let contexts_ks = store.keyspace("contexts")?;
 
-    // Load seed from configured backend
+    // Load seed from configured backend using the active generation
     let seed_store = create_seed_store(&config)?;
-    let seed = seed_store
-        .get()
-        .await
-        .map_err(|e| format!("{e}"))?
-        .ok_or("No seed found. Run `vta setup` first.")?;
+    let active_seed_id = get_active_seed_id(&keys_ks).await?;
+    let seed = load_seed_bytes(&keys_ks, &*seed_store, Some(active_seed_id)).await?;
 
     // Resolve context
     let mut ctx = match get_context(&contexts_ks, &args.context).await? {
@@ -220,7 +218,7 @@ pub async fn run_create_did_webvh(
     eprintln!("\x1b[1;32mCreated DID:\x1b[0m {final_did}");
 
     // Save key records now that we have the final DID
-    keys::save_entity_key_records(&final_did, &derived, &keys_ks, &ctx.id).await?;
+    keys::save_entity_key_records(&final_did, &derived, &keys_ks, &ctx.id, Some(active_seed_id)).await?;
 
     // Save pre-rotation key records
     for (i, pk) in pre_rotation_keys.iter().enumerate() {
@@ -232,6 +230,7 @@ pub async fn run_create_did_webvh(
             &pk.public_key,
             &pk.label,
             Some(&ctx.id),
+            Some(active_seed_id),
         )
         .await?;
     }

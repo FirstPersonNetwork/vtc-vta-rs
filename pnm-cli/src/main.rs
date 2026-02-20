@@ -291,6 +291,14 @@ enum KeyCommands {
         #[arg(long)]
         context: Option<String>,
     },
+    /// List seed generations
+    Seeds,
+    /// Rotate to a new seed generation
+    RotateSeed {
+        /// BIP-39 mnemonic phrase for the new seed (random if omitted)
+        #[arg(long)]
+        mnemonic: Option<String>,
+    },
 }
 
 fn print_banner() {
@@ -493,6 +501,10 @@ async fn main() {
             } => keys::cmd_key_list(&client, offset, limit, status, context).await,
             KeyCommands::Secrets { key_ids, context } => {
                 keys::cmd_key_secrets(&client, key_ids, context).await
+            }
+            KeyCommands::Seeds => keys::cmd_seeds_list(&client).await,
+            KeyCommands::RotateSeed { mnemonic } => {
+                keys::cmd_seeds_rotate(&client, mnemonic).await
             }
         },
     };

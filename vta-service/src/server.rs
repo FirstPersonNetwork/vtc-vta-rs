@@ -15,6 +15,7 @@ use crate::error::AppError;
 use crate::keys::KeyRecord;
 use crate::keys::derivation::Bip32Extension;
 use crate::keys::seed_store::SeedStore;
+use crate::keys::seeds::load_seed_bytes;
 use crate::messaging;
 use crate::routes;
 use crate::store::{KeyspaceHandle, Store};
@@ -327,13 +328,20 @@ async fn init_auth(
         }
     };
 
-    // Load seed from store
-    let seed = match seed_store.get().await {
-        Ok(Some(s)) => s,
-        Ok(None) => {
-            warn!("no master seed found — auth endpoints will not work (run setup first)");
+    // Look up VTA key paths from stored key records
+    let (signing_path, ka_path, vta_seed_id) = match find_vta_key_paths(&vta_did, keys_ks).await {
+        Ok(paths) => paths,
+        Err(e) => {
+            warn!(
+                "failed to find VTA key records: {e} — auth endpoints will not work (run setup first)"
+            );
             return (None, None, None);
         }
+    };
+
+    // Load seed for VTA keys (uses the seed generation from the key record)
+    let seed = match load_seed_bytes(keys_ks, seed_store, vta_seed_id).await {
+        Ok(s) => s,
         Err(e) => {
             warn!("failed to load seed: {e} — auth endpoints will not work");
             return (None, None, None);
@@ -344,17 +352,6 @@ async fn init_auth(
         Ok(r) => r,
         Err(e) => {
             warn!("failed to create BIP-32 root key: {e} — auth endpoints will not work");
-            return (None, None, None);
-        }
-    };
-
-    // Look up VTA key paths from stored key records
-    let (signing_path, ka_path) = match find_vta_key_paths(&vta_did, keys_ks).await {
-        Ok(paths) => paths,
-        Err(e) => {
-            warn!(
-                "failed to find VTA key records: {e} — auth endpoints will not work (run setup first)"
-            );
             return (None, None, None);
         }
     };
@@ -419,11 +416,12 @@ async fn init_auth(
 ///
 /// Uses direct lookups by `{vta_did}#key-0` and `{vta_did}#key-1`.
 ///
-/// Returns `(signing_path, ka_path)`.
+/// Returns `(signing_path, ka_path, seed_id)` where `seed_id` comes from
+/// the signing key record.
 async fn find_vta_key_paths(
     vta_did: &str,
     keys_ks: &KeyspaceHandle,
-) -> Result<(String, String), AppError> {
+) -> Result<(String, String, Option<u32>), AppError> {
     let signing_key_id = format!("{vta_did}#key-0");
     let ka_key_id = format!("{vta_did}#key-1");
 
@@ -437,7 +435,7 @@ async fn find_vta_key_paths(
         .ok_or_else(|| AppError::NotFound("VTA key-agreement key not found".into()))?;
 
     debug!(signing_path = %signing.derivation_path, ka_path = %ka.derivation_path, "VTA key paths resolved");
-    Ok((signing.derivation_path, ka.derivation_path))
+    Ok((signing.derivation_path, ka.derivation_path, signing.seed_id))
 }
 
 /// Decode a base64url-no-pad JWT signing key and construct `JwtKeys`.

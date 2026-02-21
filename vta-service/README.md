@@ -181,7 +181,6 @@ Configuration is loaded from a TOML file (default: `config.toml`). Every field c
 |------------|---------|-------------|
 | `vta_did` | `VTA_DID` | The VTA's own DID |
 | `vta_name` | — | Human-readable name (alias: `community_name`) |
-| `vta_description` | — | Description (alias: `community_description`) |
 | `public_url` | `VTA_PUBLIC_URL` | Public-facing URL of this VTA instance |
 
 ### `[server]`

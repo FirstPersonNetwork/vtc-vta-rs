@@ -7,8 +7,6 @@ pub struct AppConfig {
     pub vta_did: Option<String>,
     #[serde(alias = "community_name")]
     pub vta_name: Option<String>,
-    #[serde(alias = "community_description")]
-    pub vta_description: Option<String>,
     pub public_url: Option<String>,
     #[serde(default)]
     pub server: ServerConfig,

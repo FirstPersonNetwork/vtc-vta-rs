@@ -97,9 +97,6 @@ enum ConfigCommands {
         /// VTA name
         #[arg(long)]
         community_vta_name: Option<String>,
-        /// VTA description
-        #[arg(long)]
-        community_vta_description: Option<String>,
         /// Public URL for this VTA
         #[arg(long)]
         public_url: Option<String>,
@@ -410,7 +407,6 @@ async fn main() {
             ConfigCommands::Update {
                 community_vta_did,
                 community_vta_name,
-                community_vta_description,
                 public_url,
             } => {
                 config_cmd::cmd_config_update(
@@ -418,7 +414,6 @@ async fn main() {
                     "",
                     community_vta_did,
                     community_vta_name,
-                    community_vta_description,
                     public_url,
                 )
                 .await

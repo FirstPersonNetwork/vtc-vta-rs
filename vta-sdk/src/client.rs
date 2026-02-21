@@ -29,8 +29,6 @@ pub struct ConfigResponse {
     pub community_vta_did: Option<String>,
     #[serde(rename = "vta_name")]
     pub community_vta_name: Option<String>,
-    #[serde(rename = "vta_description")]
-    pub community_vta_description: Option<String>,
     pub public_url: Option<String>,
 }
 
@@ -40,8 +38,6 @@ pub struct UpdateConfigRequest {
     pub vta_did: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub vta_name: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub vta_description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
 }
@@ -686,13 +682,11 @@ mod tests {
         let req = UpdateConfigRequest {
             vta_did: None,
             vta_name: Some("Test".into()),
-            vta_description: None,
             public_url: None,
         };
         let json = serde_json::to_value(&req).unwrap();
         assert!(!json.as_object().unwrap().contains_key("vta_did"));
         assert_eq!(json["vta_name"], "Test");
-        assert!(!json.as_object().unwrap().contains_key("vta_description"));
         assert!(!json.as_object().unwrap().contains_key("public_url"));
     }
 

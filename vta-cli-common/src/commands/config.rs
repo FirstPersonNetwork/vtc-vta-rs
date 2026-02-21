@@ -6,21 +6,15 @@ pub async fn cmd_config_get(
 ) -> Result<(), Box<dyn std::error::Error>> {
     let resp = client.get_config().await?;
     println!(
-        "{label_prefix}VTA DID:         {}",
+        "{label_prefix}VTA DID:    {}",
         resp.community_vta_did.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "{label_prefix}VTA Name:        {}",
+        "{label_prefix}VTA Name:   {}",
         resp.community_vta_name.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "{label_prefix}VTA Description: {}",
-        resp.community_vta_description
-            .as_deref()
-            .unwrap_or("(not set)")
-    );
-    println!(
-        "{label_prefix}Public URL:      {}",
+        "{label_prefix}Public URL: {}",
         resp.public_url.as_deref().unwrap_or("(not set)")
     );
     Ok(())
@@ -31,33 +25,25 @@ pub async fn cmd_config_update(
     label_prefix: &str,
     vta_did: Option<String>,
     vta_name: Option<String>,
-    vta_description: Option<String>,
     public_url: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let req = UpdateConfigRequest {
         vta_did,
         vta_name,
-        vta_description,
         public_url,
     };
     let resp = client.update_config(req).await?;
     println!("Configuration updated:");
     println!(
-        "  {label_prefix}VTA DID:         {}",
+        "  {label_prefix}VTA DID:    {}",
         resp.community_vta_did.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "  {label_prefix}VTA Name:        {}",
+        "  {label_prefix}VTA Name:   {}",
         resp.community_vta_name.as_deref().unwrap_or("(not set)")
     );
     println!(
-        "  {label_prefix}VTA Description: {}",
-        resp.community_vta_description
-            .as_deref()
-            .unwrap_or("(not set)")
-    );
-    println!(
-        "  Public URL:      {}",
+        "  {label_prefix}Public URL: {}",
         resp.public_url.as_deref().unwrap_or("(not set)")
     );
     Ok(())

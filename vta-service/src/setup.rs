@@ -380,18 +380,7 @@ pub async fn run_setup_wizard(
         Some(vta_name)
     };
 
-    // 3. VTA description
-    let vta_description: String = Input::new()
-        .with_prompt("VTA description (leave empty to skip)")
-        .allow_empty(true)
-        .interact_text()?;
-    let vta_description = if vta_description.is_empty() {
-        None
-    } else {
-        Some(vta_description)
-    };
-
-    // 4. Public URL
+    // 3. Public URL
     let public_url: String = Input::new()
         .with_prompt("Public URL for this VTA (leave empty to skip)")
         .allow_empty(true)
@@ -514,7 +503,6 @@ pub async fn run_setup_wizard(
         let seed_store = create_seed_store(&AppConfig {
             vta_did: None,
             vta_name: None,
-            vta_description: None,
             public_url: None,
             server: ServerConfig::default(),
             log: LogConfig::default(),
@@ -594,7 +582,6 @@ pub async fn run_setup_wizard(
     let config = AppConfig {
         vta_did,
         vta_name,
-        vta_description,
         public_url: public_url.clone(),
         server: ServerConfig { host, port },
         log: LogConfig {

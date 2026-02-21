@@ -49,9 +49,7 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
 
     section("VTA Status");
     let name = config.vta_name.as_deref().unwrap_or("(not set)");
-    let desc = config.vta_description.as_deref().unwrap_or("(not set)");
     eprintln!("  {CYAN}{:<13}{RESET} {}", "Name", if name == "(not set)" { format!("{DIM}{name}{RESET}") } else { name.to_string() });
-    eprintln!("  {CYAN}{:<13}{RESET} {}", "Description", if desc == "(not set)" { format!("{DIM}{desc}{RESET}") } else { desc.to_string() });
     eprintln!("  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} complete", "Setup");
     eprintln!("  {CYAN}{:<13}{RESET} {}", "Config", config.config_path.display());
 

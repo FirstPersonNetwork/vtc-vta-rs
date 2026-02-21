@@ -12,7 +12,6 @@ use crate::server::AppState;
 pub struct ConfigResponse {
     pub vta_did: Option<String>,
     pub vta_name: Option<String>,
-    pub vta_description: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_url: Option<String>,
 }
@@ -21,7 +20,6 @@ pub struct ConfigResponse {
 pub struct UpdateConfigRequest {
     pub vta_did: Option<String>,
     pub vta_name: Option<String>,
-    pub vta_description: Option<String>,
     pub public_url: Option<String>,
 }
 
@@ -34,7 +32,6 @@ pub async fn get_config(
     Ok(Json(ConfigResponse {
         vta_did: config.vta_did.clone(),
         vta_name: config.vta_name.clone(),
-        vta_description: config.vta_description.clone(),
         public_url: config.public_url.clone(),
     }))
 }
@@ -53,9 +50,6 @@ pub async fn update_config(
         if let Some(vta_name) = req.vta_name {
             config.vta_name = Some(vta_name);
         }
-        if let Some(vta_description) = req.vta_description {
-            config.vta_description = Some(vta_description);
-        }
         if let Some(public_url) = req.public_url {
             config.public_url = Some(public_url);
         }
@@ -63,7 +57,6 @@ pub async fn update_config(
         let response = ConfigResponse {
             vta_did: config.vta_did.clone(),
             vta_name: config.vta_name.clone(),
-            vta_description: config.vta_description.clone(),
             public_url: config.public_url.clone(),
         };
         let contents = toml::to_string_pretty(&*config)

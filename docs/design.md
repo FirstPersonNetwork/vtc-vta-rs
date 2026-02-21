@@ -397,15 +397,14 @@ Configuration loads from a TOML file with environment variable overrides:
 
 | Section   | Key Fields                          | Env Prefix     |
 | --------- | ----------------------------------- | -------------- |
-| (root)    | vta_did, community_name/description | VTA\_          |
+| (root)    | vta_did, community_name             | VTA\_          |
 | server    | host, port                          | VTA*SERVER*    |
 | log       | level, format                       | VTA*LOG*       |
 | store     | data_dir                            | VTA*STORE*     |
 | messaging | mediator_url, mediator_did          | VTA*MESSAGING* |
 | auth      | token expiries, jwt_signing_key     | VTA*AUTH*      |
 
-`vta_did`, `community_name`, and `community_description` are mutable at
-runtime via `PATCH /config`.
+`vta_did` and `community_name` are mutable at runtime via `PATCH /config`.
 
 ## Setup Wizard
 

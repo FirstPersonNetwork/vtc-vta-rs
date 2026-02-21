@@ -51,6 +51,19 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
     let name = config.vta_name.as_deref().unwrap_or("(not set)");
     eprintln!("  {CYAN}{:<13}{RESET} {}", "Name", if name == "(not set)" { format!("{DIM}{name}{RESET}") } else { name.to_string() });
     eprintln!("  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} complete", "Setup");
+    let mut svc_list = Vec::new();
+    if config.services.rest {
+        svc_list.push("REST");
+    }
+    if config.services.didcomm {
+        svc_list.push("DIDComm");
+    }
+    let svc_display = if svc_list.is_empty() {
+        format!("{DIM}(none){RESET}")
+    } else {
+        svc_list.join(", ")
+    };
+    eprintln!("  {CYAN}{:<13}{RESET} {svc_display}", "Services");
     eprintln!("  {CYAN}{:<13}{RESET} {}", "Config", config.config_path.display());
 
     // 2. DID resolver for resolution checks (created early, reused for contexts)

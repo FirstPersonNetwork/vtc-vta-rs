@@ -6,7 +6,7 @@ use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use bip39::Mnemonic;
 use chrono::Utc;
-use dialoguer::{Confirm, Input, Select};
+use dialoguer::{Confirm, Input, MultiSelect, Select};
 use didwebvh_rs::DIDWebVHState;
 use didwebvh_rs::log_entry::LogEntryMethods;
 use didwebvh_rs::parameters::Parameters as WebVHParameters;
@@ -21,7 +21,7 @@ use vta_sdk::did_secrets::{DidSecretsBundle, SecretEntry};
 
 use crate::config::{
     AppConfig, AuthConfig, LogConfig, LogFormat, MessagingConfig, SecretsConfig, ServerConfig,
-    StoreConfig,
+    ServicesConfig, StoreConfig,
 };
 use crate::contexts::{self, ContextRecord, store_context};
 use crate::keys::paths::allocate_path;
@@ -52,6 +52,29 @@ async fn derive_and_store_did_key(
     seed_id: Option<u32>,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
     keys::derive_and_store_did_key(seed, base, context_id, "Admin did:key", keys_ks, seed_id).await
+}
+
+/// Prompt the user to select which services to enable.
+///
+/// Returns `(rest_enabled, didcomm_enabled)`. At least one must be selected.
+fn prompt_services() -> Result<(bool, bool), Box<dyn std::error::Error>> {
+    let items = vec!["REST API", "DIDComm Messaging"];
+    loop {
+        let selected = MultiSelect::new()
+            .with_prompt("Services to enable (select at least one)")
+            .items(&items)
+            .defaults(&[true, true])
+            .interact()?;
+
+        if selected.is_empty() {
+            eprintln!("\x1b[31mPlease select at least one service.\x1b[0m");
+            continue;
+        }
+
+        let rest = selected.contains(&0);
+        let didcomm = selected.contains(&1);
+        return Ok((rest, didcomm));
+    }
 }
 
 /// Prompt for seed store backend configuration based on compiled features.
@@ -380,28 +403,35 @@ pub async fn run_setup_wizard(
         Some(vta_name)
     };
 
-    // 3. Public URL
-    let public_url: String = Input::new()
-        .with_prompt("Public URL for this VTA (leave empty to skip)")
-        .allow_empty(true)
-        .interact_text()?;
-    let public_url = if public_url.is_empty() {
-        None
+    // 3. Services to enable
+    let (enable_rest, enable_didcomm) = prompt_services()?;
+
+    // 4. Public URL, host, port (only when REST is enabled)
+    let (public_url, host, port) = if enable_rest {
+        let public_url: String = Input::new()
+            .with_prompt("Public URL for this VTA (leave empty to skip)")
+            .allow_empty(true)
+            .interact_text()?;
+        let public_url = if public_url.is_empty() {
+            None
+        } else {
+            Some(public_url)
+        };
+
+        let host: String = Input::new()
+            .with_prompt("Server host")
+            .default("0.0.0.0".into())
+            .interact_text()?;
+
+        let port: u16 = Input::new()
+            .with_prompt("Server port")
+            .default(8100u16)
+            .interact_text()?;
+
+        (public_url, host, port)
     } else {
-        Some(public_url)
+        (None, ServerConfig::default().host, ServerConfig::default().port)
     };
-
-    // 5. Server host
-    let host: String = Input::new()
-        .with_prompt("Server host")
-        .default("0.0.0.0".into())
-        .interact_text()?;
-
-    // 5. Server port
-    let port: u16 = Input::new()
-        .with_prompt("Server port")
-        .default(8100u16)
-        .interact_text()?;
 
     // 6. Log level
     let log_level: String = Input::new()
@@ -507,6 +537,7 @@ pub async fn run_setup_wizard(
             server: ServerConfig::default(),
             log: LogConfig::default(),
             store: StoreConfig::default(),
+            services: ServicesConfig::default(),
             messaging: None,
             auth: AuthConfig::default(),
             secrets: secrets_config.clone(),
@@ -532,7 +563,11 @@ pub async fn run_setup_wizard(
     let jwt_signing_key = BASE64.encode(jwt_key_bytes);
 
     // 12. DIDComm messaging (with mediator DID creation)
-    let messaging = configure_messaging(&seed, &med_ctx.base_path, &keys_ks).await?;
+    let messaging = if enable_didcomm {
+        configure_messaging(&seed, &med_ctx.base_path, &keys_ks).await?
+    } else {
+        None
+    };
 
     // Update mediator context with the DID
     if let Some(ref msg) = messaging {
@@ -590,6 +625,10 @@ pub async fn run_setup_wizard(
         },
         store: StoreConfig {
             data_dir: PathBuf::from(data_dir),
+        },
+        services: ServicesConfig {
+            rest: enable_rest,
+            didcomm: enable_didcomm,
         },
         messaging,
         auth: AuthConfig {
@@ -652,6 +691,14 @@ pub async fn run_setup_wizard(
     if let Some(did) = &config.vta_did {
         eprintln!("  VTA DID: {did}");
     }
+    let mut svc_list = Vec::new();
+    if config.services.rest {
+        svc_list.push("REST");
+    }
+    if config.services.didcomm {
+        svc_list.push("DIDComm");
+    }
+    eprintln!("  Services: {}", svc_list.join(", "));
     eprintln!("  Server: {}:{}", config.server.host, config.server.port);
     if let Some(msg) = &config.messaging {
         eprintln!("  Mediator DID: {}", msg.mediator_did);

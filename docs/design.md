@@ -398,6 +398,7 @@ Configuration loads from a TOML file with environment variable overrides:
 | Section   | Key Fields                          | Env Prefix     |
 | --------- | ----------------------------------- | -------------- |
 | (root)    | vta_did, community_name             | VTA\_          |
+| services  | rest, didcomm                       | —              |
 | server    | host, port                          | VTA*SERVER*    |
 | log       | level, format                       | VTA*LOG*       |
 | store     | data_dir                            | VTA*STORE*     |

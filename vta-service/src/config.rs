@@ -16,6 +16,8 @@ pub struct AppConfig {
     pub store: StoreConfig,
     pub messaging: Option<MessagingConfig>,
     #[serde(default)]
+    pub services: ServicesConfig,
+    #[serde(default)]
     pub auth: AuthConfig,
     #[serde(default)]
     pub secrets: SecretsConfig,
@@ -60,6 +62,27 @@ impl Default for SecretsConfig {
             azure_vault_url: None,
             azure_secret_name: None,
             keyring_service: default_keyring_service(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ServicesConfig {
+    #[serde(default = "default_true")]
+    pub rest: bool,
+    #[serde(default = "default_true")]
+    pub didcomm: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for ServicesConfig {
+    fn default() -> Self {
+        Self {
+            rest: true,
+            didcomm: true,
         }
     }
 }

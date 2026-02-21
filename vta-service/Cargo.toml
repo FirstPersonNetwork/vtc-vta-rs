@@ -11,7 +11,9 @@ license.workspace = true
 repository.workspace = true
 
 [features]
-default = ["setup", "keyring"]
+default = ["setup", "keyring", "rest", "didcomm"]
+rest = []
+didcomm = []
 setup = ["dep:dialoguer", "dep:didwebvh-rs", "dep:url"]
 keyring = ["dep:keyring"]
 config-seed = []

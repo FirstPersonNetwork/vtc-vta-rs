@@ -10,7 +10,9 @@ mod error;
 mod import_did;
 mod keys;
 mod keys_cli;
+#[cfg(feature = "didcomm")]
 mod messaging;
+#[cfg(feature = "rest")]
 mod routes;
 mod server;
 #[cfg(feature = "setup")]

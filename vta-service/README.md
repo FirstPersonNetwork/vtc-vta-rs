@@ -183,6 +183,15 @@ Configuration is loaded from a TOML file (default: `config.toml`). Every field c
 | `vta_name` | — | Human-readable name (alias: `community_name`) |
 | `public_url` | `VTA_PUBLIC_URL` | Public-facing URL of this VTA instance |
 
+### `[services]`
+
+| TOML Field | Default | Description |
+|------------|---------|-------------|
+| `rest` | `true` | Enable the REST API thread |
+| `didcomm` | `true` | Enable the DIDComm messaging thread |
+
+At least one service must be enabled. These can also be disabled at compile time via the `rest` and `didcomm` Cargo features.
+
 ### `[server]`
 
 | TOML Field | Env Var | Default | Description |
@@ -239,6 +248,8 @@ Configuration is loaded from a TOML file (default: `config.toml`). Every field c
 |---------|---------|-------------|
 | `setup` | Yes | Interactive setup wizard and `did:webvh` creation |
 | `keyring` | Yes | OS keyring seed storage backend |
+| `rest` | Yes | REST API thread (module and thread spawning) |
+| `didcomm` | Yes | DIDComm messaging thread (module and thread spawning) |
 | `config-seed` | No | Store BIP-32 seed as hex in the TOML config file |
 | `aws-secrets` | No | AWS Secrets Manager seed storage backend |
 | `gcp-secrets` | No | Google Cloud Secret Manager seed storage backend |
@@ -248,15 +259,15 @@ A plaintext file fallback (`seed.plaintext` in the data directory) is always ava
 
 ## Architecture
 
-The server runs three dedicated OS threads, each with its own single-threaded Tokio runtime:
+The server runs up to three dedicated OS threads, each with its own single-threaded Tokio runtime. The REST and DIDComm threads are conditional — they only start when enabled by both the `[services]` config and their corresponding Cargo feature flag.
 
-1. **REST thread** (`vta-rest`) — Serves the Axum HTTP API. Handles key management, ACL, contexts, auth, and configuration endpoints.
+1. **REST thread** (`vta-rest`) — Serves the Axum HTTP API. Requires the `rest` feature and `services.rest = true`.
 
-2. **DIDComm thread** (`vta-didcomm`) — Connects to the configured mediator and processes inbound DIDComm messages. Stays idle if `vta_did` or messaging is not configured.
+2. **DIDComm thread** (`vta-didcomm`) — Connects to the configured mediator and processes inbound DIDComm messages. Requires the `didcomm` feature and `services.didcomm = true`. Stays idle if `vta_did` or messaging is not configured.
 
-3. **Storage thread** (`vta-storage`) — Runs periodic session cleanup and persists the fjall KV store on shutdown. Guarantees all writes are flushed before the database closes.
+3. **Storage thread** (`vta-storage`) — Always runs. Handles periodic session cleanup and persists the fjall KV store on shutdown. Guarantees all writes are flushed before the database closes.
 
-Shutdown is coordinated via a `watch` channel — SIGINT or SIGTERM triggers graceful shutdown of all three threads.
+At least one of REST or DIDComm must be enabled or the server will refuse to start. Shutdown is coordinated via a `watch` channel — SIGINT or SIGTERM triggers graceful shutdown of all threads.
 
 ### Key Modules
 

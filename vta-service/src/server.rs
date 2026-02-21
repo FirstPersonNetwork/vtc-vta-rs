@@ -16,10 +16,13 @@ use crate::keys::KeyRecord;
 use crate::keys::derivation::Bip32Extension;
 use crate::keys::seed_store::SeedStore;
 use crate::keys::seeds::load_seed_bytes;
+#[cfg(feature = "didcomm")]
 use crate::messaging;
+#[cfg(feature = "rest")]
 use crate::routes;
 use crate::store::{KeyspaceHandle, Store};
 use tokio::sync::{RwLock, watch};
+#[cfg(feature = "rest")]
 use tower_http::trace::TraceLayer;
 use tracing::{debug, error, info, warn};
 
@@ -41,6 +44,18 @@ pub async fn run(
     store: Store,
     seed_store: Arc<dyn SeedStore>,
 ) -> Result<(), AppError> {
+    // Determine which services will actually start (feature flag AND config)
+    let rest_enabled = cfg!(feature = "rest") && config.services.rest;
+    let didcomm_enabled = cfg!(feature = "didcomm") && config.services.didcomm;
+
+    if !rest_enabled && !didcomm_enabled {
+        return Err(AppError::Config(
+            "no services enabled — enable at least one of REST or DIDComm \
+             (check [services] config and compile-time features)"
+                .into(),
+        ));
+    }
+
     // Open cached keyspace handles
     let keys_ks = store.keyspace("keys")?;
     let sessions_ks = store.keyspace("sessions")?;
@@ -51,11 +66,17 @@ pub async fn run(
     let (did_resolver, secrets_resolver, jwt_keys) =
         init_auth(&config, &*seed_store, &keys_ks).await;
 
-    // Bind TCP listener on the main thread for early port validation
-    let addr = format!("{}:{}", config.server.host, config.server.port);
-    let std_listener = std::net::TcpListener::bind(&addr).map_err(AppError::Io)?;
-    std_listener.set_nonblocking(true).map_err(AppError::Io)?;
-    info!("server listening addr={addr}");
+    // Bind TCP listener only if REST is enabled
+    #[cfg(feature = "rest")]
+    let std_listener = if config.services.rest {
+        let addr = format!("{}:{}", config.server.host, config.server.port);
+        let listener = std::net::TcpListener::bind(&addr).map_err(AppError::Io)?;
+        listener.set_nonblocking(true).map_err(AppError::Io)?;
+        info!("server listening addr={addr}");
+        Some(listener)
+    } else {
+        None
+    };
 
     // Shutdown coordination
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
@@ -69,49 +90,68 @@ pub async fn run(
         }
     });
 
-    // Gather DIDComm thread inputs
-    let didcomm_config = config.clone();
-    let didcomm_secrets = secrets_resolver.clone();
-    let didcomm_vta_did = config.vta_did.clone();
-
     // Gather storage thread inputs
     let storage_sessions_ks = sessions_ks.clone();
     let storage_auth_config = config.auth.clone();
     let has_auth = jwt_keys.is_some();
 
-    // Build AppState for the REST thread
-    let state = AppState {
-        keys_ks,
-        sessions_ks,
-        acl_ks,
-        contexts_ks,
-        config: Arc::new(RwLock::new(config)),
-        seed_store,
-        did_resolver,
-        secrets_resolver,
-        jwt_keys,
+    // Spawn REST thread (conditional)
+    #[cfg(feature = "rest")]
+    let rest_handle = if let Some(listener) = std_listener {
+        // Build AppState for the REST thread
+        let state = AppState {
+            keys_ks,
+            sessions_ks,
+            acl_ks,
+            contexts_ks,
+            config: Arc::new(RwLock::new(config.clone())),
+            seed_store,
+            did_resolver,
+            secrets_resolver: secrets_resolver.clone(),
+            jwt_keys,
+        };
+        let mut rest_shutdown_rx = shutdown_rx.clone();
+        Some(
+            std::thread::Builder::new()
+                .name("vta-rest".into())
+                .spawn(move || run_rest_thread(listener, state, &mut rest_shutdown_rx))
+                .map_err(|e| AppError::Internal(format!("failed to spawn REST thread: {e}")))?,
+        )
+    } else {
+        None
     };
+    #[cfg(not(feature = "rest"))]
+    let rest_handle: Option<std::thread::JoinHandle<()>> = None;
 
-    // Spawn three named OS threads
-    let mut rest_shutdown_rx = shutdown_rx.clone();
-    let rest_handle = std::thread::Builder::new()
-        .name("vta-rest".into())
-        .spawn(move || run_rest_thread(std_listener, state, &mut rest_shutdown_rx))
-        .map_err(|e| AppError::Internal(format!("failed to spawn REST thread: {e}")))?;
+    // Spawn DIDComm thread (conditional)
+    #[cfg(feature = "didcomm")]
+    let didcomm_handle = if config.services.didcomm {
+        let didcomm_config = config.clone();
+        let didcomm_secrets = secrets_resolver;
+        let didcomm_vta_did = config.vta_did.clone();
+        let mut didcomm_shutdown_rx = shutdown_rx.clone();
+        Some(
+            std::thread::Builder::new()
+                .name("vta-didcomm".into())
+                .spawn(move || {
+                    run_didcomm_thread(
+                        didcomm_config,
+                        didcomm_secrets,
+                        didcomm_vta_did,
+                        &mut didcomm_shutdown_rx,
+                    )
+                })
+                .map_err(|e| {
+                    AppError::Internal(format!("failed to spawn DIDComm thread: {e}"))
+                })?,
+        )
+    } else {
+        None
+    };
+    #[cfg(not(feature = "didcomm"))]
+    let didcomm_handle: Option<std::thread::JoinHandle<()>> = None;
 
-    let mut didcomm_shutdown_rx = shutdown_rx.clone();
-    let didcomm_handle = std::thread::Builder::new()
-        .name("vta-didcomm".into())
-        .spawn(move || {
-            run_didcomm_thread(
-                didcomm_config,
-                didcomm_secrets,
-                didcomm_vta_did,
-                &mut didcomm_shutdown_rx,
-            )
-        })
-        .map_err(|e| AppError::Internal(format!("failed to spawn DIDComm thread: {e}")))?;
-
+    // Storage thread always runs
     let mut storage_shutdown_rx = shutdown_rx.clone();
     let storage_handle = std::thread::Builder::new()
         .name("vta-storage".into())
@@ -126,36 +166,34 @@ pub async fn run(
         })
         .map_err(|e| AppError::Internal(format!("failed to spawn storage thread: {e}")))?;
 
-    // Join REST + DIDComm in parallel, then storage last
-    let (rest_result, didcomm_result) = tokio::join!(
-        tokio::task::spawn_blocking(move || rest_handle.join()),
-        tokio::task::spawn_blocking(move || didcomm_handle.join()),
-    );
-
-    // If either thread panicked, trigger shutdown for the remaining threads
+    // Join service threads
     let mut any_panic = false;
 
-    match rest_result {
-        Ok(Ok(())) => info!("REST thread stopped"),
-        Ok(Err(_panic)) => {
-            error!("REST thread panicked");
-            any_panic = true;
-        }
-        Err(e) => {
-            error!("failed to join REST thread: {e}");
-            any_panic = true;
+    if let Some(handle) = rest_handle {
+        match tokio::task::spawn_blocking(move || handle.join()).await {
+            Ok(Ok(())) => info!("REST thread stopped"),
+            Ok(Err(_panic)) => {
+                error!("REST thread panicked");
+                any_panic = true;
+            }
+            Err(e) => {
+                error!("failed to join REST thread: {e}");
+                any_panic = true;
+            }
         }
     }
 
-    match didcomm_result {
-        Ok(Ok(())) => info!("DIDComm thread stopped"),
-        Ok(Err(_panic)) => {
-            error!("DIDComm thread panicked");
-            any_panic = true;
-        }
-        Err(e) => {
-            error!("failed to join DIDComm thread: {e}");
-            any_panic = true;
+    if let Some(handle) = didcomm_handle {
+        match tokio::task::spawn_blocking(move || handle.join()).await {
+            Ok(Ok(())) => info!("DIDComm thread stopped"),
+            Ok(Err(_panic)) => {
+                error!("DIDComm thread panicked");
+                any_panic = true;
+            }
+            Err(e) => {
+                error!("failed to join DIDComm thread: {e}");
+                any_panic = true;
+            }
         }
     }
 
@@ -231,6 +269,7 @@ fn run_storage_thread(
 }
 
 /// REST thread: serves the Axum HTTP server.
+#[cfg(feature = "rest")]
 fn run_rest_thread(
     std_listener: std::net::TcpListener,
     state: AppState,
@@ -265,6 +304,7 @@ fn run_rest_thread(
 }
 
 /// DIDComm thread: connects to the mediator and processes inbound messages.
+#[cfg(feature = "didcomm")]
 fn run_didcomm_thread(
     config: AppConfig,
     secrets_resolver: Option<Arc<ThreadedSecretsResolver>>,

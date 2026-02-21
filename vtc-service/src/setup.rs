@@ -17,6 +17,7 @@ use url::Url;
 use didwebvh_rs::url::WebVHURL;
 use vta_sdk::did_secrets::{DidSecretsBundle, SecretEntry};
 use vta_sdk::keys::KeyType as SdkKeyType;
+use vta_sdk::session::resolve_mediator_did;
 
 use crate::acl::{AclEntry, Role, store_acl_entry};
 use crate::auth::credentials::generate_did_key;
@@ -182,7 +183,7 @@ pub async fn run_setup_wizard(
         .interact_text()?;
     let config_path = PathBuf::from(&config_path);
 
-    if config_path.exists() {
+    let old_config = if config_path.exists() {
         let overwrite = Confirm::new()
             .with_prompt(format!(
                 "{} already exists. Overwrite?",
@@ -194,7 +195,11 @@ pub async fn run_setup_wizard(
             eprintln!("Setup cancelled.");
             return Ok(());
         }
-    }
+        // Load existing config so we can clean up old secrets and data
+        AppConfig::load(Some(config_path.clone())).ok()
+    } else {
+        None
+    };
 
     // 2. VTC name
     let vtc_name: String = Input::new()
@@ -265,9 +270,34 @@ pub async fn run_setup_wizard(
         .default("data/vtc".into())
         .interact_text()?;
 
-    // 10. Open the store
+    // 10. Clean up old secrets and data when overwriting
+    if let Some(ref old) = old_config {
+        // Delete old secrets from the previous backend (best-effort)
+        match create_secret_store(old) {
+            Ok(store) => {
+                if let Err(e) = store.delete().await {
+                    eprintln!("  Warning: could not clear old secrets: {e}");
+                }
+            }
+            Err(e) => {
+                eprintln!("  Warning: could not access old secret store: {e}");
+            }
+        }
+
+        // Wipe old data directory if it exists
+        if old.store.data_dir.exists() {
+            std::fs::remove_dir_all(&old.store.data_dir).ok();
+        }
+    }
+
+    // Wipe the chosen data directory if it already exists (fresh start)
+    let data_dir_path = PathBuf::from(&data_dir);
+    if data_dir_path.exists() {
+        std::fs::remove_dir_all(&data_dir_path).ok();
+    }
+
     let store = Store::open(&StoreConfig {
-        data_dir: PathBuf::from(&data_dir),
+        data_dir: data_dir_path,
     })?;
 
     // 11. Generate VTC key material (32 Ed25519 + 32 X25519)
@@ -284,6 +314,7 @@ pub async fn run_setup_wizard(
         // All other backends: store via the secret store
         let secret_store = create_secret_store(&AppConfig {
             vtc_did: None,
+            vta_did: None,
             vtc_name: None,
             vtc_description: None,
             public_url: None,
@@ -307,8 +338,46 @@ pub async fn run_setup_wizard(
     rand::rng().fill_bytes(&mut jwt_key_bytes);
     let jwt_signing_key = BASE64.encode(jwt_key_bytes);
 
-    // 13. DIDComm messaging (mediator DID)
-    let messaging = configure_messaging().await?;
+    // 13. VTA DID and DIDComm messaging (mediator DID)
+    let vta_did_input: String = Input::new()
+        .with_prompt("VTA DID for this community (leave empty to skip)")
+        .allow_empty(true)
+        .interact_text()?;
+    let vta_did = if vta_did_input.is_empty() {
+        None
+    } else {
+        Some(vta_did_input)
+    };
+
+    let messaging = if let Some(ref vta) = vta_did {
+        match resolve_mediator_did(vta).await {
+            Ok(Some(mediator)) => {
+                eprintln!("  Resolved mediator DID: {mediator}");
+                let use_it = Confirm::new()
+                    .with_prompt("Use this mediator?")
+                    .default(true)
+                    .interact()?;
+                if use_it {
+                    Some(MessagingConfig {
+                        mediator_url: String::new(),
+                        mediator_did: mediator,
+                    })
+                } else {
+                    configure_messaging().await?
+                }
+            }
+            Ok(None) => {
+                eprintln!("  No DIDComm mediator found in VTA DID document.");
+                configure_messaging().await?
+            }
+            Err(e) => {
+                eprintln!("  Failed to resolve VTA DID: {e}");
+                configure_messaging().await?
+            }
+        }
+    } else {
+        configure_messaging().await?
+    };
 
     // 14. VTC DID
     let vtc_did =
@@ -339,6 +408,7 @@ pub async fn run_setup_wizard(
     // 16. Save config
     let config = AppConfig {
         vtc_did,
+        vta_did: vta_did.clone(),
         vtc_name,
         vtc_description,
         public_url: public_url.clone(),
@@ -404,6 +474,9 @@ pub async fn run_setup_wizard(
     }
     if let Some(did) = &config.vtc_did {
         eprintln!("  VTC DID: {did}");
+    }
+    if let Some(did) = &config.vta_did {
+        eprintln!("  VTA DID: {did}");
     }
     eprintln!("  Server: {}:{}", config.server.host, config.server.port);
     if let Some(msg) = &config.messaging {

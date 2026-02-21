@@ -5,6 +5,7 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct AppConfig {
     pub vtc_did: Option<String>,
+    pub vta_did: Option<String>,
     #[serde(alias = "community_name")]
     pub vtc_name: Option<String>,
     #[serde(alias = "community_description")]
@@ -202,6 +203,9 @@ impl AppConfig {
         // Apply env var overrides
         if let Ok(vtc_did) = std::env::var("VTC_DID") {
             config.vtc_did = Some(vtc_did);
+        }
+        if let Ok(vta_did) = std::env::var("VTC_VTA_DID") {
+            config.vta_did = Some(vta_did);
         }
         if let Ok(host) = std::env::var("VTC_SERVER_HOST") {
             config.server.host = host;

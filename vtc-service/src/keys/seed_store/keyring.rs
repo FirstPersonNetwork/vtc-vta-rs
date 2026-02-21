@@ -66,4 +66,28 @@ impl super::SecretStore for KeyringSecretStore {
             .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))?
         })
     }
+
+    fn delete(&self) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
+        let service = self.service.clone();
+        let user = self.user.clone();
+        Box::pin(async move {
+            tokio::task::spawn_blocking(move || {
+                let entry = keyring::Entry::new(&service, &user).map_err(|e| {
+                    AppError::SecretStore(format!("failed to create keyring entry: {e}"))
+                })?;
+                match entry.delete_credential() {
+                    Ok(()) => {
+                        debug!("secret deleted from keyring");
+                        Ok(())
+                    }
+                    Err(keyring::Error::NoEntry) => Ok(()),
+                    Err(e) => Err(AppError::SecretStore(format!(
+                        "failed to delete secret from keyring: {e}"
+                    ))),
+                }
+            })
+            .await
+            .map_err(|e| AppError::Internal(format!("blocking task panicked: {e}")))?
+        })
+    }
 }

@@ -1,20 +1,26 @@
 #[cfg(feature = "aws-secrets")]
 mod aws;
+#[cfg(feature = "azure-secrets")]
+mod azure;
 #[cfg(feature = "config-seed")]
 mod config;
 #[cfg(feature = "keyring")]
 mod keyring;
 #[cfg(feature = "gcp-secrets")]
 mod gcp;
+mod plaintext;
 
 #[cfg(feature = "aws-secrets")]
 pub use aws::AwsSeedStore;
+#[cfg(feature = "azure-secrets")]
+pub use azure::AzureSeedStore;
 #[cfg(feature = "config-seed")]
 pub use config::ConfigSeedStore;
 #[cfg(feature = "gcp-secrets")]
 pub use gcp::GcpSeedStore;
 #[cfg(feature = "keyring")]
 pub use keyring::KeyringSeedStore;
+pub use plaintext::PlaintextSeedStore;
 
 use std::future::Future;
 use std::pin::Pin;
@@ -34,8 +40,10 @@ pub trait SeedStore: Send + Sync {
 /// Priority:
 /// 1. AWS Secrets Manager (if `aws-secrets` compiled + `secrets.aws_secret_name` set)
 /// 2. GCP Secret Manager (if `gcp-secrets` compiled + `secrets.gcp_secret_name` set)
-/// 3. Config file seed (if `config-seed` compiled + `secrets.seed` set)
-/// 4. OS keyring (if `keyring` compiled — the default)
+/// 3. Azure Key Vault (if `azure-secrets` compiled + `secrets.azure_vault_url` set)
+/// 4. Config file seed (if `config-seed` compiled + `secrets.seed` set)
+/// 5. OS keyring (if `keyring` compiled — the default)
+/// 6. Plaintext file (always available — NOT secure)
 #[allow(unused_variables)]
 pub fn create_seed_store(config: &AppConfig) -> Result<Box<dyn SeedStore>, AppError> {
     #[cfg(feature = "aws-secrets")]
@@ -58,6 +66,18 @@ pub fn create_seed_store(config: &AppConfig) -> Result<Box<dyn SeedStore>, AppEr
         return Ok(Box::new(store));
     }
 
+    #[cfg(feature = "azure-secrets")]
+    if config.secrets.azure_vault_url.is_some() {
+        let vault_url = config.secrets.azure_vault_url.clone().unwrap();
+        let secret_name = config
+            .secrets
+            .azure_secret_name
+            .clone()
+            .unwrap_or_else(|| "vta-master-seed".to_string());
+        let store = AzureSeedStore::new(vault_url, secret_name);
+        return Ok(Box::new(store));
+    }
+
     #[cfg(feature = "config-seed")]
     if config.secrets.seed.is_some() {
         let store = ConfigSeedStore::new(config.secrets.seed.clone().unwrap());
@@ -71,7 +91,9 @@ pub fn create_seed_store(config: &AppConfig) -> Result<Box<dyn SeedStore>, AppEr
     }
 
     #[allow(unreachable_code)]
-    Err(AppError::Config(
-        "no seed store backend available — compile with at least one of: keyring, config-seed, aws-secrets, gcp-secrets".into(),
-    ))
+    {
+        tracing::warn!("no secure seed store backend available — falling back to plaintext file storage");
+        let store = PlaintextSeedStore::new(&config.store.data_dir);
+        Ok(Box::new(store))
+    }
 }

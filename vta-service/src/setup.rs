@@ -78,6 +78,12 @@ async fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>
         tags.push("gcp");
     }
 
+    #[cfg(feature = "azure-secrets")]
+    {
+        labels.push("Azure Key Vault");
+        tags.push("azure");
+    }
+
     #[cfg(feature = "config-seed")]
     {
         labels.push("Config file (hex-encoded seed in config.toml)");
@@ -90,9 +96,8 @@ async fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>
         tags.push("keyring");
     }
 
-    if labels.is_empty() {
-        return Err("no seed storage backend available — compile with at least one of: keyring, config-seed, aws-secrets, gcp-secrets".into());
-    }
+    labels.push("Plaintext file (NOT recommended)");
+    tags.push("plaintext");
 
     // If only one backend is compiled, use it without prompting
     let choice = if labels.len() == 1 {
@@ -117,6 +122,11 @@ async fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>
         return prompt_gcp_secrets().await;
     }
 
+    #[cfg(feature = "azure-secrets")]
+    if tag == "azure" {
+        return prompt_azure_secrets().await;
+    }
+
     #[cfg(feature = "config-seed")]
     if tag == "config" {
         // Marker: seed field will be populated with hex after mnemonic derivation
@@ -129,6 +139,17 @@ async fn configure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>
     #[cfg(feature = "keyring")]
     if tag == "keyring" {
         return prompt_keyring_service(SecretsConfig::default());
+    }
+
+    if tag == "plaintext" {
+        eprintln!();
+        eprintln!("\x1b[1;33m╔══════════════════════════════════════════════════════════╗");
+        eprintln!("║  WARNING: Plaintext storage is NOT secure.               ║");
+        eprintln!("║  Seeds will be stored in a plaintext file on disk.       ║");
+        eprintln!("║  Use only for development or testing.                    ║");
+        eprintln!("╚══════════════════════════════════════════════════════════╝\x1b[0m");
+        eprintln!();
+        return Ok(SecretsConfig::default());
     }
 
     // All compiled backends are covered above; this is truly unreachable
@@ -297,6 +318,24 @@ async fn list_gcp_secrets(project: &str) -> Result<Vec<String>, Box<dyn std::err
         })
         .collect();
     Ok(names)
+}
+
+#[cfg(feature = "azure-secrets")]
+async fn prompt_azure_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error>> {
+    let vault_url: String = Input::new()
+        .with_prompt("Azure Key Vault URL (e.g. https://my-vault.vault.azure.net)")
+        .interact_text()?;
+
+    let secret_name: String = Input::new()
+        .with_prompt("Azure Key Vault secret name")
+        .default("vta-master-seed".into())
+        .interact_text()?;
+
+    Ok(SecretsConfig {
+        azure_vault_url: Some(vault_url),
+        azure_secret_name: Some(secret_name),
+        ..Default::default()
+    })
 }
 
 pub async fn run_setup_wizard(
@@ -597,6 +636,12 @@ pub async fn run_setup_wizard(
         if !_printed && let Some(ref name) = config.secrets.gcp_secret_name {
             let project = config.secrets.gcp_project.as_deref().unwrap_or("unknown");
             eprintln!("  Seed backend: GCP Secret Manager ({project}/{name})");
+            _printed = true;
+        }
+        #[cfg(feature = "azure-secrets")]
+        if !_printed && let Some(ref url) = config.secrets.azure_vault_url {
+            let name = config.secrets.azure_secret_name.as_deref().unwrap_or("vta-master-seed");
+            eprintln!("  Seed backend: Azure Key Vault ({url}/{name})");
             _printed = true;
         }
         if !_printed && config.secrets.seed.is_some() {

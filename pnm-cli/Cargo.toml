@@ -18,6 +18,7 @@ path = "src/main.rs"
 default = ["keyring"]
 keyring = ["vta-sdk/keyring"]
 config-session = ["vta-sdk/config-session"]
+azure-secrets = ["vta-sdk/azure-secrets"]
 
 [dependencies]
 vta-sdk = { path = "../vta-sdk", features = ["session"] }

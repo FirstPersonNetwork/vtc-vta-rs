@@ -37,6 +37,10 @@ pub struct SecretsConfig {
     pub gcp_project: Option<String>,
     /// GCP secret name (gcp-secrets feature)
     pub gcp_secret_name: Option<String>,
+    /// Azure Key Vault URL (azure-secrets feature)
+    pub azure_vault_url: Option<String>,
+    /// Azure Key Vault secret name (azure-secrets feature)
+    pub azure_secret_name: Option<String>,
     /// OS keyring service name (keyring feature).
     /// Change this to run multiple VTA instances on the same machine.
     #[serde(default = "default_keyring_service")]
@@ -55,6 +59,8 @@ impl Default for SecretsConfig {
             aws_region: None,
             gcp_project: None,
             gcp_secret_name: None,
+            azure_vault_url: None,
+            azure_secret_name: None,
             keyring_service: default_keyring_service(),
         }
     }
@@ -275,6 +281,12 @@ impl AppConfig {
         }
         if let Ok(name) = std::env::var("VTA_SECRETS_GCP_SECRET_NAME") {
             config.secrets.gcp_secret_name = Some(name);
+        }
+        if let Ok(url) = std::env::var("VTA_SECRETS_AZURE_VAULT_URL") {
+            config.secrets.azure_vault_url = Some(url);
+        }
+        if let Ok(name) = std::env::var("VTA_SECRETS_AZURE_SECRET_NAME") {
+            config.secrets.azure_secret_name = Some(name);
         }
         if let Ok(service) = std::env::var("VTA_SECRETS_KEYRING_SERVICE") {
             config.secrets.keyring_service = service;

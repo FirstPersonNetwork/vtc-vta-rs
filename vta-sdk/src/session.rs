@@ -1,6 +1,3 @@
-#[cfg(not(any(feature = "keyring", feature = "config-session")))]
-compile_error!("enable at least one of: keyring, config-session");
-
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -71,7 +68,13 @@ pub struct TokenResult {
 pub struct SessionStore {
     #[cfg(feature = "keyring")]
     service_name: String,
-    #[cfg(all(feature = "config-session", not(feature = "keyring")))]
+    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
+    sessions_dir: PathBuf,
+    #[cfg(all(feature = "azure-secrets", not(feature = "keyring")))]
+    azure_vault_url: String,
+    #[cfg(all(feature = "azure-secrets", not(feature = "keyring")))]
+    azure_secret_prefix: String,
+    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
     sessions_dir: PathBuf,
 }
 
@@ -88,7 +91,14 @@ impl SessionStore {
         Self {
             #[cfg(feature = "keyring")]
             service_name: service_name.to_string(),
-            #[cfg(all(feature = "config-session", not(feature = "keyring")))]
+            #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
+            sessions_dir,
+            #[cfg(all(feature = "azure-secrets", not(feature = "keyring")))]
+            azure_vault_url: std::env::var("AZURE_KEYVAULT_URL")
+                .unwrap_or_default(),
+            #[cfg(all(feature = "azure-secrets", not(feature = "keyring")))]
+            azure_secret_prefix: service_name.to_string(),
+            #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
             sessions_dir,
         }
     }
@@ -127,12 +137,12 @@ impl SessionStore {
         }
     }
 
-    #[cfg(all(feature = "config-session", not(feature = "keyring")))]
+    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
     fn sessions_path(&self) -> PathBuf {
         self.sessions_dir.join("sessions.json")
     }
 
-    #[cfg(all(feature = "config-session", not(feature = "keyring")))]
+    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
     fn load_sessions_map(&self) -> std::collections::HashMap<String, Session> {
         let path = self.sessions_path();
         let data = match std::fs::read_to_string(&path) {
@@ -142,7 +152,7 @@ impl SessionStore {
         serde_json::from_str(&data).unwrap_or_default()
     }
 
-    #[cfg(all(feature = "config-session", not(feature = "keyring")))]
+    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
     fn save_sessions_map(
         &self,
         map: &std::collections::HashMap<String, Session>,
@@ -153,19 +163,145 @@ impl SessionStore {
         Ok(())
     }
 
-    #[cfg(all(feature = "config-session", not(feature = "keyring")))]
+    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
     fn load(&self, key: &str) -> Option<Session> {
         self.load_sessions_map().get(key).cloned()
     }
 
-    #[cfg(all(feature = "config-session", not(feature = "keyring")))]
+    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
     fn save(&self, key: &str, session: &Session) -> Result<(), Box<dyn std::error::Error>> {
         let mut map = self.load_sessions_map();
         map.insert(key.to_string(), session.clone());
         self.save_sessions_map(&map)
     }
 
-    #[cfg(all(feature = "config-session", not(feature = "keyring")))]
+    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
+    fn clear(&self, key: &str) {
+        let mut map = self.load_sessions_map();
+        map.remove(key);
+        let _ = self.save_sessions_map(&map);
+    }
+
+    // ── Azure Key Vault backend ─────────────────────────────────────
+
+    #[cfg(all(feature = "azure-secrets", not(feature = "keyring")))]
+    fn azure_secret_name(&self, key: &str) -> String {
+        format!("{}-{}", self.azure_secret_prefix, key)
+    }
+
+    #[cfg(all(feature = "azure-secrets", not(feature = "keyring")))]
+    fn load(&self, key: &str) -> Option<Session> {
+        use azure_identity::DeveloperToolsCredential;
+        use azure_security_keyvault_secrets::SecretClient;
+
+        let credential = DeveloperToolsCredential::new(None).ok()?;
+        let client = SecretClient::new(&self.azure_vault_url, credential, None).ok()?;
+        let secret_name = self.azure_secret_name(key);
+
+        let result = tokio::runtime::Handle::current().block_on(async {
+            client.get_secret(&secret_name, None).await
+        });
+
+        match result {
+            Ok(response) => {
+                let model = response.into_model().ok()?;
+                let json = model.value?;
+                serde_json::from_str(&json).ok()
+            }
+            Err(_) => None,
+        }
+    }
+
+    #[cfg(all(feature = "azure-secrets", not(feature = "keyring")))]
+    fn save(&self, key: &str, session: &Session) -> Result<(), Box<dyn std::error::Error>> {
+        use azure_identity::DeveloperToolsCredential;
+        use azure_security_keyvault_secrets::SecretClient;
+
+        let credential = DeveloperToolsCredential::new(None)
+            .map_err(|e| format!("Azure credential error: {e}"))?;
+        let client = SecretClient::new(&self.azure_vault_url, credential, None)
+            .map_err(|e| format!("Azure client error: {e}"))?;
+        let secret_name = self.azure_secret_name(key);
+        let json = serde_json::to_string(session)?;
+
+        let params = azure_security_keyvault_secrets::models::SetSecretParameters {
+            value: Some(json),
+            ..Default::default()
+        };
+
+        tokio::runtime::Handle::current().block_on(async {
+            let body = params.try_into()
+                .map_err(|e| format!("Azure request error: {e}"))?;
+            client
+                .set_secret(&secret_name, body, None)
+                .await
+                .map_err(|e| format!("failed to store session in Azure Key Vault: {e}"))?;
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })?;
+        Ok(())
+    }
+
+    #[cfg(all(feature = "azure-secrets", not(feature = "keyring")))]
+    fn clear(&self, key: &str) {
+        use azure_identity::DeveloperToolsCredential;
+        use azure_security_keyvault_secrets::SecretClient;
+
+        let Ok(credential) = DeveloperToolsCredential::new(None) else { return };
+        let Ok(client) = SecretClient::new(&self.azure_vault_url, credential, None) else { return };
+        let secret_name = self.azure_secret_name(key);
+
+        let _ = tokio::runtime::Handle::current().block_on(async {
+            client.delete_secret(&secret_name, None).await
+        });
+    }
+
+    // ── Plaintext fallback backend ──────────────────────────────────
+
+    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
+    fn sessions_path(&self) -> PathBuf {
+        self.sessions_dir.join("sessions.json")
+    }
+
+    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
+    fn load_sessions_map(&self) -> std::collections::HashMap<String, Session> {
+        let path = self.sessions_path();
+        let data = match std::fs::read_to_string(&path) {
+            Ok(d) => d,
+            Err(_) => return std::collections::HashMap::new(),
+        };
+        serde_json::from_str(&data).unwrap_or_default()
+    }
+
+    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
+    fn save_sessions_map(
+        &self,
+        map: &std::collections::HashMap<String, Session>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let path = self.sessions_path();
+        let json = serde_json::to_string_pretty(map)?;
+        std::fs::write(&path, json)?;
+        Ok(())
+    }
+
+    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
+    fn load(&self, key: &str) -> Option<Session> {
+        eprintln!("WARNING: No secure session store — using plaintext file storage");
+        self.load_sessions_map().get(key).cloned()
+    }
+
+    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
+    fn save(&self, key: &str, session: &Session) -> Result<(), Box<dyn std::error::Error>> {
+        eprintln!("WARNING: No secure session store — using plaintext file storage");
+        if let Some(parent) = self.sessions_dir.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        std::fs::create_dir_all(&self.sessions_dir).ok();
+        let mut map = self.load_sessions_map();
+        map.insert(key.to_string(), session.clone());
+        self.save_sessions_map(&map)
+    }
+
+    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
     fn clear(&self, key: &str) {
         let mut map = self.load_sessions_map();
         map.remove(key);

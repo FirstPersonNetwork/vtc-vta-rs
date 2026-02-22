@@ -95,6 +95,20 @@ pub async fn run(
     let storage_auth_config = config.auth.clone();
     let has_auth = jwt_keys.is_some();
 
+    // Clone handles for DIDComm before REST takes ownership
+    #[cfg(feature = "didcomm")]
+    let didcomm_state = if config.services.didcomm {
+        Some(messaging::DidcommState {
+            keys_ks: keys_ks.clone(),
+            acl_ks: acl_ks.clone(),
+            contexts_ks: contexts_ks.clone(),
+            seed_store: seed_store.clone(),
+            config: Arc::new(RwLock::new(config.clone())),
+        })
+    } else {
+        None
+    };
+
     // Spawn REST thread (conditional)
     #[cfg(feature = "rest")]
     let rest_handle = if let Some(listener) = std_listener {
@@ -125,8 +139,7 @@ pub async fn run(
 
     // Spawn DIDComm thread (conditional)
     #[cfg(feature = "didcomm")]
-    let didcomm_handle = if config.services.didcomm {
-        let didcomm_config = config.clone();
+    let didcomm_handle = if let Some(didcomm_state) = didcomm_state {
         let didcomm_secrets = secrets_resolver;
         let didcomm_vta_did = config.vta_did.clone();
         let mut didcomm_shutdown_rx = shutdown_rx.clone();
@@ -135,9 +148,9 @@ pub async fn run(
                 .name("vta-didcomm".into())
                 .spawn(move || {
                     run_didcomm_thread(
-                        didcomm_config,
                         didcomm_secrets,
                         didcomm_vta_did,
+                        didcomm_state,
                         &mut didcomm_shutdown_rx,
                     )
                 })
@@ -306,9 +319,9 @@ fn run_rest_thread(
 /// DIDComm thread: connects to the mediator and processes inbound messages.
 #[cfg(feature = "didcomm")]
 fn run_didcomm_thread(
-    config: AppConfig,
     secrets_resolver: Option<Arc<ThreadedSecretsResolver>>,
     vta_did: Option<String>,
+    state: messaging::DidcommState,
     shutdown_rx: &mut watch::Receiver<bool>,
 ) {
     let rt = tokio::runtime::Builder::new_current_thread()
@@ -329,18 +342,24 @@ fn run_didcomm_thread(
             }
         };
 
+        // Build a temporary AppConfig for init_didcomm_connection
+        let config = state.config.read().await;
+        let init_config = config.clone();
+        drop(config);
+
         // Initialize ATM connection
-        let (atm, profile) = match messaging::init_didcomm_connection(&config, sr, did).await {
-            Some(handles) => handles,
-            None => {
-                let _ = shutdown_rx.changed().await;
-                info!("DIDComm thread shutting down (init failed)");
-                return;
-            }
-        };
+        let (atm, profile) =
+            match messaging::init_didcomm_connection(&init_config, sr, did).await {
+                Some(handles) => handles,
+                None => {
+                    let _ = shutdown_rx.changed().await;
+                    info!("DIDComm thread shutting down (init failed)");
+                    return;
+                }
+            };
 
         // Run message loop until shutdown
-        messaging::run_didcomm_loop(&atm, &profile, did, shutdown_rx).await;
+        messaging::run_didcomm_loop(&atm, &profile, did, &state, shutdown_rx).await;
 
         // Graceful ATM shutdown
         info!("DIDComm thread shutting down");

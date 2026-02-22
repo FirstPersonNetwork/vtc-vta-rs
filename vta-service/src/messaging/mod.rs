@@ -1,3 +1,7 @@
+pub mod auth;
+pub mod handlers;
+pub mod response;
+
 use std::sync::Arc;
 
 use affinidi_tdk::common::TDKSharedState;
@@ -8,13 +12,29 @@ use affinidi_tdk::messaging::profiles::ATMProfile;
 use affinidi_tdk::messaging::protocols::trust_ping::TrustPing;
 use affinidi_tdk::messaging::transports::websockets::WebSocketResponses;
 use affinidi_tdk::secrets_resolver::{SecretsResolver, ThreadedSecretsResolver};
-use tokio::sync::{broadcast, watch};
+use tokio::sync::{RwLock, broadcast, watch};
 use tracing::{info, warn};
 
+use vta_sdk::protocols::{
+    acl_management, context_management, credential_management, key_management, seed_management,
+    vta_management,
+};
+
 use crate::config::AppConfig;
+use crate::keys::seed_store::SeedStore;
+use crate::store::KeyspaceHandle;
 
 const TRUST_PING_TYPE: &str = "https://didcomm.org/trust-ping/2.0/ping";
 const MESSAGE_PICKUP_STATUS_TYPE: &str = "https://didcomm.org/messagepickup/3.0/status";
+
+/// Shared state passed to DIDComm message handlers.
+pub struct DidcommState {
+    pub keys_ks: KeyspaceHandle,
+    pub acl_ks: KeyspaceHandle,
+    pub contexts_ks: KeyspaceHandle,
+    pub seed_store: Arc<dyn SeedStore>,
+    pub config: Arc<RwLock<AppConfig>>,
+}
 
 /// Initialize the DIDComm connection to the mediator.
 ///
@@ -112,6 +132,7 @@ pub async fn run_didcomm_loop(
     atm: &Arc<ATM>,
     profile: &Arc<ATMProfile>,
     vta_did: &str,
+    state: &DidcommState,
     shutdown_rx: &mut watch::Receiver<bool>,
 ) {
     let mut rx: broadcast::Receiver<WebSocketResponses> = match atm.get_inbound_channel() {
@@ -129,12 +150,12 @@ pub async fn run_didcomm_loop(
             result = rx.recv() => {
                 match result {
                     Ok(WebSocketResponses::MessageReceived(msg, _metadata)) => {
-                        dispatch_message(atm, profile, vta_did, &msg).await;
+                        dispatch_message(atm, profile, vta_did, state, &msg).await;
                     }
                     Ok(WebSocketResponses::PackedMessageReceived(packed)) => {
                         match atm.unpack(&packed).await {
                             Ok((msg, _metadata)) => {
-                                dispatch_message(atm, profile, vta_did, &msg).await;
+                                dispatch_message(atm, profile, vta_did, state, &msg).await;
                             }
                             Err(e) => {
                                 warn!("failed to unpack inbound message: {e}");
@@ -158,22 +179,117 @@ pub async fn run_didcomm_loop(
     }
 }
 
-async fn dispatch_message(atm: &ATM, profile: &Arc<ATMProfile>, vta_did: &str, msg: &Message) {
-    match msg.type_.as_str() {
-        TRUST_PING_TYPE => {
-            if let Err(e) = handle_trust_ping(atm, profile, vta_did, msg).await {
-                warn!("failed to handle trust-ping: {e}");
-            }
+async fn dispatch_message(
+    atm: &ATM,
+    profile: &Arc<ATMProfile>,
+    vta_did: &str,
+    state: &DidcommState,
+    msg: &Message,
+) {
+    let result = match msg.type_.as_str() {
+        TRUST_PING_TYPE => handle_trust_ping(atm, profile, vta_did, msg).await,
+        MESSAGE_PICKUP_STATUS_TYPE => Ok(()),
+
+        // Key management
+        key_management::CREATE_KEY => {
+            handlers::keys::handle_create_key(state, atm, profile, vta_did, msg).await
         }
-        MESSAGE_PICKUP_STATUS_TYPE => {
-            // Mediator status notifications — safe to ignore
+        key_management::GET_KEY => {
+            handlers::keys::handle_get_key(state, atm, profile, vta_did, msg).await
         }
+        key_management::LIST_KEYS => {
+            handlers::keys::handle_list_keys(state, atm, profile, vta_did, msg).await
+        }
+        key_management::RENAME_KEY => {
+            handlers::keys::handle_rename_key(state, atm, profile, vta_did, msg).await
+        }
+        key_management::REVOKE_KEY => {
+            handlers::keys::handle_revoke_key(state, atm, profile, vta_did, msg).await
+        }
+        key_management::GET_KEY_SECRET => {
+            handlers::keys::handle_get_key_secret(state, atm, profile, vta_did, msg).await
+        }
+
+        // Seed management
+        seed_management::LIST_SEEDS => {
+            handlers::seeds::handle_list_seeds(state, atm, profile, vta_did, msg).await
+        }
+        seed_management::ROTATE_SEED => {
+            handlers::seeds::handle_rotate_seed(state, atm, profile, vta_did, msg).await
+        }
+
+        // Context management
+        context_management::CREATE_CONTEXT => {
+            handlers::contexts::handle_create_context(state, atm, profile, vta_did, msg).await
+        }
+        context_management::GET_CONTEXT => {
+            handlers::contexts::handle_get_context(state, atm, profile, vta_did, msg).await
+        }
+        context_management::LIST_CONTEXTS => {
+            handlers::contexts::handle_list_contexts(state, atm, profile, vta_did, msg).await
+        }
+        context_management::UPDATE_CONTEXT => {
+            handlers::contexts::handle_update_context(state, atm, profile, vta_did, msg).await
+        }
+        context_management::DELETE_CONTEXT => {
+            handlers::contexts::handle_delete_context(state, atm, profile, vta_did, msg).await
+        }
+
+        // ACL management
+        acl_management::CREATE_ACL => {
+            handlers::acl::handle_create_acl(state, atm, profile, vta_did, msg).await
+        }
+        acl_management::GET_ACL => {
+            handlers::acl::handle_get_acl(state, atm, profile, vta_did, msg).await
+        }
+        acl_management::LIST_ACL => {
+            handlers::acl::handle_list_acl(state, atm, profile, vta_did, msg).await
+        }
+        acl_management::UPDATE_ACL => {
+            handlers::acl::handle_update_acl(state, atm, profile, vta_did, msg).await
+        }
+        acl_management::DELETE_ACL => {
+            handlers::acl::handle_delete_acl(state, atm, profile, vta_did, msg).await
+        }
+
+        // VTA management
+        vta_management::GET_CONFIG => {
+            handlers::config::handle_get_config(state, atm, profile, vta_did, msg).await
+        }
+        vta_management::UPDATE_CONFIG => {
+            handlers::config::handle_update_config(state, atm, profile, vta_did, msg).await
+        }
+
+        // Credential management
+        credential_management::GENERATE_CREDENTIALS => {
+            handlers::credentials::handle_generate_credentials(state, atm, profile, vta_did, msg)
+                .await
+        }
+
         other => {
             warn!(msg_type = other, "unknown message type — ignoring");
+            Ok(())
+        }
+    };
+
+    if let Err(e) = result {
+        warn!(msg_type = %msg.type_, error = %e, "handler error");
+        if let Some(sender) = msg.from.as_deref() {
+            let sender = sender.split('#').next().unwrap_or(sender);
+            let _ = response::send_error(
+                atm,
+                profile,
+                vta_did,
+                sender,
+                Some(&msg.id),
+                "e.p.processing",
+                &e.to_string(),
+            )
+            .await;
         }
     }
 
-    // Always delete the message from the mediator after processing
+    // Always delete message from mediator
     if let Err(e) = atm.delete_message_background(profile, &msg.id).await {
         warn!("failed to delete message from mediator: {e}");
     }

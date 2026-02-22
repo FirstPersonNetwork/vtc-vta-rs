@@ -1123,7 +1123,7 @@ pub(crate) async fn prompt_pre_rotation_keys(
 /// Service endpoints are added based on the optional parameters:
 /// - `mediator_url`: when set, adds `#didcomm` (HTTPS + WSS) and `#auth`
 ///   service endpoints for a mediator DID document.
-/// - `messaging`: when set, adds a `#didcomm` service referencing the
+/// - `messaging`: when set, adds a `#vta-didcomm` service referencing the
 ///   mediator DID for routing (used for the VTA DID document).
 #[allow(clippy::too_many_arguments)]
 async fn create_webvh_did(
@@ -1209,9 +1209,9 @@ async fn create_webvh_did(
             "serviceEndpoint": format!("{url}/authenticate")
         }));
     } else if let Some(msg) = messaging {
-        // VTA DID: add #didcomm referencing the mediator DID
+        // VTA DID: add #vta-didcomm referencing the mediator DID
         services.push(json!({
-            "id": format!("{did_id}#didcomm"),
+            "id": format!("{did_id}#vta-didcomm"),
             "type": "DIDCommMessaging",
             "serviceEndpoint": [{
                 "accept": ["didcomm/v2"],
@@ -1220,11 +1220,11 @@ async fn create_webvh_did(
         }));
     }
 
-    // Add #vta service endpoint if a public URL is configured
+    // Add #vta-rest service endpoint if a public URL is configured
     if let Some(url) = vta_public_url {
         services.push(json!({
-            "id": format!("{did_id}#vta"),
-            "type": "VerifiableTrustAgent",
+            "id": format!("{did_id}#vta-rest"),
+            "type": "VTARest",
             "serviceEndpoint": url
         }));
     }

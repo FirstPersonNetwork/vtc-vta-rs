@@ -23,12 +23,12 @@ fn slugify(name: &str) -> String {
         .join("-")
 }
 
-/// Try to resolve a VTA URL from a DID's `#vta` service endpoint.
+/// Try to resolve a VTA URL from a DID's `#vta-rest` service endpoint.
 async fn resolve_vta_url(did: &str) -> Option<String> {
     vta_sdk::session::resolve_vta_url(did).await.ok()
 }
 
-/// Prompt for a VTA DID, resolve the `#vta` service URL if possible,
+/// Prompt for a VTA DID, resolve the `#vta-rest` service URL if possible,
 /// then ask for the URL (pre-filled with the discovered value or manual entry).
 ///
 /// `label` is a human-readable prefix like "Personal" or "Community".
@@ -51,7 +51,7 @@ async fn prompt_vta_url(
                 Some(url)
             }
             None => {
-                eprintln!("  No #vta service endpoint found in DID document.");
+                eprintln!("  No #vta-rest service endpoint found in DID document.");
                 None
             }
         };

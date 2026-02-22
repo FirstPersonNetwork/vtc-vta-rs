@@ -605,7 +605,7 @@ pub async fn challenge_response(
 
 /// Resolve a VTA DID to discover its service URL.
 ///
-/// Resolves the DID document and looks for the `#vta` service endpoint.
+/// Resolves the DID document and looks for the `#vta-rest` service endpoint.
 /// Falls back to parsing the domain from `did:web:` or `did:webvh:` DID strings.
 pub async fn resolve_vta_url(vta_did: &str) -> Result<String, Box<dyn std::error::Error>> {
     debug!(vta_did, "resolving VTA DID to discover service URL");
@@ -616,14 +616,14 @@ pub async fn resolve_vta_url(vta_did: &str) -> Result<String, Box<dyn std::error
 
     match did_resolver.resolve(vta_did).await {
         Ok(resolved) => {
-            if let Some(svc) = resolved.doc.find_service("vta") {
+            if let Some(svc) = resolved.doc.find_service("vta-rest") {
                 if let Some(url) = svc.service_endpoint.get_uri() {
                     let url = url.trim_matches('"').trim_end_matches('/').to_string();
-                    debug!(url = %url, "found VTA URL from #vta service endpoint");
+                    debug!(url = %url, "found VTA URL from #vta-rest service endpoint");
                     return Ok(url);
                 }
             }
-            debug!("no #vta service found in DID document, falling back to DID parsing");
+            debug!("no #vta-rest service found in DID document, falling back to DID parsing");
         }
         Err(e) => {
             debug!(error = %e, "DID resolution failed, falling back to DID parsing");

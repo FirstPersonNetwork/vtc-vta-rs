@@ -126,7 +126,7 @@ pub async fn run_create_did_webvh(
                 // Reference the mediator DID for routing
                 did_document["service"] = json!([
                     {
-                        "id": format!("{did_id}#didcomm"),
+                        "id": format!("{did_id}#vta-didcomm"),
                         "type": "DIDCommMessaging",
                         "serviceEndpoint": [{
                             "accept": ["didcomm/v2"],

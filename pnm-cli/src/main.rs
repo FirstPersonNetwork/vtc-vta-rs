@@ -109,7 +109,7 @@ enum ContextCommands {
     List,
     /// Get a context by ID
     Get {
-        /// Context ID (e.g. "vta", "mediator")
+        /// Context ID (e.g. "vta")
         id: String,
     },
     /// Create a new application context

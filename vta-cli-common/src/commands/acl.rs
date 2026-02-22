@@ -195,8 +195,8 @@ mod tests {
 
     #[test]
     fn test_format_contexts_multiple() {
-        let ctx = vec!["vta".to_string(), "mediator".to_string()];
-        assert_eq!(format_contexts(&ctx), "vta, mediator");
+        let ctx = vec!["vta".to_string(), "payments".to_string()];
+        assert_eq!(format_contexts(&ctx), "vta, payments");
     }
 
     // ── format_role ────────────────────────────────────────────────

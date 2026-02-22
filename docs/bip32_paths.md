@@ -12,28 +12,23 @@ m/26'
   |
   +-- 2'/N'/K'    Application context keys
        |
-       +-- 0'     VTA (seeded at setup)
+       +-- 0'     VTA (created at setup)
        |
-       +-- 1'     Mediator (seeded at setup)
-       |
-       +-- 2'     Trust Registry (seeded at setup)
-       |
-       +-- 3'+    User-created contexts
+       +-- 1'+    Additional contexts (created via setup, API, or CLI)
 ```
 
 ## Application Contexts
 
 Each **application context** is an isolated key group with its own DID and
-BIP-32 subtree. Three contexts are created automatically during setup:
+BIP-32 subtree. The `vta` context is created automatically during setup:
 
-| Context ID       | Index | Base Path     | Purpose                    |
-| ---------------- | ----- | ------------- | -------------------------- |
-| `vta`            | 0     | `m/26'/2'/0'` | Verifiable Trust Agent     |
-| `mediator`       | 1     | `m/26'/2'/1'` | DIDComm Messaging Mediator |
-| `trust-registry` | 2     | `m/26'/2'/2'` | Trust Registry             |
+| Context ID | Index | Base Path     | Purpose                |
+| ---------- | ----- | ------------- | ---------------------- |
+| `vta`      | 0     | `m/26'/2'/0'` | Verifiable Trust Agent |
 
-Additional contexts can be created via the API or CLI and are assigned
-sequential indices starting at 3.
+If DIDComm messaging is enabled during setup, a `mediator` context is also
+created for the mediator DID keys. Additional contexts can be created via
+the API or CLI and are assigned sequential indices.
 
 ## Sequential Allocation
 
@@ -73,7 +68,11 @@ typical run produces the following layout:
 | 1     | X25519   | VTA key-agreement key          |
 | 2+    | Ed25519  | VTA pre-rotation key 0, 1, ... |
 
-### Mediator keys (`m/26'/2'/1'/K'`)
+### Mediator keys (if DIDComm enabled)
+
+When DIDComm messaging is configured during setup, a `mediator` context is
+created with the next available index. For example, if `vta` is index 0, the
+mediator context will be index 1 (`m/26'/2'/1'/K'`):
 
 | Index | Key Type | Label                               |
 | ----- | -------- | ----------------------------------- |

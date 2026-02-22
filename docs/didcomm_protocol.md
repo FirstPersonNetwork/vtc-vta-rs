@@ -396,7 +396,7 @@ Request body:
   "did": "did:key:z6Mk...",
   "role": "admin",
   "label": "Alice",
-  "allowed_contexts": ["vta", "mediator"]
+  "allowed_contexts": ["vta"]
 }
 ```
 
@@ -407,7 +407,7 @@ Response body:
   "did": "did:key:z6Mk...",
   "role": "admin",
   "label": "Alice",
-  "allowed_contexts": ["vta", "mediator"],
+  "allowed_contexts": ["vta"],
   "created_at": 1740000000,
   "created_by": "did:key:z6MkCaller..."
 }

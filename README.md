@@ -149,8 +149,8 @@ cargo run --package vta-service --features setup -- setup
 The wizard walks through these steps:
 
 1. **Server configuration** -- host, port, log level, data directory.
-2. **Seed contexts** -- creates the built-in `vta`, `mediator`, and
-   `trust-registry` contexts.
+2. **Seed context** -- creates the `vta` context (and `mediator` if DIDComm
+   is enabled).
 3. **Mnemonic** -- generate a new BIP-39 mnemonic or import an existing one.
    The derived seed is stored in the OS keyring.
 4. **JWT signing key** -- a random Ed25519 key for signing access tokens.

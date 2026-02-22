@@ -466,10 +466,7 @@ pub async fn run_setup_wizard(
 
     // Create seed application contexts
     let mut vta_ctx = create_seed_context(&contexts_ks, "vta", "Verifiable Trust Agent").await?;
-    let mut med_ctx =
-        create_seed_context(&contexts_ks, "mediator", "DIDComm Messaging Mediator").await?;
-    let _tr_ctx = create_seed_context(&contexts_ks, "trust-registry", "Trust Registry").await?;
-    eprintln!("  Created application contexts: vta, mediator, trust-registry");
+    eprintln!("  Created application context: vta");
 
     // 10. BIP-39 mnemonic
     let mnemonic_options = &["Generate new 24-word mnemonic", "Import existing mnemonic"];
@@ -564,19 +561,20 @@ pub async fn run_setup_wizard(
 
     // 12. DIDComm messaging (with mediator DID creation)
     let messaging = if enable_didcomm {
-        configure_messaging(&seed, &med_ctx.base_path, &keys_ks).await?
+        let mut med_ctx =
+            create_seed_context(&contexts_ks, "mediator", "DIDComm Messaging Mediator").await?;
+        let msg = configure_messaging(&seed, &med_ctx.base_path, &keys_ks).await?;
+        if let Some(ref msg) = msg {
+            med_ctx.did = Some(msg.mediator_did.clone());
+            med_ctx.updated_at = Utc::now();
+            store_context(&contexts_ks, &med_ctx)
+                .await
+                .map_err(|e| format!("{e}"))?;
+        }
+        msg
     } else {
         None
     };
-
-    // Update mediator context with the DID
-    if let Some(ref msg) = messaging {
-        med_ctx.did = Some(msg.mediator_did.clone());
-        med_ctx.updated_at = Utc::now();
-        store_context(&contexts_ks, &med_ctx)
-            .await
-            .map_err(|e| format!("{e}"))?;
-    }
 
     // 13. VTA DID (after mediator so we can embed it as a service endpoint)
     let vta_did =
@@ -710,10 +708,7 @@ pub async fn run_setup_wizard(
             eprintln!("  Mediator URL: {}", msg.mediator_url);
         }
     }
-    eprintln!(
-        "  Contexts: vta ({}), mediator ({}), trust-registry ({})",
-        vta_ctx.base_path, med_ctx.base_path, _tr_ctx.base_path
-    );
+    eprintln!("  Contexts: vta ({})", vta_ctx.base_path);
     if let Some(did) = &admin_did {
         eprintln!("  Admin DID: {did}");
     } else {

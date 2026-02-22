@@ -291,7 +291,7 @@ for First Person Network):
 m/26'/2'/N'/K'
          |   |
          |   +-- Key index (sequential counter per context)
-         +------ Context index (0=vta, 1=mediator, 2=trust-registry, 3+=user)
+         +------ Context index (0=vta, 1+=additional contexts)
 ```
 
 See [`bip32_paths.md`](bip32_paths.md) for the full specification.
@@ -413,7 +413,7 @@ Running `vta setup` launches an interactive wizard that bootstraps the
 service:
 
 1. Collect server, logging, and storage configuration.
-2. Create seed contexts (vta, mediator, trust-registry).
+2. Create the `vta` seed context (and `mediator` if DIDComm is enabled).
 3. Generate or import a BIP-39 mnemonic; store seed in OS keyring.
 4. Generate a random JWT signing key.
 5. Create mediator did:webvh (signing + key-agreement keys, DID log file).

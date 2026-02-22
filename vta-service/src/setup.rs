@@ -591,24 +591,28 @@ pub async fn run_setup_wizard(
             .map_err(|e| format!("{e}"))?;
     }
 
-    // 14. Bootstrap admin DID in ACL
-    let (admin_did, admin_credential) =
-        create_admin_did(&seed, &vta_did, &public_url, &vta_ctx.base_path, &keys_ks).await?;
-
-    let acl_ks = store.keyspace("acl")?;
-    let admin_entry = AclEntry {
-        did: admin_did.clone(),
-        role: Role::Admin,
-        label: Some("Initial admin".into()),
-        allowed_contexts: vec![],
-        created_at: std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs(),
-        created_by: "setup".into(),
+    // 14. Bootstrap admin DID in ACL (optional)
+    let admin_did = if let Some((admin_did, _credential)) =
+        create_admin_did(&seed, &vta_did, &public_url, &vta_ctx.base_path, &keys_ks).await?
+    {
+        let acl_ks = store.keyspace("acl")?;
+        let admin_entry = AclEntry {
+            did: admin_did.clone(),
+            role: Role::Admin,
+            label: Some("Initial admin".into()),
+            allowed_contexts: vec![],
+            created_at: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs(),
+            created_by: "setup".into(),
+        };
+        store_acl_entry(&acl_ks, &admin_entry).await?;
+        eprintln!("  Admin DID added to ACL: {admin_did}");
+        Some(admin_did)
+    } else {
+        None
     };
-    store_acl_entry(&acl_ks, &admin_entry).await?;
-    eprintln!("  Admin DID added to ACL: {admin_did}");
 
     // Flush all store writes to disk before exiting
     store.persist().await?;
@@ -710,16 +714,10 @@ pub async fn run_setup_wizard(
         "  Contexts: vta ({}), mediator ({}), trust-registry ({})",
         vta_ctx.base_path, med_ctx.base_path, _tr_ctx.base_path
     );
-    eprintln!("  Admin DID: {admin_did}");
-    if let Some(cred) = &admin_credential {
-        eprintln!();
-        eprintln!("\x1b[1;33m╔══════════════════════════════════════════════════════════╗");
-        eprintln!("║  REMINDER: Save your admin credential string below.      ║");
-        eprintln!("║  You will need it to authenticate with the VTA.          ║");
-        eprintln!("╚══════════════════════════════════════════════════════════╝\x1b[0m");
-        eprintln!();
-        eprintln!("  \x1b[1m{cred}\x1b[0m");
-        eprintln!();
+    if let Some(did) = &admin_did {
+        eprintln!("  Admin DID: {did}");
+    } else {
+        eprintln!("  Admin DID: (skipped — use `vta import-did` or the API to add one later)");
     }
 
     Ok(())
@@ -727,19 +725,21 @@ pub async fn run_setup_wizard(
 
 /// Guide the user through creating or entering an admin DID.
 ///
-/// Returns `(did, Option<credential_string>)`. The credential string is only
-/// produced for the `did:key` option (base64-encoded JSON bundle).
+/// Returns `Some((did, Option<credential_string>))` or `None` if skipped.
+/// The credential string is only produced for the `did:key` option
+/// (base64-encoded JSON bundle).
 async fn create_admin_did(
     seed: &[u8],
     vta_did: &Option<String>,
     public_url: &Option<String>,
     vta_base_path: &str,
     keys_ks: &KeyspaceHandle,
-) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
+) -> Result<Option<(String, Option<String>)>, Box<dyn std::error::Error>> {
     let admin_options = &[
         "Generate a new did:key (Ed25519)",
         "Create a new did:webvh DID",
         "Enter an existing DID",
+        "Skip (no admin credential for now)",
     ];
     let choice = Select::new()
         .with_prompt("Admin DID")
@@ -786,7 +786,7 @@ async fn create_admin_did(
                 return Err("Admin credential not saved".into());
             }
 
-            Ok((did, Some(credential)))
+            Ok(Some((did, Some(credential))))
         }
         1 => {
             let mut derived = keys::derive_entity_keys(
@@ -810,9 +810,9 @@ async fn create_admin_did(
                 keys_ks,
             )
             .await?;
-            Ok((did, None))
+            Ok(Some((did, None)))
         }
-        _ => {
+        2 => {
             // Enter existing DID
             let did: String = Input::new().with_prompt("Admin DID").interact_text()?;
 
@@ -830,8 +830,9 @@ async fn create_admin_did(
             // Also derive and store the did:key
             let _ = derive_and_store_did_key(seed, vta_base_path, "vta", keys_ks, Some(0)).await?;
 
-            Ok((did, None))
+            Ok(Some((did, None)))
         }
+        _ => Ok(None),
     }
 }
 

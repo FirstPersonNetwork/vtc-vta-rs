@@ -105,6 +105,32 @@ impl AuthClaims {
             None
         }
     }
+
+    /// Require the caller to have Admin role.
+    pub fn require_admin(&self) -> Result<(), AppError> {
+        if self.role == Role::Admin {
+            return Ok(());
+        }
+        Err(AppError::Forbidden("admin role required".into()))
+    }
+
+    /// Require the caller to have Admin or Initiator role.
+    pub fn require_manage(&self) -> Result<(), AppError> {
+        if self.role == Role::Admin || self.role == Role::Initiator {
+            return Ok(());
+        }
+        Err(AppError::Forbidden(
+            "admin or initiator role required".into(),
+        ))
+    }
+
+    /// Require the caller to be a super admin (Admin + unrestricted).
+    pub fn require_super_admin(&self) -> Result<(), AppError> {
+        if self.is_super_admin() {
+            return Ok(());
+        }
+        Err(AppError::Forbidden("super admin required".into()))
+    }
 }
 
 /// Extractor that requires the caller to have Admin or Initiator role.

@@ -12,6 +12,7 @@ mod keys;
 mod keys_cli;
 #[cfg(feature = "didcomm")]
 mod messaging;
+mod operations;
 #[cfg(feature = "rest")]
 mod routes;
 mod server;

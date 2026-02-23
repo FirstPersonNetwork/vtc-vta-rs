@@ -1,48 +1,17 @@
 use axum::Json;
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-use tracing::info;
-
-use crate::acl::{
-    AclEntry, Role, delete_acl_entry, get_acl_entry, is_acl_entry_visible, list_acl_entries,
-    store_acl_entry, validate_acl_modification,
+use vta_sdk::protocols::acl_management::{
+    create::CreateAclResultBody, list::ListAclResultBody,
 };
+
+use crate::acl::Role;
 use crate::auth::ManageAuth;
-use crate::auth::session::now_epoch;
 use crate::error::AppError;
+use crate::operations;
 use crate::server::AppState;
-
-// ---------- GET /acl ----------
-
-#[derive(Debug, Serialize)]
-pub struct AclListResponse {
-    pub entries: Vec<AclEntryResponse>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct AclEntryResponse {
-    pub did: String,
-    pub role: Role,
-    pub label: Option<String>,
-    pub allowed_contexts: Vec<String>,
-    pub created_at: u64,
-    pub created_by: String,
-}
-
-impl From<AclEntry> for AclEntryResponse {
-    fn from(e: AclEntry) -> Self {
-        AclEntryResponse {
-            did: e.did,
-            role: e.role,
-            label: e.label,
-            allowed_contexts: e.allowed_contexts,
-            created_at: e.created_at,
-            created_by: e.created_by,
-        }
-    }
-}
 
 #[derive(Debug, Deserialize)]
 pub struct ListAclQuery {
@@ -53,23 +22,16 @@ pub async fn list_acl(
     auth: ManageAuth,
     State(state): State<AppState>,
     Query(query): Query<ListAclQuery>,
-) -> Result<Json<AclListResponse>, AppError> {
-    let acl = state.acl_ks.clone();
-    let all_entries = list_acl_entries(&acl).await?;
-    let entries: Vec<AclEntryResponse> = all_entries
-        .into_iter()
-        .filter(|e| is_acl_entry_visible(&auth.0, e))
-        .filter(|e| match &query.context {
-            Some(ctx) => e.allowed_contexts.contains(ctx),
-            None => true,
-        })
-        .map(AclEntryResponse::from)
-        .collect();
-    info!(caller = %auth.0.did, count = entries.len(), "ACL listed");
-    Ok(Json(AclListResponse { entries }))
+) -> Result<Json<ListAclResultBody>, AppError> {
+    let result = operations::acl::list_acl(
+        &state.acl_ks,
+        &auth.0,
+        query.context.as_deref(),
+        "rest",
+    )
+    .await?;
+    Ok(Json(result))
 }
-
-// ---------- POST /acl ----------
 
 #[derive(Debug, Deserialize)]
 pub struct CreateAclRequest {
@@ -84,55 +46,29 @@ pub async fn create_acl(
     auth: ManageAuth,
     State(state): State<AppState>,
     Json(req): Json<CreateAclRequest>,
-) -> Result<(StatusCode, Json<AclEntryResponse>), AppError> {
-    validate_acl_modification(&auth.0, &req.allowed_contexts)?;
-
-    let acl = state.acl_ks.clone();
-
-    // Check if entry already exists
-    if get_acl_entry(&acl, &req.did).await?.is_some() {
-        return Err(AppError::Conflict(format!(
-            "ACL entry already exists for DID: {}",
-            req.did
-        )));
-    }
-
-    let entry = AclEntry {
-        did: req.did,
-        role: req.role,
-        label: req.label,
-        allowed_contexts: req.allowed_contexts,
-        created_at: now_epoch(),
-        created_by: auth.0.did,
-    };
-
-    store_acl_entry(&acl, &entry).await?;
-
-    info!(caller = %entry.created_by, did = %entry.did, role = %entry.role, "ACL entry created");
-    Ok((StatusCode::CREATED, Json(AclEntryResponse::from(entry))))
+) -> Result<(StatusCode, Json<CreateAclResultBody>), AppError> {
+    let result = operations::acl::create_acl(
+        &state.acl_ks,
+        &auth.0,
+        &req.did,
+        req.role,
+        req.label,
+        req.allowed_contexts,
+        "rest",
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(result)))
 }
-
-// ---------- GET /acl/{did} ----------
 
 pub async fn get_acl(
     auth: ManageAuth,
     State(state): State<AppState>,
     Path(did): Path<String>,
-) -> Result<Json<AclEntryResponse>, AppError> {
-    let acl = state.acl_ks.clone();
-    let entry = get_acl_entry(&acl, &did)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("ACL entry not found for DID: {did}")))?;
-    if !is_acl_entry_visible(&auth.0, &entry) {
-        return Err(AppError::NotFound(format!(
-            "ACL entry not found for DID: {did}"
-        )));
-    }
-    info!(did = %did, "ACL entry retrieved");
-    Ok(Json(AclEntryResponse::from(entry)))
+) -> Result<Json<CreateAclResultBody>, AppError> {
+    let result =
+        operations::acl::get_acl(&state.acl_ks, &auth.0, &did, "rest").await?;
+    Ok(Json(result))
 }
-
-// ---------- PATCH /acl/{did} ----------
 
 #[derive(Debug, Deserialize)]
 pub struct UpdateAclRequest {
@@ -146,65 +82,27 @@ pub async fn update_acl(
     State(state): State<AppState>,
     Path(did): Path<String>,
     Json(req): Json<UpdateAclRequest>,
-) -> Result<Json<AclEntryResponse>, AppError> {
-    let acl = state.acl_ks.clone();
-    let mut entry = get_acl_entry(&acl, &did)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("ACL entry not found for DID: {did}")))?;
-
-    // Context admins can only modify entries they can see
-    if !is_acl_entry_visible(&auth.0, &entry) {
-        return Err(AppError::NotFound(format!(
-            "ACL entry not found for DID: {did}"
-        )));
-    }
-
-    if let Some(role) = req.role {
-        entry.role = role;
-    }
-    if let Some(label) = req.label {
-        entry.label = Some(label);
-    }
-    if let Some(allowed_contexts) = req.allowed_contexts {
-        // Validate the new contexts before applying
-        validate_acl_modification(&auth.0, &allowed_contexts)?;
-        entry.allowed_contexts = allowed_contexts;
-    }
-
-    store_acl_entry(&acl, &entry).await?;
-
-    info!(did = %did, "ACL entry updated");
-    Ok(Json(AclEntryResponse::from(entry)))
+) -> Result<Json<CreateAclResultBody>, AppError> {
+    let result = operations::acl::update_acl(
+        &state.acl_ks,
+        &auth.0,
+        &did,
+        operations::acl::UpdateAclParams {
+            role: req.role,
+            label: req.label,
+            allowed_contexts: req.allowed_contexts,
+        },
+        "rest",
+    )
+    .await?;
+    Ok(Json(result))
 }
-
-// ---------- DELETE /acl/{did} ----------
 
 pub async fn delete_acl(
     auth: ManageAuth,
     State(state): State<AppState>,
     Path(did): Path<String>,
 ) -> Result<StatusCode, AppError> {
-    // Prevent self-deletion
-    if auth.0.did == did {
-        return Err(AppError::Conflict(
-            "cannot delete your own ACL entry".into(),
-        ));
-    }
-
-    let acl = state.acl_ks.clone();
-
-    // Verify entry exists and is visible to the caller
-    let entry = get_acl_entry(&acl, &did)
-        .await?
-        .ok_or_else(|| AppError::NotFound(format!("ACL entry not found for DID: {did}")))?;
-    if !is_acl_entry_visible(&auth.0, &entry) {
-        return Err(AppError::NotFound(format!(
-            "ACL entry not found for DID: {did}"
-        )));
-    }
-
-    delete_acl_entry(&acl, &did).await?;
-
-    info!(caller = %auth.0.did, did = %did, "ACL entry deleted");
+    operations::acl::delete_acl(&state.acl_ks, &auth.0, &did, "rest").await?;
     Ok(StatusCode::NO_CONTENT)
 }

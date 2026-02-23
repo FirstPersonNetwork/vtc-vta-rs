@@ -7,15 +7,12 @@ use uuid::Uuid;
 
 use affinidi_tdk::didcomm::Message;
 use affinidi_tdk::didcomm::UnpackOptions;
-use vta_sdk::credentials::CredentialBundle;
 use vta_sdk::protocols::auth::{
     AuthenticateData, AuthenticateResponse, ChallengeData, ChallengeRequest, ChallengeResponse,
 };
+use vta_sdk::protocols::credential_management::generate::GenerateCredentialsResultBody;
 
-use crate::acl::{
-    AclEntry, Role, check_acl, check_acl_full, store_acl_entry, validate_acl_modification,
-};
-use crate::auth::credentials::generate_did_key;
+use crate::acl::{Role, check_acl, check_acl_full};
 use crate::auth::extractor::{AdminAuth, AuthClaims, ManageAuth};
 use crate::auth::jwt::JwtKeys;
 use crate::auth::session::{
@@ -23,6 +20,7 @@ use crate::auth::session::{
     now_epoch, store_refresh_index, store_session, update_session,
 };
 use crate::error::AppError;
+use crate::operations;
 use crate::server::AppState;
 use tracing::{info, warn};
 
@@ -311,62 +309,22 @@ pub struct GenerateCredentialsRequest {
     pub allowed_contexts: Vec<String>,
 }
 
-#[derive(Debug, Serialize)]
-pub struct GenerateCredentialsResponse {
-    pub did: String,
-    pub credential: String,
-    pub role: Role,
-}
-
 pub async fn generate_credentials(
     auth: ManageAuth,
     State(state): State<AppState>,
     Json(req): Json<GenerateCredentialsRequest>,
-) -> Result<(StatusCode, Json<GenerateCredentialsResponse>), AppError> {
-    validate_acl_modification(&auth.0, &req.allowed_contexts)?;
-
-    let config = state.config.read().await;
-    let vta_did = config
-        .vta_did
-        .as_ref()
-        .ok_or_else(|| AppError::Internal("VTA DID not configured".into()))?
-        .clone();
-    let vta_url = config.public_url.clone();
-    drop(config);
-
-    let (did, private_key_multibase) = generate_did_key();
-
-    // Add the new DID to the ACL
-    let acl = state.acl_ks.clone();
-    let entry = AclEntry {
-        did: did.clone(),
-        role: req.role.clone(),
-        label: req.label,
-        allowed_contexts: req.allowed_contexts,
-        created_at: now_epoch(),
-        created_by: auth.0.did,
-    };
-    store_acl_entry(&acl, &entry).await?;
-
-    // Build the credential bundle
-    let bundle = CredentialBundle {
-        did: did.clone(),
-        private_key_multibase,
-        vta_did,
-        vta_url,
-    };
-    let credential = bundle.encode().map_err(|e| AppError::Internal(e.to_string()))?;
-
-    info!(did = %did, role = %req.role, caller = %entry.created_by, "credentials generated");
-
-    Ok((
-        StatusCode::CREATED,
-        Json(GenerateCredentialsResponse {
-            did,
-            credential,
-            role: req.role,
-        }),
-    ))
+) -> Result<(StatusCode, Json<GenerateCredentialsResultBody>), AppError> {
+    let result = operations::credentials::generate_credentials(
+        &state.acl_ks,
+        &state.config,
+        &auth.0,
+        req.role,
+        req.label,
+        req.allowed_contexts,
+        "rest",
+    )
+    .await?;
+    Ok((StatusCode::CREATED, Json(result)))
 }
 
 // ---------- GET /auth/sessions ----------

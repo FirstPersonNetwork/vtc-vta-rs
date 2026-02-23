@@ -23,7 +23,7 @@ use crate::config::{
     AppConfig, AuthConfig, LogConfig, LogFormat, MessagingConfig, SecretsConfig, ServerConfig,
     ServicesConfig, StoreConfig,
 };
-use crate::contexts::{self, ContextRecord, allocate_context_index, store_context};
+use crate::contexts::{self, ContextRecord, store_context};
 use crate::keys::paths::allocate_path;
 use crate::keys::seed_store::create_seed_store;
 use crate::keys::seeds::{SeedRecord, save_seed_record, set_active_seed_id};
@@ -914,23 +914,9 @@ async fn configure_messaging(
         .interact()?;
 
     match choice {
-        // Existing DID — no context needed, just allocate a BIP-32 path for keys
+        // Existing DID — no local keys or context needed
         0 => {
             let did: String = Input::new().with_prompt("Mediator DID").interact_text()?;
-
-            let (_index, base_path) = allocate_context_index(contexts_ks)
-                .await
-                .map_err(|e| format!("{e}"))?;
-
-            let derived = keys::derive_entity_keys(
-                seed,
-                &base_path,
-                "Mediator signing key",
-                "Mediator key-agreement key",
-                keys_ks,
-            )
-            .await?;
-            keys::save_entity_key_records(&did, &derived, keys_ks, None, Some(0)).await?;
 
             Ok(Some(MessagingConfig {
                 mediator_url: String::new(),

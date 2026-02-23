@@ -196,7 +196,7 @@ pub async fn save_entity_key_records(
     did: &str,
     derived: &DerivedEntityKeys,
     keys_ks: &KeyspaceHandle,
-    context_id: &str,
+    context_id: Option<&str>,
     seed_id: Option<u32>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     save_key_record(
@@ -206,7 +206,7 @@ pub async fn save_entity_key_records(
         KeyType::Ed25519,
         &derived.signing_pub,
         &derived.signing_label,
-        Some(context_id),
+        context_id,
         seed_id,
     )
     .await?;
@@ -217,7 +217,7 @@ pub async fn save_entity_key_records(
         KeyType::X25519,
         &derived.ka_pub,
         &derived.ka_label,
-        Some(context_id),
+        context_id,
         seed_id,
     )
     .await?;

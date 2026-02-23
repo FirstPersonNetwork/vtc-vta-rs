@@ -218,7 +218,7 @@ pub async fn run_create_did_webvh(
     eprintln!("\x1b[1;32mCreated DID:\x1b[0m {final_did}");
 
     // Save key records now that we have the final DID
-    keys::save_entity_key_records(&final_did, &derived, &keys_ks, &ctx.id, Some(active_seed_id)).await?;
+    keys::save_entity_key_records(&final_did, &derived, &keys_ks, Some(&ctx.id), Some(active_seed_id)).await?;
 
     // Save pre-rotation key records
     for (i, pk) in pre_rotation_keys.iter().enumerate() {

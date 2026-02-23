@@ -23,7 +23,7 @@ use crate::config::{
     AppConfig, AuthConfig, LogConfig, LogFormat, MessagingConfig, SecretsConfig, ServerConfig,
     ServicesConfig, StoreConfig,
 };
-use crate::contexts::{self, ContextRecord, store_context};
+use crate::contexts::{self, ContextRecord, allocate_context_index, store_context};
 use crate::keys::paths::allocate_path;
 use crate::keys::seed_store::create_seed_store;
 use crate::keys::seeds::{SeedRecord, save_seed_record, set_active_seed_id};
@@ -559,19 +559,9 @@ pub async fn run_setup_wizard(
     rand::rng().fill_bytes(&mut jwt_key_bytes);
     let jwt_signing_key = BASE64.encode(jwt_key_bytes);
 
-    // 12. DIDComm messaging (with mediator DID creation)
+    // 12. DIDComm messaging
     let messaging = if enable_didcomm {
-        let mut med_ctx =
-            create_seed_context(&contexts_ks, "mediator", "DIDComm Messaging Mediator").await?;
-        let msg = configure_messaging(&seed, &med_ctx.base_path, &keys_ks).await?;
-        if let Some(ref msg) = msg {
-            med_ctx.did = Some(msg.mediator_did.clone());
-            med_ctx.updated_at = Utc::now();
-            store_context(&contexts_ks, &med_ctx)
-                .await
-                .map_err(|e| format!("{e}"))?;
-        }
-        msg
+        configure_messaging(&seed, &keys_ks, &contexts_ks).await?
     } else {
         None
     };
@@ -820,7 +810,7 @@ async fn create_admin_did(
                 keys_ks,
             )
             .await?;
-            keys::save_entity_key_records(&did, &derived, keys_ks, "vta", Some(0)).await?;
+            keys::save_entity_key_records(&did, &derived, keys_ks, Some("vta"), Some(0)).await?;
 
             // Also derive and store the did:key
             let _ = derive_and_store_did_key(seed, vta_base_path, "vta", keys_ks, Some(0)).await?;
@@ -891,7 +881,7 @@ async fn create_vta_did(
                 keys_ks,
             )
             .await?;
-            keys::save_entity_key_records(&did, &derived, keys_ks, "vta", Some(0)).await?;
+            keys::save_entity_key_records(&did, &derived, keys_ks, Some("vta"), Some(0)).await?;
 
             Ok(Some(did))
         }
@@ -903,14 +893,14 @@ async fn create_vta_did(
 ///
 /// Offers three choices:
 /// 1. Use an existing mediator DID (no URL needed — ATM resolves endpoints from the DID document)
-/// 2. Create a new did:webvh mediator DID (prompts for URL for service endpoints)
+/// 2. Create a new did:webvh mediator DID (creates a "mediator" context for key storage)
 /// 3. Skip DIDComm messaging entirely
 ///
 /// Returns `None` when the user chooses to skip.
 async fn configure_messaging(
     seed: &[u8],
-    mediator_base_path: &str,
     keys_ks: &KeyspaceHandle,
+    contexts_ks: &KeyspaceHandle,
 ) -> Result<Option<MessagingConfig>, Box<dyn std::error::Error>> {
     let options = &[
         "Use an existing mediator DID",
@@ -924,33 +914,41 @@ async fn configure_messaging(
         .interact()?;
 
     match choice {
-        // Existing DID — no URL needed
+        // Existing DID — no context needed, just allocate a BIP-32 path for keys
         0 => {
             let did: String = Input::new().with_prompt("Mediator DID").interact_text()?;
 
+            let (_index, base_path) = allocate_context_index(contexts_ks)
+                .await
+                .map_err(|e| format!("{e}"))?;
+
             let derived = keys::derive_entity_keys(
                 seed,
-                mediator_base_path,
+                &base_path,
                 "Mediator signing key",
                 "Mediator key-agreement key",
                 keys_ks,
             )
             .await?;
-            keys::save_entity_key_records(&did, &derived, keys_ks, "mediator", Some(0)).await?;
+            keys::save_entity_key_records(&did, &derived, keys_ks, None, Some(0)).await?;
 
             Ok(Some(MessagingConfig {
                 mediator_url: String::new(),
                 mediator_did: did,
             }))
         }
-        // Create new did:webvh
+        // Create new did:webvh — needs a mediator context
         1 => {
             let mediator_url: String =
                 Input::new().with_prompt("Mediator URL").interact_text()?;
 
+            let mut med_ctx =
+                create_seed_context(contexts_ks, "mediator", "DIDComm Messaging Mediator")
+                    .await?;
+
             let mut derived = keys::derive_entity_keys(
                 seed,
-                mediator_base_path,
+                &med_ctx.base_path,
                 "Mediator signing key",
                 "Mediator key-agreement key",
                 keys_ks,
@@ -964,11 +962,18 @@ async fn configure_messaging(
                 None,
                 None,
                 seed,
-                mediator_base_path,
+                &med_ctx.base_path,
                 "mediator",
                 keys_ks,
             )
             .await?;
+
+            // Update the mediator context with the created DID
+            med_ctx.did = Some(mediator_did.clone());
+            med_ctx.updated_at = Utc::now();
+            store_context(contexts_ks, &med_ctx)
+                .await
+                .map_err(|e| format!("{e}"))?;
 
             Ok(Some(MessagingConfig {
                 mediator_url,
@@ -1280,7 +1285,7 @@ async fn create_webvh_did(
     eprintln!("\x1b[1;32mCreated DID:\x1b[0m {final_did}");
 
     // Save key records now that we have the final DID
-    keys::save_entity_key_records(&final_did, derived, keys_ks, context_id, Some(0)).await?;
+    keys::save_entity_key_records(&final_did, derived, keys_ks, Some(context_id), Some(0)).await?;
 
     // Save pre-rotation key records
     for (i, pk) in pre_rotation_keys.iter().enumerate() {

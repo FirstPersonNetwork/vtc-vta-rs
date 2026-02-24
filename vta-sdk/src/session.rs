@@ -5,6 +5,7 @@ use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuil
 use affinidi_tdk::didcomm::{Message, PackEncryptedOptions};
 use affinidi_tdk::secrets_resolver::{SecretsResolver, ThreadedSecretsResolver};
 use serde::{Deserialize, Serialize};
+use serde_json;
 use tracing::debug;
 
 use crate::credentials::CredentialBundle;
@@ -502,7 +503,8 @@ pub async fn challenge_response(
             did: client_did.to_string(),
         })
         .send()
-        .await?;
+        .await
+        .map_err(|e| format!("could not connect to VTA at {challenge_url}: {e}"))?;
 
     if !challenge_resp.status().is_success() {
         let status = challenge_resp.status();
@@ -510,7 +512,10 @@ pub async fn challenge_response(
         return Err(format!("challenge request failed ({status}): {body}").into());
     }
 
-    let challenge: ChallengeResponse = challenge_resp.json().await?;
+    let challenge_text = challenge_resp.text().await
+        .map_err(|e| format!("failed to read challenge response from VTA: {e}"))?;
+    let challenge: ChallengeResponse = serde_json::from_str(&challenge_text)
+        .map_err(|e| format!("unexpected response from VTA at {challenge_url} (is this a VTA server?): {e}"))?;
     debug!(
         session_id = %challenge.session_id,
         challenge = %challenge.data.challenge,
@@ -581,7 +586,8 @@ pub async fn challenge_response(
         .header("content-type", "text/plain")
         .body(packed)
         .send()
-        .await?;
+        .await
+        .map_err(|e| format!("could not connect to VTA at {auth_url}: {e}"))?;
 
     let status = auth_resp.status();
     debug!(status = %status, "auth response received");
@@ -591,7 +597,10 @@ pub async fn challenge_response(
         return Err(format!("authentication failed ({status}): {body}").into());
     }
 
-    let auth_data: AuthenticateResponse = auth_resp.json().await?;
+    let auth_text = auth_resp.text().await
+        .map_err(|e| format!("failed to read auth response from VTA: {e}"))?;
+    let auth_data: AuthenticateResponse = serde_json::from_str(&auth_text)
+        .map_err(|e| format!("unexpected response from VTA at {auth_url} (is this a VTA server?): {e}"))?;
     debug!(
         expires_at = auth_data.data.access_expires_at,
         "authentication successful"

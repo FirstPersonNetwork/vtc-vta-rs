@@ -6,8 +6,8 @@ use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuil
 use crate::acl::Role;
 use crate::auth::extractor::AuthClaims;
 use crate::config::AppConfig;
-use crate::keys::seed_store::create_seed_store;
 use crate::didcomm_bridge::DIDCommBridge;
+use crate::keys::seed_store::create_seed_store;
 use crate::operations;
 use crate::store::Store;
 
@@ -32,8 +32,16 @@ pub async fn run_add_server(
     let did_resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await?;
 
     let auth = cli_super_admin();
-    let result =
-        operations::did_webvh::add_webvh_server(&webvh_ks, &auth, &id, &did, label, &did_resolver, "cli").await?;
+    let result = operations::did_webvh::add_webvh_server(
+        &webvh_ks,
+        &auth,
+        &id,
+        &did,
+        label,
+        &did_resolver,
+        "cli",
+    )
+    .await?;
     store.persist().await?;
 
     eprintln!("WebVH server added:");
@@ -67,7 +75,10 @@ pub async fn run_list_servers(
         if let Some(label) = &server.label {
             eprintln!("  Label:   {label}");
         }
-        eprintln!("  Created: {}", server.created_at.format("%Y-%m-%d %H:%M:%S UTC"));
+        eprintln!(
+            "  Created: {}",
+            server.created_at.format("%Y-%m-%d %H:%M:%S UTC")
+        );
         eprintln!();
     }
     Ok(())
@@ -84,8 +95,7 @@ pub async fn run_update_server(
 
     let auth = cli_super_admin();
     let result =
-        operations::did_webvh::update_webvh_server(&webvh_ks, &auth, &id, label, "cli")
-            .await?;
+        operations::did_webvh::update_webvh_server(&webvh_ks, &auth, &id, label, "cli").await?;
     store.persist().await?;
 
     eprintln!("WebVH server updated:");
@@ -212,7 +222,10 @@ pub async fn run_list_dids(
         eprintln!("  Server:   {}", d.server_id);
         eprintln!("  SCID:     {}", d.scid);
         eprintln!("  Portable: {}", d.portable);
-        eprintln!("  Created:  {}", d.created_at.format("%Y-%m-%d %H:%M:%S UTC"));
+        eprintln!(
+            "  Created:  {}",
+            d.created_at.format("%Y-%m-%d %H:%M:%S UTC")
+        );
         eprintln!();
     }
     Ok(())

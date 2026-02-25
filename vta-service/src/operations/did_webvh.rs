@@ -28,12 +28,12 @@ use vta_sdk::webvh::{WebvhDidRecord, WebvhServerRecord};
 use crate::auth::extractor::AuthClaims;
 use crate::config::AppConfig;
 use crate::error::AppError;
+use crate::keys::paths::allocate_path;
 use crate::keys::seed_store::SeedStore;
 use crate::keys::seeds::{get_active_seed_id, load_seed_bytes};
 use crate::keys::{self, KeyType as SdkKeyType, PreRotationKeyData};
-use crate::keys::paths::allocate_path;
 use crate::store::KeyspaceHandle;
-use crate::webvh_client::WebvhClient;
+use crate::webvh_client::{RequestUriResponse, WebvhClient};
 use crate::webvh_didcomm::WebvhDIDCommClient;
 use crate::webvh_store;
 
@@ -69,9 +69,7 @@ pub async fn create_did_webvh(
     // Resolve context
     let mut ctx = crate::contexts::get_context(contexts_ks, &params.context_id)
         .await?
-        .ok_or_else(|| {
-            AppError::NotFound(format!("context not found: {}", params.context_id))
-        })?;
+        .ok_or_else(|| AppError::NotFound(format!("context not found: {}", params.context_id)))?;
 
     // Resolve server
     let server = webvh_store::get_server(webvh_ks, &params.server_id)
@@ -88,10 +86,7 @@ pub async fn create_did_webvh(
         .await
         .map_err(|e| AppError::Internal(format!("{e}")))?;
 
-    let label = params
-        .label
-        .as_deref()
-        .unwrap_or(&params.context_id);
+    let label = params.label.as_deref().unwrap_or(&params.context_id);
 
     // Derive entity keys
     let mut derived = keys::derive_entity_keys(
@@ -104,33 +99,19 @@ pub async fn create_did_webvh(
     .await
     .map_err(|e| AppError::Internal(format!("{e}")))?;
 
-    // Resolve server endpoint type (REST or DIDComm)
-    let endpoint = resolve_server_endpoint(did_resolver, &server.did).await?;
+    // Resolve server transport (REST or DIDComm)
+    let transport =
+        WebvhTransport::from_server(&server, did_resolver, didcomm_bridge, config).await?;
 
     // Request URI from server
-    let uri_response = match &endpoint {
-        ServerEndpoint::Rest { url } => {
-            let mut client = WebvhClient::new(url);
-            if let Some(ref token) = server.access_token {
-                client.set_access_token(token.clone());
-            }
-            client.request_uri(params.path.as_deref()).await?
-        }
-        ServerEndpoint::DIDComm { server_did } => {
-            make_didcomm_client(didcomm_bridge, config, server_did)?
-                .request_uri(params.path.as_deref())
-                .await?
-        }
-    };
+    let uri_response = transport.request_uri(params.path.as_deref()).await?;
     let mnemonic = uri_response.mnemonic;
 
     // Parse the did_url into a WebVHURL
-    let parsed_url = Url::parse(&uri_response.did_url).map_err(|e| {
-        AppError::Internal(format!("invalid did_url from server: {e}"))
-    })?;
-    let webvh_url = WebVHURL::parse_url(&parsed_url).map_err(|e| {
-        AppError::Internal(format!("failed to parse WebVH URL: {e}"))
-    })?;
+    let parsed_url = Url::parse(&uri_response.did_url)
+        .map_err(|e| AppError::Internal(format!("invalid did_url from server: {e}")))?;
+    let webvh_url = WebVHURL::parse_url(&parsed_url)
+        .map_err(|e| AppError::Internal(format!("failed to parse WebVH URL: {e}")))?;
     let did_id = webvh_url.to_string();
 
     // Convert signing key ID to did:key format (required by didwebvh-rs)
@@ -149,8 +130,13 @@ pub async fn create_did_webvh(
     .concat();
 
     // Build DID document
-    let did_document =
-        build_did_document(&did_id, &derived, config, params.add_mediator_service, &params.additional_services);
+    let did_document = build_did_document(
+        &did_id,
+        &derived,
+        config,
+        params.add_mediator_service,
+        &params.additional_services,
+    );
 
     // Derive pre-rotation keys
     let (next_key_hashes, pre_rotation_keys) = derive_pre_rotation_keys(
@@ -198,20 +184,7 @@ pub async fn create_did_webvh(
         .map_err(|e| AppError::Internal(format!("failed to serialize DID log: {e}")))?;
 
     // Publish to webvh-server
-    match &endpoint {
-        ServerEndpoint::Rest { url } => {
-            let mut client = WebvhClient::new(url);
-            if let Some(ref token) = server.access_token {
-                client.set_access_token(token.clone());
-            }
-            client.publish_did(&mnemonic, &log_content).await?;
-        }
-        ServerEndpoint::DIDComm { server_did } => {
-            make_didcomm_client(didcomm_bridge, config, server_did)?
-                .publish_did(&mnemonic, &log_content)
-                .await?;
-        }
-    }
+    transport.publish_did(&mnemonic, &log_content).await?;
 
     // Save key records
     keys::save_entity_key_records(
@@ -339,30 +312,14 @@ pub async fn delete_did_webvh(
     let server = webvh_store::get_server(webvh_ks, &record.server_id).await?;
 
     if let Some(server) = server {
-        match resolve_server_endpoint(did_resolver, &server.did).await {
-            Ok(ServerEndpoint::Rest { url }) => {
-                let mut client = WebvhClient::new(&url);
-                if let Some(ref token) = server.access_token {
-                    client.set_access_token(token.clone());
-                }
-                if let Err(e) = client.delete_did(&record.mnemonic).await {
+        match WebvhTransport::from_server(&server, did_resolver, didcomm_bridge, config).await {
+            Ok(transport) => {
+                if let Err(e) = transport.delete_did(&record.mnemonic).await {
                     tracing::warn!(did = %did, error = %e, "failed to delete DID from webvh-server (continuing local cleanup)");
                 }
             }
-            Ok(ServerEndpoint::DIDComm { server_did }) => {
-                match make_didcomm_client(didcomm_bridge, config, &server_did) {
-                    Ok(dc) => {
-                        if let Err(e) = dc.delete_did(&record.mnemonic).await {
-                            tracing::warn!(did = %did, error = %e, "failed to delete DID from webvh-server via DIDComm (continuing local cleanup)");
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!(did = %did, error = %e, "DIDComm not configured for deletion (continuing local cleanup)");
-                    }
-                }
-            }
             Err(e) => {
-                tracing::warn!(did = %did, error = %e, "failed to resolve server DID (continuing local cleanup)");
+                tracing::warn!(did = %did, error = %e, "failed to resolve server endpoint (continuing local cleanup)");
             }
         }
     }
@@ -471,72 +428,118 @@ pub async fn remove_webvh_server(
 }
 
 // ---------------------------------------------------------------------------
-// DID resolution helpers
+// WebVH transport abstraction
 // ---------------------------------------------------------------------------
 
-/// Resolved server communication endpoint.
-pub(crate) enum ServerEndpoint {
-    /// REST API endpoint URL.
-    Rest { url: String },
-    /// DIDComm messaging — messages are sent to the server DID via the mediator.
-    DIDComm { server_did: String },
+/// Unified transport for communicating with a WebVH server via REST or DIDComm.
+///
+/// Owns all necessary state so callers don't need to branch on transport type.
+enum WebvhTransport<'a> {
+    Rest(WebvhClient),
+    DIDComm {
+        bridge: &'a DIDCommBridge,
+        vta_did: &'a str,
+        server_did: String,
+    },
 }
 
-/// Resolve a WebVH server DID to determine the communication endpoint.
-///
-/// Prefers `DIDCommMessaging` and falls back to `WebVHHostingService`.
-async fn resolve_server_endpoint(
-    did_resolver: &DIDCacheClient,
-    server_did: &str,
-) -> Result<ServerEndpoint, AppError> {
-    let resolved = did_resolver.resolve(server_did).await.map_err(|e| {
-        AppError::Internal(format!("failed to resolve server DID {server_did}: {e}"))
-    })?;
+impl<'a> WebvhTransport<'a> {
+    /// Resolve the server DID and construct the appropriate transport.
+    ///
+    /// Prefers `DIDCommMessaging` and falls back to `WebVHHostingService`.
+    async fn from_server(
+        server: &WebvhServerRecord,
+        did_resolver: &DIDCacheClient,
+        didcomm_bridge: &'a Arc<OnceLock<DIDCommBridge>>,
+        config: &'a AppConfig,
+    ) -> Result<Self, AppError> {
+        let resolved = did_resolver.resolve(&server.did).await.map_err(|e| {
+            AppError::Internal(format!("failed to resolve server DID {}: {e}", server.did))
+        })?;
 
-    // Check for DIDCommMessaging first
-    let has_didcomm = resolved.doc.service.iter().any(|svc| {
-        svc.type_.iter().any(|t| t == "DIDCommMessaging")
-    });
-    if has_didcomm {
-        info!(server_did, transport = "didcomm", "resolved webvh server endpoint");
-        return Ok(ServerEndpoint::DIDComm {
-            server_did: server_did.to_string(),
-        });
+        // Check for DIDCommMessaging first
+        let has_didcomm = resolved
+            .doc
+            .service
+            .iter()
+            .any(|svc| svc.type_.iter().any(|t| t == "DIDCommMessaging"));
+        if has_didcomm {
+            info!(server_did = %server.did, transport = "didcomm", "resolved webvh server endpoint");
+            let bridge = didcomm_bridge.get().ok_or_else(|| {
+                AppError::Internal(
+                    "DIDComm not available — mediator connection not established".into(),
+                )
+            })?;
+            let vta_did = config.vta_did.as_deref().ok_or_else(|| {
+                AppError::Internal(
+                    "VTA DID not configured — cannot communicate with WebVH server via DIDComm"
+                        .into(),
+                )
+            })?;
+            return Ok(Self::DIDComm {
+                bridge,
+                vta_did,
+                server_did: server.did.clone(),
+            });
+        }
+
+        // Fall back to WebVHHostingService
+        for svc in &resolved.doc.service {
+            if svc.type_.iter().any(|t| t == "WebVHHostingService")
+                && let Some(url) = svc.service_endpoint.get_uri()
+            {
+                let url = url.trim_matches('"').trim_end_matches('/').to_string();
+                info!(server_did = %server.did, transport = "rest", %url, "resolved webvh server endpoint");
+                let mut client = WebvhClient::new(&url);
+                if let Some(ref token) = server.access_token {
+                    client.set_access_token(token.clone());
+                }
+                return Ok(Self::Rest(client));
+            }
+        }
+
+        Err(AppError::Internal(format!(
+            "server DID {} has no DIDCommMessaging or WebVHHostingService endpoint",
+            server.did,
+        )))
     }
 
-    // Fall back to WebVHHostingService
-    for svc in &resolved.doc.service {
-        if svc.type_.iter().any(|t| t == "WebVHHostingService")
-            && let Some(url) = svc.service_endpoint.get_uri()
-        {
-            let url = url.trim_matches('"').trim_end_matches('/').to_string();
-            info!(server_did, transport = "rest", %url, "resolved webvh server endpoint");
-            return Ok(ServerEndpoint::Rest { url });
+    fn didcomm_client(&self) -> Option<WebvhDIDCommClient<'_>> {
+        match self {
+            Self::DIDComm {
+                bridge,
+                vta_did,
+                server_did,
+            } => Some(WebvhDIDCommClient::new(bridge, vta_did, server_did)),
+            _ => None,
         }
     }
 
-    Err(AppError::Internal(format!(
-        "server DID {server_did} has no DIDCommMessaging or WebVHHostingService endpoint"
-    )))
-}
+    async fn request_uri(&self, path: Option<&str>) -> Result<RequestUriResponse, AppError> {
+        match self {
+            Self::Rest(c) => c.request_uri(path).await,
+            Self::DIDComm { .. } => self.didcomm_client().unwrap().request_uri(path).await,
+        }
+    }
 
-/// Create a [`WebvhDIDCommClient`] from the shared DIDComm bridge and config.
-fn make_didcomm_client<'a>(
-    didcomm_bridge: &'a Arc<OnceLock<DIDCommBridge>>,
-    config: &'a AppConfig,
-    server_did: &'a str,
-) -> Result<WebvhDIDCommClient<'a>, AppError> {
-    let bridge = didcomm_bridge.get().ok_or_else(|| {
-        AppError::Internal(
-            "DIDComm not available — mediator connection not established".into(),
-        )
-    })?;
-    let vta_did = config.vta_did.as_deref().ok_or_else(|| {
-        AppError::Internal(
-            "VTA DID not configured — cannot communicate with WebVH server via DIDComm".into(),
-        )
-    })?;
-    Ok(WebvhDIDCommClient::new(bridge, vta_did, server_did))
+    async fn publish_did(&self, mnemonic: &str, log_content: &str) -> Result<(), AppError> {
+        match self {
+            Self::Rest(c) => c.publish_did(mnemonic, log_content).await,
+            Self::DIDComm { .. } => {
+                self.didcomm_client()
+                    .unwrap()
+                    .publish_did(mnemonic, log_content)
+                    .await
+            }
+        }
+    }
+
+    async fn delete_did(&self, mnemonic: &str) -> Result<(), AppError> {
+        match self {
+            Self::Rest(c) => c.delete_did(mnemonic).await,
+            Self::DIDComm { .. } => self.didcomm_client().unwrap().delete_did(mnemonic).await,
+        }
+    }
 }
 
 /// Validate that a DID resolves and has at least one supported WebVH service.
@@ -602,9 +605,7 @@ pub(crate) fn build_did_document(
     });
 
     // Optionally add mediator DIDComm service
-    if add_mediator_service
-        && let Some(ref msg) = config.messaging
-    {
+    if add_mediator_service && let Some(ref msg) = config.messaging {
         let services = did_document
             .as_object_mut()
             .unwrap()
@@ -663,8 +664,7 @@ pub(crate) async fn derive_pre_rotation_keys(
             .derive(&derivation_path)
             .map_err(|e| AppError::Internal(format!("key derivation failed: {e}")))?;
 
-        let secret =
-            Secret::generate_ed25519(None, Some(derived_key.signing_key.as_bytes()));
+        let secret = Secret::generate_ed25519(None, Some(derived_key.signing_key.as_bytes()));
         let pub_mb = secret
             .get_public_keymultibase()
             .map_err(|e| AppError::Internal(format!("{e}")))?;

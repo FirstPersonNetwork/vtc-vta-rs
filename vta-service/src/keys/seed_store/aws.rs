@@ -71,9 +71,9 @@ impl super::SeedStore for AwsSeedStore {
                         Ok(None)
                     } else {
                         Err(format_aws_error(
-                        "failed to read seed from AWS Secrets Manager",
-                        service_error,
-                    ))
+                            "failed to read seed from AWS Secrets Manager",
+                            service_error,
+                        ))
                     }
                 }
             }

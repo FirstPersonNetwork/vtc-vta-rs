@@ -27,7 +27,10 @@ const RESET: &str = "\x1b[0m";
 
 fn section(title: &str) {
     let pad = 46usize.saturating_sub(title.len());
-    eprintln!("\n{DIM}──{RESET} {BOLD}{title}{RESET} {DIM}{}{RESET}", "─".repeat(pad));
+    eprintln!(
+        "\n{DIM}──{RESET} {BOLD}{title}{RESET} {DIM}{}{RESET}",
+        "─".repeat(pad)
+    );
 }
 
 pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std::error::Error>> {
@@ -47,10 +50,30 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
     section("VTC Status");
     let name = config.vtc_name.as_deref().unwrap_or("(not set)");
     let desc = config.vtc_description.as_deref().unwrap_or("(not set)");
-    eprintln!("  {CYAN}{:<13}{RESET} {}", "Name", if name == "(not set)" { format!("{DIM}{name}{RESET}") } else { name.to_string() });
-    eprintln!("  {CYAN}{:<13}{RESET} {}", "Description", if desc == "(not set)" { format!("{DIM}{desc}{RESET}") } else { desc.to_string() });
+    eprintln!(
+        "  {CYAN}{:<13}{RESET} {}",
+        "Name",
+        if name == "(not set)" {
+            format!("{DIM}{name}{RESET}")
+        } else {
+            name.to_string()
+        }
+    );
+    eprintln!(
+        "  {CYAN}{:<13}{RESET} {}",
+        "Description",
+        if desc == "(not set)" {
+            format!("{DIM}{desc}{RESET}")
+        } else {
+            desc.to_string()
+        }
+    );
     eprintln!("  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} complete", "Setup");
-    eprintln!("  {CYAN}{:<13}{RESET} {}", "Config", config.config_path.display());
+    eprintln!(
+        "  {CYAN}{:<13}{RESET} {}",
+        "Config",
+        config.config_path.display()
+    );
 
     // 2. DID resolver for resolution checks
     let did_resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build())
@@ -93,8 +116,20 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
 
     // 4. URL + Store path
     let url = config.public_url.as_deref().unwrap_or("(not set)");
-    eprintln!("  {CYAN}{:<13}{RESET} {}", "URL", if url == "(not set)" { format!("{DIM}{url}{RESET}") } else { url.to_string() });
-    eprintln!("  {CYAN}{:<13}{RESET} {}", "Store", config.store.data_dir.display());
+    eprintln!(
+        "  {CYAN}{:<13}{RESET} {}",
+        "URL",
+        if url == "(not set)" {
+            format!("{DIM}{url}{RESET}")
+        } else {
+            url.to_string()
+        }
+    );
+    eprintln!(
+        "  {CYAN}{:<13}{RESET} {}",
+        "Store",
+        config.store.data_dir.display()
+    );
 
     // 5. Mediator section
     section("Mediator");
@@ -104,7 +139,11 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
 
     if let Some(ref msg) = config.messaging {
         eprintln!("  {CYAN}{:<13}{RESET} {}", "URL", msg.mediator_url);
-        eprintln!("  {CYAN}{:<13}{RESET} {}", "DID", mediator_did.unwrap_or("(unknown)"));
+        eprintln!(
+            "  {CYAN}{:<13}{RESET} {}",
+            "DID",
+            mediator_did.unwrap_or("(unknown)")
+        );
         if let Some(ref resolver) = did_resolver
             && let Some(did) = mediator_did
         {
@@ -128,7 +167,9 @@ pub async fn run_status(config_path: Option<PathBuf>) -> Result<(), Box<dyn std:
         Ok(s) => s,
         Err(_) => {
             eprintln!();
-            eprintln!("  {YELLOW}Note:{RESET} Could not open the data store (is VTC already running?).");
+            eprintln!(
+                "  {YELLOW}Note:{RESET} Could not open the data store (is VTC already running?)."
+            );
             eprintln!("        Stop the VTC service and re-run `vtc status` for full diagnostics.");
             eprintln!();
             return Ok(());
@@ -210,11 +251,7 @@ async fn send_trust_ping(
         .ok_or("no key material available")?;
 
     if key_material.len() != 64 {
-        return Err(format!(
-            "key material is {} bytes, expected 64",
-            key_material.len()
-        )
-        .into());
+        return Err(format!("key material is {} bytes, expected 64", key_material.len()).into());
     }
 
     let ed25519_bytes: &[u8; 32] = key_material[..32].try_into().unwrap();

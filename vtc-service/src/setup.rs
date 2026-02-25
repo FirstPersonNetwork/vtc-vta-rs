@@ -419,12 +419,10 @@ pub async fn run_setup_wizard(
     };
 
     // 14. VTC DID
-    let vtc_did =
-        create_vtc_did(&key_material, messaging.as_ref(), &public_url).await?;
+    let vtc_did = create_vtc_did(&key_material, messaging.as_ref(), &public_url).await?;
 
     // 15. Bootstrap admin DID in ACL
-    let (admin_did, admin_credential) =
-        create_admin_did(&vtc_did, &public_url).await?;
+    let (admin_did, admin_credential) = create_admin_did(&vtc_did, &public_url).await?;
 
     let acl_ks = store.keyspace("acl")?;
     let admin_entry = AclEntry {
@@ -495,7 +493,11 @@ pub async fn run_setup_wizard(
         }
         #[cfg(feature = "azure-secrets")]
         if !_printed && let Some(ref url) = config.secrets.azure_vault_url {
-            let name = config.secrets.azure_secret_name.as_deref().unwrap_or("vtc-secret");
+            let name = config
+                .secrets
+                .azure_secret_name
+                .as_deref()
+                .unwrap_or("vtc-secret");
             eprintln!("  Secret backend: Azure Key Vault ({url}/{name})");
             _printed = true;
         }
@@ -553,10 +555,7 @@ async fn create_admin_did(
     vtc_did: &Option<String>,
     public_url: &Option<String>,
 ) -> Result<(String, Option<String>), Box<dyn std::error::Error>> {
-    let admin_options = &[
-        "Generate a new did:key (Ed25519)",
-        "Enter an existing DID",
-    ];
+    let admin_options = &["Generate a new did:key (Ed25519)", "Enter an existing DID"];
     let choice = Select::new()
         .with_prompt("Admin DID")
         .items(admin_options)

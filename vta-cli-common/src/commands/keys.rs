@@ -171,9 +171,7 @@ pub async fn cmd_key_list(
     Ok(())
 }
 
-pub async fn cmd_seeds_list(
-    client: &VtaClient,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn cmd_seeds_list(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>> {
     let resp = client.list_seeds().await?;
 
     if resp.seeds.is_empty() {

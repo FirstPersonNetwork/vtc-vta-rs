@@ -170,7 +170,10 @@ pub async fn cmd_acl_update(
     Ok(())
 }
 
-pub async fn cmd_acl_delete(client: &VtaClient, did: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn cmd_acl_delete(
+    client: &VtaClient,
+    did: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     client.delete_acl(did).await?;
     println!("ACL entry deleted: {did}");
     Ok(())

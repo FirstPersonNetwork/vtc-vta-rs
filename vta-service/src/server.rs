@@ -11,13 +11,13 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as BASE64;
 use crate::auth::jwt::JwtKeys;
 use crate::auth::session::cleanup_expired_sessions;
 use crate::config::{AppConfig, AuthConfig};
+#[cfg(feature = "didcomm")]
+use crate::didcomm_bridge::DIDCommBridge;
 use crate::error::AppError;
 use crate::keys::KeyRecord;
 use crate::keys::derivation::Bip32Extension;
 use crate::keys::seed_store::SeedStore;
 use crate::keys::seeds::load_seed_bytes;
-#[cfg(feature = "didcomm")]
-use crate::didcomm_bridge::DIDCommBridge;
 #[cfg(feature = "didcomm")]
 use crate::messaging;
 #[cfg(feature = "rest")]
@@ -177,9 +177,7 @@ pub async fn run(
                         didcomm_bridge_lock,
                     )
                 })
-                .map_err(|e| {
-                    AppError::Internal(format!("failed to spawn DIDComm thread: {e}"))
-                })?,
+                .map_err(|e| AppError::Internal(format!("failed to spawn DIDComm thread: {e}")))?,
         )
     } else {
         None
@@ -322,14 +320,12 @@ fn run_rest_thread(
         let listener = tokio::net::TcpListener::from_std(std_listener)
             .expect("failed to convert std TcpListener to tokio TcpListener");
 
-        let app = routes::router()
-            .with_state(state)
-            .layer(
-                TraceLayer::new_for_http()
-                    .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
-                    .on_request(DefaultOnRequest::new().level(Level::INFO))
-                    .on_response(DefaultOnResponse::new().level(Level::INFO)),
-            );
+        let app = routes::router().with_state(state).layer(
+            TraceLayer::new_for_http()
+                .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                .on_request(DefaultOnRequest::new().level(Level::INFO))
+                .on_response(DefaultOnResponse::new().level(Level::INFO)),
+        );
 
         let shutdown_rx = shutdown_rx.clone();
         axum::serve(listener, app)
@@ -377,15 +373,14 @@ fn run_didcomm_thread(
         drop(config);
 
         // Initialize ATM connection
-        let (atm, profile) =
-            match messaging::init_didcomm_connection(&init_config, sr, did).await {
-                Some(handles) => handles,
-                None => {
-                    let _ = shutdown_rx.changed().await;
-                    info!("DIDComm thread shutting down (init failed)");
-                    return;
-                }
-            };
+        let (atm, profile) = match messaging::init_didcomm_connection(&init_config, sr, did).await {
+            Some(handles) => handles,
+            None => {
+                let _ = shutdown_rx.changed().await;
+                info!("DIDComm thread shutting down (init failed)");
+                return;
+            }
+        };
 
         // Create and publish bridge for REST handlers
         let bridge = DIDCommBridge::new(atm, profile);

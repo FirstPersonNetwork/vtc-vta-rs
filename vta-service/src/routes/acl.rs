@@ -3,9 +3,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use serde::Deserialize;
 
-use vta_sdk::protocols::acl_management::{
-    create::CreateAclResultBody, list::ListAclResultBody,
-};
+use vta_sdk::protocols::acl_management::{create::CreateAclResultBody, list::ListAclResultBody};
 
 use crate::acl::Role;
 use crate::auth::ManageAuth;
@@ -23,13 +21,8 @@ pub async fn list_acl(
     State(state): State<AppState>,
     Query(query): Query<ListAclQuery>,
 ) -> Result<Json<ListAclResultBody>, AppError> {
-    let result = operations::acl::list_acl(
-        &state.acl_ks,
-        &auth.0,
-        query.context.as_deref(),
-        "rest",
-    )
-    .await?;
+    let result =
+        operations::acl::list_acl(&state.acl_ks, &auth.0, query.context.as_deref(), "rest").await?;
     Ok(Json(result))
 }
 
@@ -65,8 +58,7 @@ pub async fn get_acl(
     State(state): State<AppState>,
     Path(did): Path<String>,
 ) -> Result<Json<CreateAclResultBody>, AppError> {
-    let result =
-        operations::acl::get_acl(&state.acl_ks, &auth.0, &did, "rest").await?;
+    let result = operations::acl::get_acl(&state.acl_ks, &auth.0, &did, "rest").await?;
     Ok(Json(result))
 }
 

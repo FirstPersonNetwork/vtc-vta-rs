@@ -1,7 +1,7 @@
+use crate::keys::{KeyRecord, KeyStatus, KeyType};
 use chrono::{DateTime, Utc};
 use reqwest::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
-use crate::keys::{KeyRecord, KeyStatus, KeyType};
 
 // ── Internal transport ──────────────────────────────────────────────
 
@@ -400,6 +400,68 @@ impl VtaClient {
         }
     }
 
+    // ── RPC helpers ─────────────────────────────────────────────────
+
+    /// Dispatch an RPC call via REST (using `build_rest`) or DIDComm (using
+    /// `msg_type`/`body`/`result_type`), returning a deserialized response.
+    #[allow(unused_variables)]
+    async fn rpc<T: serde::de::DeserializeOwned>(
+        &self,
+        msg_type: &str,
+        body: serde_json::Value,
+        result_type: &str,
+        timeout: u64,
+        build_rest: impl FnOnce(&Client, &str) -> RequestBuilder,
+    ) -> Result<T, Box<dyn std::error::Error>> {
+        match &self.transport {
+            Transport::Rest {
+                client,
+                base_url,
+                token,
+            } => {
+                let req = build_rest(client, base_url);
+                let resp = Self::with_auth(req, token).send().await?;
+                Self::handle_response(resp).await
+            }
+            #[cfg(feature = "session")]
+            Transport::DIDComm { session, .. } => {
+                session
+                    .send_and_wait(msg_type, body, result_type, timeout)
+                    .await
+            }
+        }
+    }
+
+    /// Like [`rpc`](Self::rpc) but for operations that return `()` (e.g. DELETE).
+    #[allow(unused_variables)]
+    async fn rpc_void(
+        &self,
+        msg_type: &str,
+        body: serde_json::Value,
+        result_type: &str,
+        timeout: u64,
+        build_rest: impl FnOnce(&Client, &str) -> RequestBuilder,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match &self.transport {
+            Transport::Rest {
+                client,
+                base_url,
+                token,
+            } => {
+                let req = build_rest(client, base_url);
+                let resp = Self::with_auth(req, token).send().await?;
+                Self::handle_delete_response(resp).await
+            }
+            #[cfg(feature = "session")]
+            Transport::DIDComm { session, .. } => {
+                let _: serde_json::Value = session
+                    .send_and_wait(msg_type, body, result_type, timeout)
+                    .await?;
+                Ok(())
+            }
+        }
+    }
+
     // ── Health ───────────────────────────────────────────────────────
 
     /// GET /health (always REST)
@@ -428,102 +490,52 @@ impl VtaClient {
 
     // ── Config ──────────────────────────────────────────────────────
 
-    /// GET /config
     pub async fn get_config(&self) -> Result<ConfigResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.get(format!("{base_url}/config"));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        vta_management::GET_CONFIG,
-                        serde_json::json!({}),
-                        vta_management::GET_CONFIG_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            vta_management::GET_CONFIG,
+            serde_json::json!({}),
+            vta_management::GET_CONFIG_RESULT,
+            30,
+            |c, url| c.get(format!("{url}/config")),
+        )
+        .await
     }
 
-    /// PATCH /config
     pub async fn update_config(
         &self,
         req: UpdateConfigRequest,
     ) -> Result<ConfigResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let r = client
-                    .patch(format!("{base_url}/config"))
-                    .json(&req);
-                let resp = Self::with_auth(r, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        vta_management::UPDATE_CONFIG,
-                        serde_json::to_value(&req)?,
-                        vta_management::UPDATE_CONFIG_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            vta_management::UPDATE_CONFIG,
+            serde_json::to_value(&req)?,
+            vta_management::UPDATE_CONFIG_RESULT,
+            30,
+            |c, url| c.patch(format!("{url}/config")).json(&req),
+        )
+        .await
     }
 
     // ── Key methods ─────────────────────────────────────────────────
 
-    /// POST /keys
     pub async fn create_key(
         &self,
         req: CreateKeyRequest,
     ) -> Result<CreateKeyResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let r = client
-                    .post(format!("{base_url}/keys"))
-                    .json(&req);
-                let resp = Self::with_auth(r, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        key_management::CREATE_KEY,
-                        serde_json::json!({
-                            "key_type": req.key_type,
-                            "derivation_path": req.derivation_path.unwrap_or_default(),
-                            "mnemonic": req.mnemonic,
-                            "label": req.label,
-                        }),
-                        key_management::CREATE_KEY_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            key_management::CREATE_KEY,
+            serde_json::json!({
+                "key_type": serde_json::to_value(&req.key_type)?,
+                "derivation_path": req.derivation_path.as_deref().unwrap_or_default(),
+                "mnemonic": req.mnemonic.as_deref(),
+                "label": req.label.as_deref(),
+            }),
+            key_management::CREATE_KEY_RESULT,
+            30,
+            |c, url| c.post(format!("{url}/keys")).json(&req),
+        )
+        .await
     }
 
-    /// GET /keys
     pub async fn list_keys(
         &self,
         offset: u64,
@@ -531,728 +543,354 @@ impl VtaClient {
         status: Option<&str>,
         context_id: Option<&str>,
     ) -> Result<ListKeysResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let mut url =
-                    format!("{base_url}/keys?offset={offset}&limit={limit}");
+        self.rpc(
+            key_management::LIST_KEYS,
+            serde_json::json!({
+                "offset": offset,
+                "limit": limit,
+                "status": status,
+                "context_id": context_id,
+            }),
+            key_management::LIST_KEYS_RESULT,
+            30,
+            |c, url| {
+                let mut u = format!("{url}/keys?offset={offset}&limit={limit}");
                 if let Some(s) = status {
-                    url.push_str(&format!("&status={s}"));
+                    u.push_str(&format!("&status={s}"));
                 }
                 if let Some(ctx) = context_id {
-                    url.push_str(&format!("&context_id={ctx}"));
+                    u.push_str(&format!("&context_id={ctx}"));
                 }
-                let req = client.get(url);
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        key_management::LIST_KEYS,
-                        serde_json::json!({
-                            "offset": offset,
-                            "limit": limit,
-                            "status": status,
-                            "context_id": context_id,
-                        }),
-                        key_management::LIST_KEYS_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+                c.get(u)
+            },
+        )
+        .await
     }
 
-    /// GET /keys/{key_id}
     pub async fn get_key(&self, key_id: &str) -> Result<KeyRecord, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.get(format!(
-                    "{base_url}/keys/{}",
-                    encode_path_segment(key_id)
-                ));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        key_management::GET_KEY,
-                        serde_json::json!({ "key_id": key_id }),
-                        key_management::GET_KEY_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            key_management::GET_KEY,
+            serde_json::json!({ "key_id": key_id }),
+            key_management::GET_KEY_RESULT,
+            30,
+            |c, url| c.get(format!("{url}/keys/{}", encode_path_segment(key_id))),
+        )
+        .await
     }
 
-    /// GET /keys/{key_id}/secret
     pub async fn get_key_secret(
         &self,
         key_id: &str,
     ) -> Result<GetKeySecretResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.get(format!(
-                    "{base_url}/keys/{}/secret",
-                    encode_path_segment(key_id)
-                ));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        key_management::GET_KEY_SECRET,
-                        serde_json::json!({ "key_id": key_id }),
-                        key_management::GET_KEY_SECRET_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            key_management::GET_KEY_SECRET,
+            serde_json::json!({ "key_id": key_id }),
+            key_management::GET_KEY_SECRET_RESULT,
+            30,
+            |c, url| c.get(format!("{url}/keys/{}/secret", encode_path_segment(key_id))),
+        )
+        .await
     }
 
-    /// DELETE /keys/{key_id}
     pub async fn invalidate_key(
         &self,
         key_id: &str,
     ) -> Result<InvalidateKeyResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.delete(format!(
-                    "{base_url}/keys/{}",
-                    encode_path_segment(key_id)
-                ));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        key_management::REVOKE_KEY,
-                        serde_json::json!({ "key_id": key_id }),
-                        key_management::REVOKE_KEY_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            key_management::REVOKE_KEY,
+            serde_json::json!({ "key_id": key_id }),
+            key_management::REVOKE_KEY_RESULT,
+            30,
+            |c, url| c.delete(format!("{url}/keys/{}", encode_path_segment(key_id))),
+        )
+        .await
     }
 
-    /// PATCH /keys/{key_id}
     pub async fn rename_key(
         &self,
         key_id: &str,
         new_key_id: &str,
     ) -> Result<RenameKeyResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let body = RenameKeyRequest {
-                    key_id: new_key_id.to_string(),
-                };
-                let req = client
-                    .patch(format!(
-                        "{base_url}/keys/{}",
-                        encode_path_segment(key_id)
-                    ))
-                    .json(&body);
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        key_management::RENAME_KEY,
-                        serde_json::json!({
-                            "key_id": key_id,
-                            "new_key_id": new_key_id,
-                        }),
-                        key_management::RENAME_KEY_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            key_management::RENAME_KEY,
+            serde_json::json!({ "key_id": key_id, "new_key_id": new_key_id }),
+            key_management::RENAME_KEY_RESULT,
+            30,
+            |c, url| {
+                c.patch(format!("{url}/keys/{}", encode_path_segment(key_id)))
+                    .json(&RenameKeyRequest {
+                        key_id: new_key_id.to_string(),
+                    })
+            },
+        )
+        .await
     }
 
     // ── Seed methods ────────────────────────────────────────────────
 
-    /// GET /keys/seeds
     pub async fn list_seeds(&self) -> Result<ListSeedsResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.get(format!("{base_url}/keys/seeds"));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        seed_management::LIST_SEEDS,
-                        serde_json::json!({}),
-                        seed_management::LIST_SEEDS_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            seed_management::LIST_SEEDS,
+            serde_json::json!({}),
+            seed_management::LIST_SEEDS_RESULT,
+            30,
+            |c, url| c.get(format!("{url}/keys/seeds")),
+        )
+        .await
     }
 
-    /// POST /keys/seeds/rotate
     pub async fn rotate_seed(
         &self,
         mnemonic: Option<String>,
     ) -> Result<RotateSeedResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let body = RotateSeedRequest { mnemonic };
-                let r = client
-                    .post(format!("{base_url}/keys/seeds/rotate"))
-                    .json(&body);
-                let resp = Self::with_auth(r, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        seed_management::ROTATE_SEED,
-                        serde_json::json!({ "mnemonic": mnemonic }),
-                        seed_management::ROTATE_SEED_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        let body = RotateSeedRequest {
+            mnemonic: mnemonic.clone(),
+        };
+        self.rpc(
+            seed_management::ROTATE_SEED,
+            serde_json::json!({ "mnemonic": mnemonic }),
+            seed_management::ROTATE_SEED_RESULT,
+            30,
+            |c, url| c.post(format!("{url}/keys/seeds/rotate")).json(&body),
+        )
+        .await
     }
 
     // ── ACL methods ─────────────────────────────────────────────────
 
-    /// GET /acl
     pub async fn list_acl(
         &self,
         context: Option<&str>,
     ) -> Result<AclListResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let mut url = format!("{base_url}/acl");
+        self.rpc(
+            acl_management::LIST_ACL,
+            serde_json::json!({ "context": context }),
+            acl_management::LIST_ACL_RESULT,
+            30,
+            |c, url| {
+                let mut u = format!("{url}/acl");
                 if let Some(ctx) = context {
-                    url.push_str(&format!("?context={ctx}"));
+                    u.push_str(&format!("?context={ctx}"));
                 }
-                let req = client.get(url);
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        acl_management::LIST_ACL,
-                        serde_json::json!({ "context": context }),
-                        acl_management::LIST_ACL_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+                c.get(u)
+            },
+        )
+        .await
     }
 
-    /// GET /acl/{did}
     pub async fn get_acl(&self, did: &str) -> Result<AclEntryResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.get(format!(
-                    "{base_url}/acl/{}",
-                    encode_path_segment(did)
-                ));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        acl_management::GET_ACL,
-                        serde_json::json!({ "did": did }),
-                        acl_management::GET_ACL_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            acl_management::GET_ACL,
+            serde_json::json!({ "did": did }),
+            acl_management::GET_ACL_RESULT,
+            30,
+            |c, url| c.get(format!("{url}/acl/{}", encode_path_segment(did))),
+        )
+        .await
     }
 
-    /// POST /acl
     pub async fn create_acl(
         &self,
         req: CreateAclRequest,
     ) -> Result<AclEntryResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let r = client
-                    .post(format!("{base_url}/acl"))
-                    .json(&req);
-                let resp = Self::with_auth(r, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        acl_management::CREATE_ACL,
-                        serde_json::to_value(&req)?,
-                        acl_management::CREATE_ACL_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            acl_management::CREATE_ACL,
+            serde_json::to_value(&req)?,
+            acl_management::CREATE_ACL_RESULT,
+            30,
+            |c, url| c.post(format!("{url}/acl")).json(&req),
+        )
+        .await
     }
 
-    /// PATCH /acl/{did}
     pub async fn update_acl(
         &self,
         did: &str,
         req: UpdateAclRequest,
     ) -> Result<AclEntryResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let r = client
-                    .patch(format!(
-                        "{base_url}/acl/{}",
-                        encode_path_segment(did)
-                    ))
-                    .json(&req);
-                let resp = Self::with_auth(r, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        acl_management::UPDATE_ACL,
-                        serde_json::json!({
-                            "did": did,
-                            "role": req.role,
-                            "label": req.label,
-                            "allowed_contexts": req.allowed_contexts,
-                        }),
-                        acl_management::UPDATE_ACL_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            acl_management::UPDATE_ACL,
+            serde_json::json!({
+                "did": did,
+                "role": &req.role,
+                "label": &req.label,
+                "allowed_contexts": &req.allowed_contexts,
+            }),
+            acl_management::UPDATE_ACL_RESULT,
+            30,
+            |c, url| {
+                c.patch(format!("{url}/acl/{}", encode_path_segment(did)))
+                    .json(&req)
+            },
+        )
+        .await
     }
 
-    /// DELETE /acl/{did}
     pub async fn delete_acl(&self, did: &str) -> Result<(), Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.delete(format!(
-                    "{base_url}/acl/{}",
-                    encode_path_segment(did)
-                ));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_delete_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                let _: serde_json::Value = session
-                    .send_and_wait(
-                        acl_management::DELETE_ACL,
-                        serde_json::json!({ "did": did }),
-                        acl_management::DELETE_ACL_RESULT,
-                        30,
-                    )
-                    .await?;
-                Ok(())
-            }
-        }
+        self.rpc_void(
+            acl_management::DELETE_ACL,
+            serde_json::json!({ "did": did }),
+            acl_management::DELETE_ACL_RESULT,
+            30,
+            |c, url| c.delete(format!("{url}/acl/{}", encode_path_segment(did))),
+        )
+        .await
     }
 
     // ── Credential methods ──────────────────────────────────────────
 
-    /// POST /auth/credentials
     pub async fn generate_credentials(
         &self,
         req: GenerateCredentialsRequest,
     ) -> Result<GenerateCredentialsResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let r = client
-                    .post(format!("{base_url}/auth/credentials"))
-                    .json(&req);
-                let resp = Self::with_auth(r, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        credential_management::GENERATE_CREDENTIALS,
-                        serde_json::to_value(&req)?,
-                        credential_management::GENERATE_CREDENTIALS_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            credential_management::GENERATE_CREDENTIALS,
+            serde_json::to_value(&req)?,
+            credential_management::GENERATE_CREDENTIALS_RESULT,
+            30,
+            |c, url| c.post(format!("{url}/auth/credentials")).json(&req),
+        )
+        .await
     }
 
     // ── Context methods ──────────────────────────────────────────────
 
-    /// GET /contexts
     pub async fn list_contexts(&self) -> Result<ContextListResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.get(format!("{base_url}/contexts"));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        context_management::LIST_CONTEXTS,
-                        serde_json::json!({}),
-                        context_management::LIST_CONTEXTS_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            context_management::LIST_CONTEXTS,
+            serde_json::json!({}),
+            context_management::LIST_CONTEXTS_RESULT,
+            30,
+            |c, url| c.get(format!("{url}/contexts")),
+        )
+        .await
     }
 
-    /// GET /contexts/{id}
     pub async fn get_context(
         &self,
         id: &str,
     ) -> Result<ContextResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.get(format!(
-                    "{base_url}/contexts/{}",
-                    encode_path_segment(id)
-                ));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        context_management::GET_CONTEXT,
-                        serde_json::json!({ "id": id }),
-                        context_management::GET_CONTEXT_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            context_management::GET_CONTEXT,
+            serde_json::json!({ "id": id }),
+            context_management::GET_CONTEXT_RESULT,
+            30,
+            |c, url| c.get(format!("{url}/contexts/{}", encode_path_segment(id))),
+        )
+        .await
     }
 
-    /// POST /contexts
     pub async fn create_context(
         &self,
         req: CreateContextRequest,
     ) -> Result<ContextResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let r = client
-                    .post(format!("{base_url}/contexts"))
-                    .json(&req);
-                let resp = Self::with_auth(r, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        context_management::CREATE_CONTEXT,
-                        serde_json::to_value(&req)?,
-                        context_management::CREATE_CONTEXT_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            context_management::CREATE_CONTEXT,
+            serde_json::to_value(&req)?,
+            context_management::CREATE_CONTEXT_RESULT,
+            30,
+            |c, url| c.post(format!("{url}/contexts")).json(&req),
+        )
+        .await
     }
 
-    /// PATCH /contexts/{id}
     pub async fn update_context(
         &self,
         id: &str,
         req: UpdateContextRequest,
     ) -> Result<ContextResponse, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let r = client
-                    .patch(format!(
-                        "{base_url}/contexts/{}",
-                        encode_path_segment(id)
-                    ))
-                    .json(&req);
-                let resp = Self::with_auth(r, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        context_management::UPDATE_CONTEXT,
-                        serde_json::json!({
-                            "id": id,
-                            "name": req.name,
-                            "did": req.did,
-                            "description": req.description,
-                        }),
-                        context_management::UPDATE_CONTEXT_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            context_management::UPDATE_CONTEXT,
+            serde_json::json!({
+                "id": id,
+                "name": &req.name,
+                "did": &req.did,
+                "description": &req.description,
+            }),
+            context_management::UPDATE_CONTEXT_RESULT,
+            30,
+            |c, url| {
+                c.patch(format!("{url}/contexts/{}", encode_path_segment(id)))
+                    .json(&req)
+            },
+        )
+        .await
     }
 
-    /// DELETE /contexts/{id}
     pub async fn delete_context(&self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.delete(format!(
-                    "{base_url}/contexts/{}",
-                    encode_path_segment(id)
-                ));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_delete_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                let _: serde_json::Value = session
-                    .send_and_wait(
-                        context_management::DELETE_CONTEXT,
-                        serde_json::json!({ "id": id }),
-                        context_management::DELETE_CONTEXT_RESULT,
-                        30,
-                    )
-                    .await?;
-                Ok(())
-            }
-        }
+        self.rpc_void(
+            context_management::DELETE_CONTEXT,
+            serde_json::json!({ "id": id }),
+            context_management::DELETE_CONTEXT_RESULT,
+            30,
+            |c, url| c.delete(format!("{url}/contexts/{}", encode_path_segment(id))),
+        )
+        .await
     }
 
     // ── WebVH server methods ──────────────────────────────────────────
 
-    /// POST /webvh/servers
     pub async fn add_webvh_server(
         &self,
         req: AddWebvhServerRequest,
     ) -> Result<crate::webvh::WebvhServerRecord, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let r = client
-                    .post(format!("{base_url}/webvh/servers"))
-                    .json(&req);
-                let resp = Self::with_auth(r, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        did_management::ADD_WEBVH_SERVER,
-                        serde_json::to_value(&req)?,
-                        did_management::ADD_WEBVH_SERVER_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            did_management::ADD_WEBVH_SERVER,
+            serde_json::to_value(&req)?,
+            did_management::ADD_WEBVH_SERVER_RESULT,
+            30,
+            |c, url| c.post(format!("{url}/webvh/servers")).json(&req),
+        )
+        .await
     }
 
-    /// GET /webvh/servers
     pub async fn list_webvh_servers(
         &self,
     ) -> Result<
         crate::protocols::did_management::servers::ListWebvhServersResultBody,
         Box<dyn std::error::Error>,
     > {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.get(format!("{base_url}/webvh/servers"));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        did_management::LIST_WEBVH_SERVERS,
-                        serde_json::json!({}),
-                        did_management::LIST_WEBVH_SERVERS_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            did_management::LIST_WEBVH_SERVERS,
+            serde_json::json!({}),
+            did_management::LIST_WEBVH_SERVERS_RESULT,
+            30,
+            |c, url| c.get(format!("{url}/webvh/servers")),
+        )
+        .await
     }
 
-    /// PATCH /webvh/servers/{id}
     pub async fn update_webvh_server(
         &self,
         id: &str,
         req: UpdateWebvhServerRequest,
     ) -> Result<crate::webvh::WebvhServerRecord, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let r = client
-                    .patch(format!(
-                        "{base_url}/webvh/servers/{}",
-                        encode_path_segment(id)
-                    ))
-                    .json(&req);
-                let resp = Self::with_auth(r, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        did_management::UPDATE_WEBVH_SERVER,
-                        serde_json::json!({ "id": id, "label": req.label }),
-                        did_management::UPDATE_WEBVH_SERVER_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            did_management::UPDATE_WEBVH_SERVER,
+            serde_json::json!({ "id": id, "label": &req.label }),
+            did_management::UPDATE_WEBVH_SERVER_RESULT,
+            30,
+            |c, url| {
+                c.patch(format!("{url}/webvh/servers/{}", encode_path_segment(id)))
+                    .json(&req)
+            },
+        )
+        .await
     }
 
-    /// DELETE /webvh/servers/{id}
     pub async fn remove_webvh_server(&self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.delete(format!(
-                    "{base_url}/webvh/servers/{}",
-                    encode_path_segment(id)
-                ));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_delete_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                let _: serde_json::Value = session
-                    .send_and_wait(
-                        did_management::REMOVE_WEBVH_SERVER,
-                        serde_json::json!({ "id": id }),
-                        did_management::REMOVE_WEBVH_SERVER_RESULT,
-                        30,
-                    )
-                    .await?;
-                Ok(())
-            }
-        }
+        self.rpc_void(
+            did_management::REMOVE_WEBVH_SERVER,
+            serde_json::json!({ "id": id }),
+            did_management::REMOVE_WEBVH_SERVER_RESULT,
+            30,
+            |c, url| c.delete(format!("{url}/webvh/servers/{}", encode_path_segment(id))),
+        )
+        .await
     }
 
     // ── WebVH DID methods ──────────────────────────────────────────
 
-    /// POST /webvh/dids
     pub async fn create_did_webvh(
         &self,
         req: CreateDidWebvhRequest,
@@ -1260,33 +898,16 @@ impl VtaClient {
         crate::protocols::did_management::create::CreateDidWebvhResultBody,
         Box<dyn std::error::Error>,
     > {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let r = client
-                    .post(format!("{base_url}/webvh/dids"))
-                    .json(&req);
-                let resp = Self::with_auth(r, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        did_management::CREATE_DID_WEBVH,
-                        serde_json::to_value(&req)?,
-                        did_management::CREATE_DID_WEBVH_RESULT,
-                        60,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            did_management::CREATE_DID_WEBVH,
+            serde_json::to_value(&req)?,
+            did_management::CREATE_DID_WEBVH_RESULT,
+            60,
+            |c, url| c.post(format!("{url}/webvh/dids")).json(&req),
+        )
+        .await
     }
 
-    /// GET /webvh/dids
     pub async fn list_dids_webvh(
         &self,
         context_id: Option<&str>,
@@ -1295,102 +916,53 @@ impl VtaClient {
         crate::protocols::did_management::list::ListDidsWebvhResultBody,
         Box<dyn std::error::Error>,
     > {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let mut url = format!("{base_url}/webvh/dids");
+        self.rpc(
+            did_management::LIST_DIDS_WEBVH,
+            serde_json::json!({
+                "context_id": context_id,
+                "server_id": server_id,
+            }),
+            did_management::LIST_DIDS_WEBVH_RESULT,
+            30,
+            |c, url| {
+                let mut u = format!("{url}/webvh/dids");
                 let mut sep = '?';
                 if let Some(ctx) = context_id {
-                    url.push_str(&format!("{sep}context_id={ctx}"));
+                    u.push_str(&format!("{sep}context_id={ctx}"));
                     sep = '&';
                 }
                 if let Some(srv) = server_id {
-                    url.push_str(&format!("{sep}server_id={srv}"));
+                    u.push_str(&format!("{sep}server_id={srv}"));
                 }
-                let req = client.get(url);
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        did_management::LIST_DIDS_WEBVH,
-                        serde_json::json!({
-                            "context_id": context_id,
-                            "server_id": server_id,
-                        }),
-                        did_management::LIST_DIDS_WEBVH_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+                c.get(u)
+            },
+        )
+        .await
     }
 
-    /// GET /webvh/dids/{did}
     pub async fn get_did_webvh(
         &self,
         did: &str,
     ) -> Result<crate::webvh::WebvhDidRecord, Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.get(format!(
-                    "{base_url}/webvh/dids/{}",
-                    encode_path_segment(did)
-                ));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                session
-                    .send_and_wait(
-                        did_management::GET_DID_WEBVH,
-                        serde_json::json!({ "did": did }),
-                        did_management::GET_DID_WEBVH_RESULT,
-                        30,
-                    )
-                    .await
-            }
-        }
+        self.rpc(
+            did_management::GET_DID_WEBVH,
+            serde_json::json!({ "did": did }),
+            did_management::GET_DID_WEBVH_RESULT,
+            30,
+            |c, url| c.get(format!("{url}/webvh/dids/{}", encode_path_segment(did))),
+        )
+        .await
     }
 
-    /// DELETE /webvh/dids/{did}
     pub async fn delete_did_webvh(&self, did: &str) -> Result<(), Box<dyn std::error::Error>> {
-        match &self.transport {
-            Transport::Rest {
-                client,
-                base_url,
-                token,
-            } => {
-                let req = client.delete(format!(
-                    "{base_url}/webvh/dids/{}",
-                    encode_path_segment(did)
-                ));
-                let resp = Self::with_auth(req, token).send().await?;
-                Self::handle_delete_response(resp).await
-            }
-            #[cfg(feature = "session")]
-            Transport::DIDComm { session, .. } => {
-                let _: serde_json::Value = session
-                    .send_and_wait(
-                        did_management::DELETE_DID_WEBVH,
-                        serde_json::json!({ "did": did }),
-                        did_management::DELETE_DID_WEBVH_RESULT,
-                        60,
-                    )
-                    .await?;
-                Ok(())
-            }
-        }
+        self.rpc_void(
+            did_management::DELETE_DID_WEBVH,
+            serde_json::json!({ "did": did }),
+            did_management::DELETE_DID_WEBVH_RESULT,
+            60,
+            |c, url| c.delete(format!("{url}/webvh/dids/{}", encode_path_segment(did))),
+        )
+        .await
     }
 }
 

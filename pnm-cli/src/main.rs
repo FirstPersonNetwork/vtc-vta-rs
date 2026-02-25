@@ -9,7 +9,10 @@ use vta_cli_common::commands::{acl, config as config_cmd, contexts, credentials,
 use vta_cli_common::render::{CYAN, DIM, GREEN, RED, RESET};
 
 #[derive(Parser)]
-#[command(name = "pnm-cli", about = "CLI for managing a personal Verifiable Trust Agent")]
+#[command(
+    name = "pnm-cli",
+    about = "CLI for managing a personal Verifiable Trust Agent"
+)]
 struct Cli {
     /// Base URL of the VTA service (overrides config)
     #[arg(long, env = "VTA_URL")]
@@ -442,23 +445,20 @@ async fn main() {
     let url_override = cli.url.clone();
 
     // Resolve URL: CLI flag > config > error (not needed for setup)
-    let url = cli
-        .url
-        .or(pnm_config.url.clone())
-        .unwrap_or_else(|| {
-            if !matches!(cli.command, Commands::Setup { .. }) {
-                // For auth-required commands, auth::connect resolves the URL from
-                // the session store — so only error when we actually need a URL.
-                if !requires_auth(&cli.command) {
-                    eprintln!("Error: no VTA URL configured and no --url provided.\n");
-                    eprintln!("Run setup first, or provide a URL:");
-                    eprintln!("  pnm setup --credential <CREDENTIAL>");
-                    eprintln!("  pnm health --url http://localhost:8100");
-                    std::process::exit(1);
-                }
+    let url = cli.url.or(pnm_config.url.clone()).unwrap_or_else(|| {
+        if !matches!(cli.command, Commands::Setup { .. }) {
+            // For auth-required commands, auth::connect resolves the URL from
+            // the session store — so only error when we actually need a URL.
+            if !requires_auth(&cli.command) {
+                eprintln!("Error: no VTA URL configured and no --url provided.\n");
+                eprintln!("Run setup first, or provide a URL:");
+                eprintln!("  pnm setup --credential <CREDENTIAL>");
+                eprintln!("  pnm health --url http://localhost:8100");
+                std::process::exit(1);
             }
-            String::new()
-        });
+        }
+        String::new()
+    });
     let client = if requires_auth(&cli.command) {
         match auth::connect(url_override.as_deref()).await {
             Ok(c) => c,
@@ -472,14 +472,10 @@ async fn main() {
     };
 
     let result = match cli.command {
-        Commands::Setup { credential } => {
-            setup::run_setup(credential.as_deref()).await
-        }
+        Commands::Setup { credential } => setup::run_setup(credential.as_deref()).await,
         Commands::Health => cmd_health(&client).await,
         Commands::Auth { command } => match command {
-            AuthCommands::Login { credential } => {
-                auth::login(&credential, client.base_url()).await
-            }
+            AuthCommands::Login { credential } => auth::login(&credential, client.base_url()).await,
             AuthCommands::Logout => {
                 auth::logout();
                 Ok(())
@@ -526,7 +522,9 @@ async fn main() {
                 name,
                 description,
                 admin_label,
-            } => contexts::cmd_context_bootstrap(&client, &id, &name, description, admin_label).await,
+            } => {
+                contexts::cmd_context_bootstrap(&client, &id, &name, description, admin_label).await
+            }
         },
         Commands::Acl { command } => match command {
             AclCommands::List { context } => acl::cmd_acl_list(&client, context.as_deref()).await,
@@ -572,7 +570,10 @@ async fn main() {
                 mediator_service,
                 services,
                 pre_rotation,
-            } => match services.map(|s| serde_json::from_str::<Vec<serde_json::Value>>(&s)).transpose() {
+            } => match services
+                .map(|s| serde_json::from_str::<Vec<serde_json::Value>>(&s))
+                .transpose()
+            {
                 Err(e) => Err(format!("invalid --services JSON: {e}").into()),
                 Ok(additional_services) => {
                     let req = vta_sdk::client::CreateDidWebvhRequest {
@@ -587,16 +588,12 @@ async fn main() {
                     };
                     webvh::cmd_webvh_did_create(&client, req).await
                 }
-            }
+            },
             WebvhCommands::ListDids { context, server } => {
                 webvh::cmd_webvh_did_list(&client, context.as_deref(), server.as_deref()).await
             }
-            WebvhCommands::GetDid { did } => {
-                webvh::cmd_webvh_did_get(&client, &did).await
-            }
-            WebvhCommands::DeleteDid { did } => {
-                webvh::cmd_webvh_did_delete(&client, &did).await
-            }
+            WebvhCommands::GetDid { did } => webvh::cmd_webvh_did_get(&client, &did).await,
+            WebvhCommands::DeleteDid { did } => webvh::cmd_webvh_did_delete(&client, &did).await,
         },
         Commands::Keys { command } => match command {
             KeyCommands::Create {
@@ -616,7 +613,9 @@ async fn main() {
                 )
                 .await
             }
-            KeyCommands::Get { key_id, secret } => keys::cmd_key_get(&client, &key_id, secret).await,
+            KeyCommands::Get { key_id, secret } => {
+                keys::cmd_key_get(&client, &key_id, secret).await
+            }
             KeyCommands::Revoke { key_id } => keys::cmd_key_revoke(&client, &key_id).await,
             KeyCommands::Rename { key_id, new_key_id } => {
                 keys::cmd_key_rename(&client, &key_id, &new_key_id).await
@@ -631,9 +630,7 @@ async fn main() {
                 keys::cmd_key_secrets(&client, key_ids, context).await
             }
             KeyCommands::Seeds => keys::cmd_seeds_list(&client).await,
-            KeyCommands::RotateSeed { mnemonic } => {
-                keys::cmd_seeds_rotate(&client, mnemonic).await
-            }
+            KeyCommands::RotateSeed { mnemonic } => keys::cmd_seeds_rotate(&client, mnemonic).await,
         },
     };
 
@@ -715,19 +712,13 @@ async fn cmd_health(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>
                             );
                         }
                         _ => {
-                            println!(
-                                "  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} valid",
-                                "Token"
-                            );
+                            println!("  {CYAN}{:<13}{RESET} {GREEN}✓{RESET} valid", "Token");
                         }
                     }
                 }
             }
             Err(e) => {
-                println!(
-                    "  {CYAN}{:<13}{RESET} {RED}✗{RESET} {e}",
-                    "Token"
-                );
+                println!("  {CYAN}{:<13}{RESET} {RED}✗{RESET} {e}", "Token");
             }
         }
     } else {

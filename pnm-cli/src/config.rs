@@ -41,8 +41,8 @@ pub fn load_config() -> Result<PnmConfig, Box<dyn std::error::Error>> {
 /// Save config to `~/.config/pnm/config.toml`.
 pub fn save_config(config: &PnmConfig) -> Result<(), Box<dyn std::error::Error>> {
     let path = config_path()?;
-    let contents = toml::to_string_pretty(config)
-        .map_err(|e| format!("failed to serialize config: {e}"))?;
+    let contents =
+        toml::to_string_pretty(config).map_err(|e| format!("failed to serialize config: {e}"))?;
     std::fs::write(&path, contents)?;
     Ok(())
 }

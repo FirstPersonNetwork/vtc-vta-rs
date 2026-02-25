@@ -1,24 +1,18 @@
-use std::sync::Arc;
-
 use affinidi_tdk::didcomm::Message;
-use affinidi_tdk::messaging::ATM;
-use affinidi_tdk::messaging::profiles::ATMProfile;
 
 use vta_sdk::protocols::credential_management;
 
 use crate::acl::Role;
 use crate::messaging::DidcommState;
 use crate::messaging::auth::auth_from_message;
-use crate::messaging::response::send_response;
+use crate::messaging::response::DIDCommCtx;
 use crate::operations;
 
-type HandlerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+use super::HandlerResult;
 
 pub async fn handle_generate_credentials(
     state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
+    ctx: &DIDCommCtx<'_>,
     msg: &Message,
 ) -> HandlerResult {
     let auth = auth_from_message(msg, &state.acl_ks).await?;
@@ -39,10 +33,7 @@ pub async fn handle_generate_credentials(
     )
     .await?;
 
-    send_response(
-        atm,
-        profile,
-        vta_did,
+    ctx.send_response(
         &auth.did,
         credential_management::GENERATE_CREDENTIALS_RESULT,
         Some(&msg.id),

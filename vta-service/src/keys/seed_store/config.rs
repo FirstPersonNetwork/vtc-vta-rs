@@ -29,10 +29,7 @@ impl super::SeedStore for ConfigSeedStore {
         })
     }
 
-    fn set(
-        &self,
-        _seed: &[u8],
-    ) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
+    fn set(&self, _seed: &[u8]) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
         Box::pin(async {
             Err(AppError::SeedStore(
                 "config-seed backend is read-only at runtime; update [secrets] seed in config.toml"

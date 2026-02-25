@@ -75,14 +75,13 @@ impl DidSecretsBundle {
         let json_bytes = BASE64
             .decode(encoded)
             .map_err(|e| DidSecretsBundleError::Base64(e.to_string()))?;
-        serde_json::from_slice(&json_bytes)
-            .map_err(|e| DidSecretsBundleError::Json(e.to_string()))
+        serde_json::from_slice(&json_bytes).map_err(|e| DidSecretsBundleError::Json(e.to_string()))
     }
 
     /// Encode this bundle as a base64url-no-pad string.
     pub fn encode(&self) -> Result<String, DidSecretsBundleError> {
-        let json = serde_json::to_vec(self)
-            .map_err(|e| DidSecretsBundleError::Json(e.to_string()))?;
+        let json =
+            serde_json::to_vec(self).map_err(|e| DidSecretsBundleError::Json(e.to_string()))?;
         Ok(BASE64.encode(&json))
     }
 }

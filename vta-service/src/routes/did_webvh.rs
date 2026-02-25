@@ -54,9 +54,10 @@ pub async fn add_server_handler(
     State(state): State<AppState>,
     Json(req): Json<AddServerRequest>,
 ) -> Result<(StatusCode, Json<AddWebvhServerResultBody>), AppError> {
-    let did_resolver = state.did_resolver.as_ref().ok_or_else(|| {
-        AppError::Internal("DID resolver not available".into())
-    })?;
+    let did_resolver = state
+        .did_resolver
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("DID resolver not available".into()))?;
     let result = operations::did_webvh::add_webvh_server(
         &state.webvh_ks,
         &auth.0,
@@ -74,8 +75,7 @@ pub async fn list_servers_handler(
     auth: AuthClaims,
     State(state): State<AppState>,
 ) -> Result<Json<ListWebvhServersResultBody>, AppError> {
-    let result =
-        operations::did_webvh::list_webvh_servers(&state.webvh_ks, &auth, "rest").await?;
+    let result = operations::did_webvh::list_webvh_servers(&state.webvh_ks, &auth, "rest").await?;
     Ok(Json(result))
 }
 
@@ -128,9 +128,10 @@ pub async fn create_did_handler(
         additional_services: req.additional_services,
         pre_rotation_count: req.pre_rotation_count,
     };
-    let did_resolver = state.did_resolver.as_ref().ok_or_else(|| {
-        AppError::Internal("DID resolver not available".into())
-    })?;
+    let did_resolver = state
+        .did_resolver
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("DID resolver not available".into()))?;
     let result = operations::did_webvh::create_did_webvh(
         &state.keys_ks,
         &state.contexts_ks,
@@ -168,8 +169,7 @@ pub async fn get_did_handler(
     State(state): State<AppState>,
     Path(did): Path<String>,
 ) -> Result<Json<WebvhDidRecord>, AppError> {
-    let result =
-        operations::did_webvh::get_did_webvh(&state.webvh_ks, &auth, &did, "rest").await?;
+    let result = operations::did_webvh::get_did_webvh(&state.webvh_ks, &auth, &did, "rest").await?;
     Ok(Json(result))
 }
 
@@ -179,9 +179,10 @@ pub async fn delete_did_handler(
     Path(did): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let config = state.config.read().await;
-    let did_resolver = state.did_resolver.as_ref().ok_or_else(|| {
-        AppError::Internal("DID resolver not available".into())
-    })?;
+    let did_resolver = state
+        .did_resolver
+        .as_ref()
+        .ok_or_else(|| AppError::Internal("DID resolver not available".into()))?;
     operations::did_webvh::delete_did_webvh(
         &state.webvh_ks,
         &state.keys_ks,

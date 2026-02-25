@@ -4,10 +4,10 @@ mod aws;
 mod azure;
 #[cfg(feature = "config-secret")]
 mod config;
-#[cfg(feature = "keyring")]
-mod keyring;
 #[cfg(feature = "gcp-secrets")]
 mod gcp;
+#[cfg(feature = "keyring")]
+mod keyring;
 mod plaintext;
 
 #[cfg(feature = "aws-secrets")]
@@ -98,7 +98,9 @@ pub fn create_secret_store(config: &AppConfig) -> Result<Box<dyn SecretStore>, A
 
     #[allow(unreachable_code)]
     {
-        tracing::warn!("no secure secret store backend available — falling back to plaintext file storage");
+        tracing::warn!(
+            "no secure secret store backend available — falling back to plaintext file storage"
+        );
         let store = PlaintextSecretStore::new(&config.store.data_dir);
         Ok(Box::new(store))
     }

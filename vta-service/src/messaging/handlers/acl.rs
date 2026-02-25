@@ -1,24 +1,20 @@
-use std::sync::Arc;
-
 use affinidi_tdk::didcomm::Message;
-use affinidi_tdk::messaging::ATM;
-use affinidi_tdk::messaging::profiles::ATMProfile;
 
 use vta_sdk::protocols::acl_management;
 
 use crate::acl::Role;
 use crate::messaging::DidcommState;
 use crate::messaging::auth::auth_from_message;
-use crate::messaging::response::send_response;
+use crate::messaging::response::DIDCommCtx;
 use crate::operations;
 
-type HandlerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+use super::{HandlerResult, didcomm_handler};
+
+// create_acl and update_acl have custom Role::from_str logic, kept as manual handlers.
 
 pub async fn handle_create_acl(
     state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
+    ctx: &DIDCommCtx<'_>,
     msg: &Message,
 ) -> HandlerResult {
     let auth = auth_from_message(msg, &state.acl_ks).await?;
@@ -39,10 +35,7 @@ pub async fn handle_create_acl(
     )
     .await?;
 
-    send_response(
-        atm,
-        profile,
-        vta_did,
+    ctx.send_response(
         &auth.did,
         acl_management::CREATE_ACL_RESULT,
         Some(&msg.id),
@@ -51,70 +44,25 @@ pub async fn handle_create_acl(
     .await
 }
 
-pub async fn handle_get_acl(
-    state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
-    msg: &Message,
-) -> HandlerResult {
-    let auth = auth_from_message(msg, &state.acl_ks).await?;
-
-    let body: vta_sdk::protocols::acl_management::get::GetAclBody =
-        serde_json::from_value(msg.body.clone())?;
-
-    let result =
-        operations::acl::get_acl(&state.acl_ks, &auth, &body.did, "didcomm").await?;
-
-    send_response(
-        atm,
-        profile,
-        vta_did,
-        &auth.did,
-        acl_management::GET_ACL_RESULT,
-        Some(&msg.id),
-        &result,
+didcomm_handler!(handle_get_acl,
+    body: vta_sdk::protocols::acl_management::get::GetAclBody,
+    result: acl_management::GET_ACL_RESULT,
+    |state, auth, body| operations::acl::get_acl(
+        &state.acl_ks, &auth, &body.did, "didcomm",
     )
-    .await
-}
+);
 
-pub async fn handle_list_acl(
-    state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
-    msg: &Message,
-) -> HandlerResult {
-    let auth = auth_from_message(msg, &state.acl_ks).await?;
-
-    let body: vta_sdk::protocols::acl_management::list::ListAclBody =
-        serde_json::from_value(msg.body.clone())?;
-
-    let result = operations::acl::list_acl(
-        &state.acl_ks,
-        &auth,
-        body.context.as_deref(),
-        "didcomm",
+didcomm_handler!(handle_list_acl,
+    body: vta_sdk::protocols::acl_management::list::ListAclBody,
+    result: acl_management::LIST_ACL_RESULT,
+    |state, auth, body| operations::acl::list_acl(
+        &state.acl_ks, &auth, body.context.as_deref(), "didcomm",
     )
-    .await?;
-
-    send_response(
-        atm,
-        profile,
-        vta_did,
-        &auth.did,
-        acl_management::LIST_ACL_RESULT,
-        Some(&msg.id),
-        &result,
-    )
-    .await
-}
+);
 
 pub async fn handle_update_acl(
     state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
+    ctx: &DIDCommCtx<'_>,
     msg: &Message,
 ) -> HandlerResult {
     let auth = auth_from_message(msg, &state.acl_ks).await?;
@@ -140,10 +88,7 @@ pub async fn handle_update_acl(
     )
     .await?;
 
-    send_response(
-        atm,
-        profile,
-        vta_did,
+    ctx.send_response(
         &auth.did,
         acl_management::UPDATE_ACL_RESULT,
         Some(&msg.id),
@@ -152,29 +97,10 @@ pub async fn handle_update_acl(
     .await
 }
 
-pub async fn handle_delete_acl(
-    state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
-    msg: &Message,
-) -> HandlerResult {
-    let auth = auth_from_message(msg, &state.acl_ks).await?;
-
-    let body: vta_sdk::protocols::acl_management::delete::DeleteAclBody =
-        serde_json::from_value(msg.body.clone())?;
-
-    let result =
-        operations::acl::delete_acl(&state.acl_ks, &auth, &body.did, "didcomm").await?;
-
-    send_response(
-        atm,
-        profile,
-        vta_did,
-        &auth.did,
-        acl_management::DELETE_ACL_RESULT,
-        Some(&msg.id),
-        &result,
+didcomm_handler!(handle_delete_acl,
+    body: vta_sdk::protocols::acl_management::delete::DeleteAclBody,
+    result: acl_management::DELETE_ACL_RESULT,
+    |state, auth, body| operations::acl::delete_acl(
+        &state.acl_ks, &auth, &body.did, "didcomm",
     )
-    .await
-}
+);

@@ -1,5 +1,5 @@
-use crate::error::AppError;
 use crate::didcomm_bridge::DIDCommBridge;
+use crate::error::AppError;
 use crate::webvh_client::RequestUriResponse;
 
 // WebVH DIDComm protocol message types
@@ -22,11 +22,7 @@ pub struct WebvhDIDCommClient<'a> {
 }
 
 impl<'a> WebvhDIDCommClient<'a> {
-    pub fn new(
-        bridge: &'a DIDCommBridge,
-        vta_did: &'a str,
-        server_did: &'a str,
-    ) -> Self {
+    pub fn new(bridge: &'a DIDCommBridge, vta_did: &'a str, server_did: &'a str) -> Self {
         Self {
             bridge,
             vta_did,
@@ -35,10 +31,7 @@ impl<'a> WebvhDIDCommClient<'a> {
     }
 
     /// Request a URI allocation from the WebVH server.
-    pub async fn request_uri(
-        &self,
-        path: Option<&str>,
-    ) -> Result<RequestUriResponse, AppError> {
+    pub async fn request_uri(&self, path: Option<&str>) -> Result<RequestUriResponse, AppError> {
         let body = match path {
             Some(p) => serde_json::json!({ "path": p }),
             None => serde_json::json!({}),
@@ -57,17 +50,12 @@ impl<'a> WebvhDIDCommClient<'a> {
             )
             .await?;
 
-        serde_json::from_value(response.body).map_err(|e| {
-            AppError::Internal(format!("failed to parse did/offer response: {e}"))
-        })
+        serde_json::from_value(response.body)
+            .map_err(|e| AppError::Internal(format!("failed to parse did/offer response: {e}")))
     }
 
     /// Publish a DID log to the WebVH server.
-    pub async fn publish_did(
-        &self,
-        mnemonic: &str,
-        log_content: &str,
-    ) -> Result<(), AppError> {
+    pub async fn publish_did(&self, mnemonic: &str, log_content: &str) -> Result<(), AppError> {
         let body = serde_json::json!({
             "mnemonic": mnemonic,
             "did_log": log_content,

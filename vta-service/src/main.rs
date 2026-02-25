@@ -4,9 +4,9 @@ mod auth;
 mod config;
 mod contexts;
 mod did_key;
-pub(crate) mod didcomm_bridge;
 #[cfg(feature = "setup")]
 mod did_webvh;
+pub(crate) mod didcomm_bridge;
 mod error;
 mod import_did;
 mod keys;
@@ -22,9 +22,9 @@ mod setup;
 mod status;
 mod store;
 #[cfg(feature = "webvh")]
-mod webvh_client;
-#[cfg(feature = "webvh")]
 mod webvh_cli;
+#[cfg(feature = "webvh")]
+mod webvh_client;
 #[cfg(feature = "webvh")]
 mod webvh_didcomm;
 #[cfg(feature = "webvh")]
@@ -391,9 +391,7 @@ async fn main() {
                 WebvhCommands::AddServer { id, did, label } => {
                     webvh_cli::run_add_server(cli.config, id, did, label).await
                 }
-                WebvhCommands::ListServers => {
-                    webvh_cli::run_list_servers(cli.config).await
-                }
+                WebvhCommands::ListServers => webvh_cli::run_list_servers(cli.config).await,
                 WebvhCommands::UpdateServer { id, label } => {
                     webvh_cli::run_update_server(cli.config, id, label).await
                 }

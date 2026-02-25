@@ -1,11 +1,11 @@
 use dialoguer::{Input, Select};
 
 use crate::auth;
-use vta_sdk::client::{CreateContextRequest, GenerateCredentialsRequest, VtaClient};
 use crate::config::{
     CommunityConfig, PERSONAL_KEYRING_KEY, PersonalVtaConfig, community_keyring_key, load_config,
     save_config,
 };
+use vta_sdk::client::{CreateContextRequest, GenerateCredentialsRequest, VtaClient};
 
 /// Derive a URL-safe slug from a community name.
 ///
@@ -87,12 +87,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
 
     // Authenticate against personal VTA
     eprintln!();
-    auth::login(
-        &personal_credential,
-        &personal_url,
-        PERSONAL_KEYRING_KEY,
-    )
-    .await?;
+    auth::login(&personal_credential, &personal_url, PERSONAL_KEYRING_KEY).await?;
 
     config.personal_vta = Some(PersonalVtaConfig {
         url: personal_url.clone(),
@@ -138,8 +133,7 @@ pub async fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
 
             // Authenticate personal VTA client
             let mut personal_client = VtaClient::new(&personal_url);
-            let token =
-                auth::ensure_authenticated(&personal_url, PERSONAL_KEYRING_KEY).await?;
+            let token = auth::ensure_authenticated(&personal_url, PERSONAL_KEYRING_KEY).await?;
             personal_client.set_token(token);
 
             // Create context in personal VTA

@@ -20,10 +20,7 @@ pub fn router() -> Router<AppState> {
             "/auth/sessions",
             get(auth::session_list).delete(auth::revoke_sessions_by_did),
         )
-        .route(
-            "/auth/sessions/{session_id}",
-            delete(auth::revoke_session),
-        )
+        .route("/auth/sessions/{session_id}", delete(auth::revoke_session))
         .route(
             "/config",
             get(config::get_config).patch(config::update_config),

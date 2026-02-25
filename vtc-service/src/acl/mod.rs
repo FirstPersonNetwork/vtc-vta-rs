@@ -54,10 +54,7 @@ fn acl_key(did: &str) -> String {
 }
 
 /// Retrieve an ACL entry by DID.
-pub async fn get_acl_entry(
-    acl: &KeyspaceHandle,
-    did: &str,
-) -> Result<Option<AclEntry>, AppError> {
+pub async fn get_acl_entry(acl: &KeyspaceHandle, did: &str) -> Result<Option<AclEntry>, AppError> {
     acl.get(acl_key(did)).await
 }
 
@@ -88,9 +85,7 @@ pub async fn list_acl_entries(acl: &KeyspaceHandle) -> Result<Vec<AclEntry>, App
 pub async fn check_acl(acl: &KeyspaceHandle, did: &str) -> Result<Role, AppError> {
     match get_acl_entry(acl, did).await? {
         Some(entry) => Ok(entry.role),
-        None => Err(AppError::Forbidden(format!(
-            "DID not in ACL: {did}"
-        ))),
+        None => Err(AppError::Forbidden(format!("DID not in ACL: {did}"))),
     }
 }
 

@@ -79,8 +79,7 @@ pub async fn run_create_did_webvh(
     .concat();
 
     // Build base DID document using shared helper (without services)
-    let mut did_document =
-        ops::build_did_document(&did_id, &derived, &config, false, &None);
+    let mut did_document = ops::build_did_document(&did_id, &derived, &config, false, &None);
 
     // Interactive service endpoint selection
     if let Some(ref msg) = config.messaging {
@@ -172,7 +171,14 @@ pub async fn run_create_did_webvh(
     eprintln!("\x1b[1;32mCreated DID:\x1b[0m {final_did}");
 
     // Save key records now that we have the final DID
-    keys::save_entity_key_records(&final_did, &derived, &keys_ks, Some(&ctx.id), Some(active_seed_id)).await?;
+    keys::save_entity_key_records(
+        &final_did,
+        &derived,
+        &keys_ks,
+        Some(&ctx.id),
+        Some(active_seed_id),
+    )
+    .await?;
 
     // Save pre-rotation key records
     for (i, pk) in pre_rotation_keys.iter().enumerate() {

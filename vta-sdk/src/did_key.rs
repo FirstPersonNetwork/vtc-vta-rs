@@ -15,8 +15,7 @@ const ED25519_PRIV_CODEC: [u8; 2] = [0x80, 0x26];
 /// the `0x8026` ed25519-priv multicodec prefix (as produced by
 /// `Secret::get_private_keymultibase()`).
 pub fn decode_private_key_multibase(mb: &str) -> Result<[u8; 32], DidKeyError> {
-    let (_, raw) =
-        multibase::decode(mb).map_err(|e| DidKeyError::Multibase(e.to_string()))?;
+    let (_, raw) = multibase::decode(mb).map_err(|e| DidKeyError::Multibase(e.to_string()))?;
     let seed_bytes = if raw.len() == 34 && raw[..2] == ED25519_PRIV_CODEC {
         &raw[2..]
     } else {

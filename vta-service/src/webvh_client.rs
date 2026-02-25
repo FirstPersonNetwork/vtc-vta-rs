@@ -34,16 +34,11 @@ impl WebvhClient {
     }
 
     fn auth_header(&self) -> Option<String> {
-        self.access_token
-            .as_ref()
-            .map(|t| format!("Bearer {t}"))
+        self.access_token.as_ref().map(|t| format!("Bearer {t}"))
     }
 
     /// POST /api/dids — allocate URI (optional path).
-    pub async fn request_uri(
-        &self,
-        path: Option<&str>,
-    ) -> Result<RequestUriResponse, AppError> {
+    pub async fn request_uri(&self, path: Option<&str>) -> Result<RequestUriResponse, AppError> {
         let url = format!("{}/api/dids", self.server_url);
         info!(method = "POST", %url, "webvh: sending via rest");
         let mut req = self.http.post(&url);
@@ -61,10 +56,7 @@ impl WebvhClient {
             .map_err(|e| AppError::Internal(format!("webvh-server request failed: {e}")))?;
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp
-                .text()
-                .await
-                .unwrap_or_default();
+            let text = resp.text().await.unwrap_or_default();
             return Err(AppError::Internal(format!(
                 "webvh-server POST /api/dids failed ({status}): {text}"
             )));
@@ -76,11 +68,7 @@ impl WebvhClient {
     }
 
     /// PUT /api/dids/{mnemonic} — publish DID log.
-    pub async fn publish_did(
-        &self,
-        mnemonic: &str,
-        log_content: &str,
-    ) -> Result<(), AppError> {
+    pub async fn publish_did(&self, mnemonic: &str, log_content: &str) -> Result<(), AppError> {
         let url = format!("{}/api/dids/{mnemonic}", self.server_url);
         info!(method = "PUT", %url, "webvh: sending via rest");
         let mut req = self.http.put(&url);
@@ -95,10 +83,7 @@ impl WebvhClient {
             .map_err(|e| AppError::Internal(format!("webvh-server request failed: {e}")))?;
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp
-                .text()
-                .await
-                .unwrap_or_default();
+            let text = resp.text().await.unwrap_or_default();
             return Err(AppError::Internal(format!(
                 "webvh-server PUT /api/dids/{mnemonic} failed ({status}): {text}"
             )));
@@ -121,10 +106,7 @@ impl WebvhClient {
             .map_err(|e| AppError::Internal(format!("webvh-server request failed: {e}")))?;
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp
-                .text()
-                .await
-                .unwrap_or_default();
+            let text = resp.text().await.unwrap_or_default();
             return Err(AppError::Internal(format!(
                 "webvh-server DELETE /api/dids/{mnemonic} failed ({status}): {text}"
             )));
@@ -147,10 +129,7 @@ impl WebvhClient {
             .map_err(|e| AppError::Internal(format!("webvh-server request failed: {e}")))?;
         if !resp.status().is_success() {
             let status = resp.status();
-            let text = resp
-                .text()
-                .await
-                .unwrap_or_default();
+            let text = resp.text().await.unwrap_or_default();
             return Err(AppError::Internal(format!(
                 "webvh-server POST /api/dids/check failed ({status}): {text}"
             )));

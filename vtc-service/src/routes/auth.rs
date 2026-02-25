@@ -355,7 +355,9 @@ pub async fn generate_credentials(
         vta_did: vtc_did,
         vta_url: vtc_url,
     };
-    let credential = bundle.encode().map_err(|e| AppError::Internal(e.to_string()))?;
+    let credential = bundle
+        .encode()
+        .map_err(|e| AppError::Internal(e.to_string()))?;
 
     info!(did = %did, role = %req.role, caller = %entry.created_by, "credentials generated");
 

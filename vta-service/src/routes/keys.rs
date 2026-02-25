@@ -7,7 +7,9 @@ use vta_sdk::protocols::key_management::{
     create::CreateKeyResultBody, list::ListKeysResultBody, rename::RenameKeyResultBody,
     revoke::RevokeKeyResultBody, secret::GetKeySecretResultBody,
 };
-use vta_sdk::protocols::seed_management::{list::ListSeedsResultBody, rotate::RotateSeedResultBody};
+use vta_sdk::protocols::seed_management::{
+    list::ListSeedsResultBody, rotate::RotateSeedResultBody,
+};
 
 use crate::auth::{AdminAuth, AuthClaims};
 use crate::error::AppError;
@@ -56,9 +58,14 @@ pub async fn get_key_secret(
     State(state): State<AppState>,
     Path(key_id): Path<String>,
 ) -> Result<Json<GetKeySecretResultBody>, AppError> {
-    let result =
-        operations::keys::get_key_secret(&state.keys_ks, &state.seed_store, &auth.0, &key_id, "rest")
-            .await?;
+    let result = operations::keys::get_key_secret(
+        &state.keys_ks,
+        &state.seed_store,
+        &auth.0,
+        &key_id,
+        "rest",
+    )
+    .await?;
     Ok(Json(result))
 }
 
@@ -76,8 +83,7 @@ pub async fn invalidate_key(
     State(state): State<AppState>,
     Path(key_id): Path<String>,
 ) -> Result<Json<RevokeKeyResultBody>, AppError> {
-    let result =
-        operations::keys::revoke_key(&state.keys_ks, &auth.0, &key_id, "rest").await?;
+    let result = operations::keys::revoke_key(&state.keys_ks, &auth.0, &key_id, "rest").await?;
     Ok(Json(result))
 }
 
@@ -93,8 +99,7 @@ pub async fn rename_key(
     Json(req): Json<RenameKeyRequest>,
 ) -> Result<Json<RenameKeyResultBody>, AppError> {
     let result =
-        operations::keys::rename_key(&state.keys_ks, &auth.0, &key_id, &req.key_id, "rest")
-            .await?;
+        operations::keys::rename_key(&state.keys_ks, &auth.0, &key_id, &req.key_id, "rest").await?;
     Ok(Json(result))
 }
 
@@ -146,8 +151,12 @@ pub async fn rotate_seed(
     State(state): State<AppState>,
     Json(req): Json<RotateSeedRequest>,
 ) -> Result<Json<RotateSeedResultBody>, AppError> {
-    let result =
-        operations::seeds::rotate_seed(&state.keys_ks, &state.seed_store, req.mnemonic.as_deref(), "rest")
-            .await?;
+    let result = operations::seeds::rotate_seed(
+        &state.keys_ks,
+        &state.seed_store,
+        req.mnemonic.as_deref(),
+        "rest",
+    )
+    .await?;
     Ok(Json(result))
 }

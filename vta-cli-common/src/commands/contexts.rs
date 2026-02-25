@@ -102,7 +102,10 @@ pub async fn cmd_context_list(client: &VtaClient) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-pub async fn cmd_context_get(client: &VtaClient, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn cmd_context_get(
+    client: &VtaClient,
+    id: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
     let resp = client.get_context(id).await?;
     println!("ID:          {}", resp.id);
     println!("Name:        {}", resp.name);

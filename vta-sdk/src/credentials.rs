@@ -22,8 +22,7 @@ impl CredentialBundle {
         let json_bytes = BASE64
             .decode(encoded)
             .map_err(|e| CredentialBundleError::Base64(e.to_string()))?;
-        serde_json::from_slice(&json_bytes)
-            .map_err(|e| CredentialBundleError::Json(e.to_string()))
+        serde_json::from_slice(&json_bytes).map_err(|e| CredentialBundleError::Json(e.to_string()))
     }
 
     /// Encode this bundle as a base64url-no-pad string.

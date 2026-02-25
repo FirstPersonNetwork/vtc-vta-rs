@@ -252,9 +252,7 @@ async fn prompt_aws_secrets() -> Result<SecretsConfig, Box<dyn std::error::Error
 
 /// List secret names from AWS Secrets Manager (single page).
 #[cfg(feature = "aws-secrets")]
-async fn list_aws_secrets(
-    region: Option<&str>,
-) -> Result<Vec<String>, Box<dyn std::error::Error>> {
+async fn list_aws_secrets(region: Option<&str>) -> Result<Vec<String>, Box<dyn std::error::Error>> {
     let mut config_loader = aws_config::from_env();
     if let Some(region) = region {
         config_loader = config_loader.region(aws_config::Region::new(region.to_owned()));
@@ -333,12 +331,7 @@ async fn list_gcp_secrets(project: &str) -> Result<Vec<String>, Box<dyn std::err
     let names: Vec<String> = response
         .secrets
         .iter()
-        .map(|s| {
-            s.name
-                .strip_prefix(&prefix)
-                .unwrap_or(&s.name)
-                .to_owned()
-        })
+        .map(|s| s.name.strip_prefix(&prefix).unwrap_or(&s.name).to_owned())
         .collect();
     Ok(names)
 }
@@ -430,7 +423,11 @@ pub async fn run_setup_wizard(
 
         (public_url, host, port)
     } else {
-        (None, ServerConfig::default().host, ServerConfig::default().port)
+        (
+            None,
+            ServerConfig::default().host,
+            ServerConfig::default().port,
+        )
     };
 
     // 6. Log level
@@ -567,8 +564,14 @@ pub async fn run_setup_wizard(
     };
 
     // 13. VTA DID (after mediator so we can embed it as a service endpoint)
-    let vta_did =
-        create_vta_did(&seed, messaging.as_ref(), &public_url, &vta_ctx.base_path, &keys_ks).await?;
+    let vta_did = create_vta_did(
+        &seed,
+        messaging.as_ref(),
+        &public_url,
+        &vta_ctx.base_path,
+        &keys_ks,
+    )
+    .await?;
 
     // Update VTA context with the DID
     if let Some(ref did) = vta_did {
@@ -658,7 +661,11 @@ pub async fn run_setup_wizard(
         }
         #[cfg(feature = "azure-secrets")]
         if !_printed && let Some(ref url) = config.secrets.azure_vault_url {
-            let name = config.secrets.azure_secret_name.as_deref().unwrap_or("vta-master-seed");
+            let name = config
+                .secrets
+                .azure_secret_name
+                .as_deref()
+                .unwrap_or("vta-master-seed");
             eprintln!("  Seed backend: Azure Key Vault ({url}/{name})");
             _printed = true;
         }
@@ -925,12 +932,10 @@ async fn configure_messaging(
         }
         // Create new did:webvh — needs a mediator context
         1 => {
-            let mediator_url: String =
-                Input::new().with_prompt("Mediator URL").interact_text()?;
+            let mediator_url: String = Input::new().with_prompt("Mediator URL").interact_text()?;
 
             let mut med_ctx =
-                create_seed_context(contexts_ks, "mediator", "DIDComm Messaging Mediator")
-                    .await?;
+                create_seed_context(contexts_ks, "mediator", "DIDComm Messaging Mediator").await?;
 
             let mut derived = keys::derive_entity_keys(
                 seed,

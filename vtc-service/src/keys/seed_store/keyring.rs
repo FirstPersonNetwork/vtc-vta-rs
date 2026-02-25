@@ -47,7 +47,10 @@ impl super::SecretStore for KeyringSecretStore {
         })
     }
 
-    fn set(&self, secret: &[u8]) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
+    fn set(
+        &self,
+        secret: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
         let service = self.service.clone();
         let user = self.user.clone();
         let hex_secret = hex::encode(secret);

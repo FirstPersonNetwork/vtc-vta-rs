@@ -1,23 +1,17 @@
-use std::sync::Arc;
-
 use affinidi_tdk::didcomm::Message;
-use affinidi_tdk::messaging::ATM;
-use affinidi_tdk::messaging::profiles::ATMProfile;
 
 use vta_sdk::protocols::did_management;
 
 use crate::messaging::DidcommState;
 use crate::messaging::auth::auth_from_message;
-use crate::messaging::response::send_response;
+use crate::messaging::response::DIDCommCtx;
 use crate::operations;
 
-type HandlerResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
+use super::{HandlerResult, didcomm_handler};
 
 pub async fn handle_create_did_webvh(
     state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
+    ctx: &DIDCommCtx<'_>,
     msg: &Message,
 ) -> HandlerResult {
     let auth = auth_from_message(msg, &state.acl_ks).await?;
@@ -54,10 +48,7 @@ pub async fn handle_create_did_webvh(
     )
     .await?;
 
-    send_response(
-        atm,
-        profile,
-        vta_did,
+    ctx.send_response(
         &auth.did,
         did_management::CREATE_DID_WEBVH_RESULT,
         Some(&msg.id),
@@ -66,72 +57,25 @@ pub async fn handle_create_did_webvh(
     .await
 }
 
-pub async fn handle_get_did_webvh(
-    state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
-    msg: &Message,
-) -> HandlerResult {
-    let auth = auth_from_message(msg, &state.acl_ks).await?;
-
-    let body: vta_sdk::protocols::did_management::get::GetDidWebvhBody =
-        serde_json::from_value(msg.body.clone())?;
-
-    let result =
-        operations::did_webvh::get_did_webvh(&state.webvh_ks, &auth, &body.did, "didcomm")
-            .await?;
-
-    send_response(
-        atm,
-        profile,
-        vta_did,
-        &auth.did,
-        did_management::GET_DID_WEBVH_RESULT,
-        Some(&msg.id),
-        &result,
+didcomm_handler!(handle_get_did_webvh,
+    body: vta_sdk::protocols::did_management::get::GetDidWebvhBody,
+    result: did_management::GET_DID_WEBVH_RESULT,
+    |state, auth, body| operations::did_webvh::get_did_webvh(
+        &state.webvh_ks, &auth, &body.did, "didcomm",
     )
-    .await
-}
+);
 
-pub async fn handle_list_dids_webvh(
-    state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
-    msg: &Message,
-) -> HandlerResult {
-    let auth = auth_from_message(msg, &state.acl_ks).await?;
-
-    let body: vta_sdk::protocols::did_management::list::ListDidsWebvhBody =
-        serde_json::from_value(msg.body.clone())?;
-
-    let result = operations::did_webvh::list_dids_webvh(
-        &state.webvh_ks,
-        &auth,
-        body.context_id.as_deref(),
-        body.server_id.as_deref(),
-        "didcomm",
+didcomm_handler!(handle_list_dids_webvh,
+    body: vta_sdk::protocols::did_management::list::ListDidsWebvhBody,
+    result: did_management::LIST_DIDS_WEBVH_RESULT,
+    |state, auth, body| operations::did_webvh::list_dids_webvh(
+        &state.webvh_ks, &auth, body.context_id.as_deref(), body.server_id.as_deref(), "didcomm",
     )
-    .await?;
-
-    send_response(
-        atm,
-        profile,
-        vta_did,
-        &auth.did,
-        did_management::LIST_DIDS_WEBVH_RESULT,
-        Some(&msg.id),
-        &result,
-    )
-    .await
-}
+);
 
 pub async fn handle_delete_did_webvh(
     state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
+    ctx: &DIDCommCtx<'_>,
     msg: &Message,
 ) -> HandlerResult {
     let auth = auth_from_message(msg, &state.acl_ks).await?;
@@ -156,10 +100,7 @@ pub async fn handle_delete_did_webvh(
     )
     .await?;
 
-    send_response(
-        atm,
-        profile,
-        vta_did,
+    ctx.send_response(
         &auth.did,
         did_management::DELETE_DID_WEBVH_RESULT,
         Some(&msg.id),
@@ -170,9 +111,7 @@ pub async fn handle_delete_did_webvh(
 
 pub async fn handle_add_webvh_server(
     state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
+    ctx: &DIDCommCtx<'_>,
     msg: &Message,
 ) -> HandlerResult {
     let auth = auth_from_message(msg, &state.acl_ks).await?;
@@ -194,10 +133,7 @@ pub async fn handle_add_webvh_server(
     )
     .await?;
 
-    send_response(
-        atm,
-        profile,
-        vta_did,
+    ctx.send_response(
         &auth.did,
         did_management::ADD_WEBVH_SERVER_RESULT,
         Some(&msg.id),
@@ -206,87 +142,25 @@ pub async fn handle_add_webvh_server(
     .await
 }
 
-pub async fn handle_list_webvh_servers(
-    state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
-    msg: &Message,
-) -> HandlerResult {
-    let auth = auth_from_message(msg, &state.acl_ks).await?;
-
-    let result =
-        operations::did_webvh::list_webvh_servers(&state.webvh_ks, &auth, "didcomm").await?;
-
-    send_response(
-        atm,
-        profile,
-        vta_did,
-        &auth.did,
-        did_management::LIST_WEBVH_SERVERS_RESULT,
-        Some(&msg.id),
-        &result,
+didcomm_handler!(handle_list_webvh_servers,
+    result: did_management::LIST_WEBVH_SERVERS_RESULT,
+    |state, auth| operations::did_webvh::list_webvh_servers(
+        &state.webvh_ks, &auth, "didcomm",
     )
-    .await
-}
+);
 
-pub async fn handle_update_webvh_server(
-    state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
-    msg: &Message,
-) -> HandlerResult {
-    let auth = auth_from_message(msg, &state.acl_ks).await?;
-
-    let body: vta_sdk::protocols::did_management::servers::UpdateWebvhServerBody =
-        serde_json::from_value(msg.body.clone())?;
-
-    let result = operations::did_webvh::update_webvh_server(
-        &state.webvh_ks,
-        &auth,
-        &body.id,
-        body.label,
-        "didcomm",
+didcomm_handler!(handle_update_webvh_server,
+    body: vta_sdk::protocols::did_management::servers::UpdateWebvhServerBody,
+    result: did_management::UPDATE_WEBVH_SERVER_RESULT,
+    |state, auth, body| operations::did_webvh::update_webvh_server(
+        &state.webvh_ks, &auth, &body.id, body.label, "didcomm",
     )
-    .await?;
+);
 
-    send_response(
-        atm,
-        profile,
-        vta_did,
-        &auth.did,
-        did_management::UPDATE_WEBVH_SERVER_RESULT,
-        Some(&msg.id),
-        &result,
+didcomm_handler!(handle_remove_webvh_server,
+    body: vta_sdk::protocols::did_management::servers::RemoveWebvhServerBody,
+    result: did_management::REMOVE_WEBVH_SERVER_RESULT,
+    |state, auth, body| operations::did_webvh::remove_webvh_server(
+        &state.webvh_ks, &auth, &body.id, "didcomm",
     )
-    .await
-}
-
-pub async fn handle_remove_webvh_server(
-    state: &DidcommState,
-    atm: &ATM,
-    profile: &Arc<ATMProfile>,
-    vta_did: &str,
-    msg: &Message,
-) -> HandlerResult {
-    let auth = auth_from_message(msg, &state.acl_ks).await?;
-
-    let body: vta_sdk::protocols::did_management::servers::RemoveWebvhServerBody =
-        serde_json::from_value(msg.body.clone())?;
-
-    let result =
-        operations::did_webvh::remove_webvh_server(&state.webvh_ks, &auth, &body.id, "didcomm")
-            .await?;
-
-    send_response(
-        atm,
-        profile,
-        vta_did,
-        &auth.did,
-        did_management::REMOVE_WEBVH_SERVER_RESULT,
-        Some(&msg.id),
-        &result,
-    )
-    .await
-}
+);

@@ -1,21 +1,18 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
 
 use affinidi_tdk::common::TDKSharedState;
-use affinidi_tdk::didcomm::Message;
 use affinidi_tdk::messaging::ATM;
 use affinidi_tdk::messaging::config::ATMConfig;
 use affinidi_tdk::messaging::profiles::ATMProfile;
 use affinidi_tdk::messaging::transports::websockets::WebSocketResponses;
 use affinidi_tdk::secrets_resolver::SecretsResolver;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 use tracing::{debug, warn};
 
-const PROBLEM_REPORT_TYPE: &str = "https://didcomm.org/report-problem/2.0/problem-report";
-
-type PendingMap = Arc<std::sync::Mutex<HashMap<String, oneshot::Sender<Message>>>>;
+use crate::didcomm_transport::{PendingMap, send_and_wait_raw};
+use crate::protocols::PROBLEM_REPORT_TYPE;
 
 /// Client-side DIDComm session for request-response messaging via ATM.
 ///
@@ -104,81 +101,20 @@ impl DIDCommSession {
         expected_result_type: &str,
         timeout_secs: u64,
     ) -> Result<T, Box<dyn std::error::Error>> {
-        let msg_id = uuid::Uuid::new_v4().to_string();
-        let msg = Message::build(msg_id.clone(), msg_type.to_string(), body)
-            .from(self.client_did.clone())
-            .to(self.vta_did.clone())
-            .finalize();
-
-        // Register pending before sending
-        let (tx, rx) = oneshot::channel();
-        self.pending.lock().unwrap().insert(msg_id.clone(), tx);
-
-        // Pack encrypted
-        let (packed, _) = match self
-            .atm
-            .pack_encrypted(
-                &msg,
-                &self.vta_did,
-                Some(&self.client_did),
-                Some(&self.client_did),
-                None,
-            )
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                self.pending.lock().unwrap().remove(&msg_id);
-                return Err(format!("failed to pack message: {e}").into());
-            }
-        };
-
-        // Send via ATM
-        if let Err(e) = self
-            .atm
-            .send_message(&self.profile, &packed, &msg_id, false, false)
-            .await
-        {
-            self.pending.lock().unwrap().remove(&msg_id);
-            return Err(format!("failed to send message: {e}").into());
-        }
-
-        debug!(msg_type, msg_id, "sent via DIDComm");
-
-        // Wait for response with timeout
-        let response = tokio::time::timeout(Duration::from_secs(timeout_secs), rx)
-            .await
-            .map_err(|_| {
-                self.pending.lock().unwrap().remove(&msg_id);
-                "timeout waiting for DIDComm response"
-            })?
-            .map_err(|_| "pending request channel dropped")?;
-
-        // Check for problem report
-        if response.type_ == PROBLEM_REPORT_TYPE {
-            let code = response
-                .body
-                .get("code")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let comment = response
-                .body
-                .get("comment")
-                .and_then(|v| v.as_str())
-                .unwrap_or("no details provided");
-            return Err(format!("{code}: {comment}").into());
-        }
-
-        // Verify expected response type
-        if response.type_ != expected_result_type {
-            return Err(format!(
-                "unexpected response type: expected {expected_result_type}, got {}",
-                response.type_
-            )
-            .into());
-        }
-
-        debug!(response_type = %response.type_, "received DIDComm response");
+        let response = send_and_wait_raw(
+            &self.atm,
+            &self.profile,
+            &self.pending,
+            &self.client_did,
+            &self.vta_did,
+            msg_type,
+            body,
+            expected_result_type,
+            PROBLEM_REPORT_TYPE,
+            timeout_secs,
+        )
+        .await
+        .map_err(|e| -> Box<dyn std::error::Error> { e.into() })?;
 
         // Delete message from mediator (best-effort)
         if let Err(e) = self

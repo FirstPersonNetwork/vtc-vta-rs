@@ -30,8 +30,7 @@ pub async fn list_contexts_handler(
     auth: AuthClaims,
     State(state): State<AppState>,
 ) -> Result<Json<ListContextsResultBody>, AppError> {
-    let result =
-        operations::contexts::list_contexts(&state.contexts_ks, &auth, "rest").await?;
+    let result = operations::contexts::list_contexts(&state.contexts_ks, &auth, "rest").await?;
     Ok(Json(result))
 }
 

@@ -40,10 +40,7 @@ pub async fn list_servers(ks: &KeyspaceHandle) -> Result<Vec<WebvhServerRecord>,
     Ok(servers)
 }
 
-pub async fn get_did(
-    ks: &KeyspaceHandle,
-    did: &str,
-) -> Result<Option<WebvhDidRecord>, AppError> {
+pub async fn get_did(ks: &KeyspaceHandle, did: &str) -> Result<Option<WebvhDidRecord>, AppError> {
     ks.get(did_key(did)).await
 }
 
@@ -76,10 +73,9 @@ pub async fn store_did_log(
 
 pub async fn get_did_log(ks: &KeyspaceHandle, did: &str) -> Result<Option<String>, AppError> {
     match ks.get_raw(log_key(did)).await? {
-        Some(bytes) => Ok(Some(
-            String::from_utf8(bytes)
-                .map_err(|e| AppError::Internal(format!("invalid UTF-8 in DID log: {e}")))?,
-        )),
+        Some(bytes) => Ok(Some(String::from_utf8(bytes).map_err(|e| {
+            AppError::Internal(format!("invalid UTF-8 in DID log: {e}"))
+        })?)),
         None => Ok(None),
     }
 }

@@ -11,10 +11,7 @@ pub fn path_at(base: &str, index: u32) -> String {
 ///
 /// Reads the current counter for `base` from the keys keyspace,
 /// constructs `{base}/{N}'`, increments the counter, and returns the path.
-pub async fn allocate_path(
-    keys_ks: &KeyspaceHandle,
-    base: &str,
-) -> Result<String, AppError> {
+pub async fn allocate_path(keys_ks: &KeyspaceHandle, base: &str) -> Result<String, AppError> {
     let counter_key = format!("path_counter:{base}");
     let current: u32 = match keys_ks.get_raw(counter_key.as_str()).await? {
         Some(bytes) => {

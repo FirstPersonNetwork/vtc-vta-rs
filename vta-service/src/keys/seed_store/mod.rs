@@ -4,10 +4,10 @@ mod aws;
 mod azure;
 #[cfg(feature = "config-seed")]
 mod config;
-#[cfg(feature = "keyring")]
-mod keyring;
 #[cfg(feature = "gcp-secrets")]
 mod gcp;
+#[cfg(feature = "keyring")]
+mod keyring;
 mod plaintext;
 
 #[cfg(feature = "aws-secrets")]
@@ -92,7 +92,9 @@ pub fn create_seed_store(config: &AppConfig) -> Result<Box<dyn SeedStore>, AppEr
 
     #[allow(unreachable_code)]
     {
-        tracing::warn!("no secure seed store backend available — falling back to plaintext file storage");
+        tracing::warn!(
+            "no secure seed store backend available — falling back to plaintext file storage"
+        );
         let store = PlaintextSeedStore::new(&config.store.data_dir);
         Ok(Box::new(store))
     }

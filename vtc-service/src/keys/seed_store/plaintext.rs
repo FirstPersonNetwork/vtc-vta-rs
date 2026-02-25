@@ -46,7 +46,10 @@ impl super::SecretStore for PlaintextSecretStore {
         })
     }
 
-    fn set(&self, secret: &[u8]) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
+    fn set(
+        &self,
+        secret: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
         let hex_val = hex::encode(secret);
         Box::pin(async move {
             warn!(
@@ -55,7 +58,9 @@ impl super::SecretStore for PlaintextSecretStore {
             );
             if let Some(parent) = self.path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
-                    AppError::SecretStore(format!("failed to create directory for plaintext secret: {e}"))
+                    AppError::SecretStore(format!(
+                        "failed to create directory for plaintext secret: {e}"
+                    ))
                 })?;
             }
             std::fs::write(&self.path, hex_val).map_err(|e| {

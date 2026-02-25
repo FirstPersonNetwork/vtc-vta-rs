@@ -146,8 +146,8 @@ pub async fn rotate_seed(
 
     // Generate or derive the new seed
     let new_seed: Vec<u8> = if let Some(phrase) = mnemonic {
-        let m = bip39::Mnemonic::parse(phrase)
-            .map_err(|e| format!("invalid BIP-39 mnemonic: {e}"))?;
+        let m =
+            bip39::Mnemonic::parse(phrase).map_err(|e| format!("invalid BIP-39 mnemonic: {e}"))?;
         m.to_seed("").to_vec()
     } else {
         let mut buf = [0u8; 32];

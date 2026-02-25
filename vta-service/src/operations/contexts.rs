@@ -2,8 +2,7 @@ use chrono::Utc;
 use tracing::info;
 
 use vta_sdk::protocols::context_management::{
-    create::CreateContextResultBody, delete::DeleteContextResultBody,
-    list::ListContextsResultBody,
+    create::CreateContextResultBody, delete::DeleteContextResultBody, list::ListContextsResultBody,
 };
 
 use crate::auth::extractor::AuthClaims;
@@ -69,9 +68,7 @@ pub async fn create_context(
     validate_slug(id)?;
 
     if get_context(contexts_ks, id).await?.is_some() {
-        return Err(AppError::Conflict(format!(
-            "context already exists: {id}"
-        )));
+        return Err(AppError::Conflict(format!("context already exists: {id}")));
     }
 
     let (index, base_path) = allocate_context_index(contexts_ks).await?;

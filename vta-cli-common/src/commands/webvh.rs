@@ -26,9 +26,7 @@ pub async fn cmd_webvh_server_add(
     Ok(())
 }
 
-pub async fn cmd_webvh_server_list(
-    client: &VtaClient,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn cmd_webvh_server_list(client: &VtaClient) -> Result<(), Box<dyn std::error::Error>> {
     let resp = client.list_webvh_servers().await?;
 
     if resp.servers.is_empty() {
@@ -65,8 +63,8 @@ pub async fn cmd_webvh_server_list(
         rows,
         [
             Constraint::Length(16), // ID
-            Constraint::Min(40),   // DID
-            Constraint::Min(16),   // Label
+            Constraint::Min(40),    // DID
+            Constraint::Min(16),    // Label
             Constraint::Length(18), // Created
         ],
     )
@@ -170,7 +168,7 @@ pub async fn cmd_webvh_did_list(
     let table = Table::new(
         rows,
         [
-            Constraint::Min(40),   // DID
+            Constraint::Min(40),    // DID
             Constraint::Length(16), // Context
             Constraint::Length(16), // Server
             Constraint::Length(10), // Portable
@@ -204,8 +202,14 @@ pub async fn cmd_webvh_did_get(
     println!("  SCID:            {}", record.scid);
     println!("  Portable:        {}", record.portable);
     println!("  Log entries:     {}", record.log_entry_count);
-    println!("  Created:         {}", record.created_at.format("%Y-%m-%d %H:%M:%S UTC"));
-    println!("  Updated:         {}", record.updated_at.format("%Y-%m-%d %H:%M:%S UTC"));
+    println!(
+        "  Created:         {}",
+        record.created_at.format("%Y-%m-%d %H:%M:%S UTC")
+    );
+    println!(
+        "  Updated:         {}",
+        record.updated_at.format("%Y-%m-%d %H:%M:%S UTC")
+    );
     Ok(())
 }
 

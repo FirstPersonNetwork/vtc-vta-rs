@@ -41,13 +41,16 @@ impl super::SecretStore for AzureSecretStore {
 
             match result {
                 Ok(response) => {
-                    let secret = response.into_model()
+                    let secret = response
+                        .into_model()
                         .map_err(|e| AppError::SecretStore(format!("Azure response error: {e}")))?;
                     let hex_val = secret.value.ok_or_else(|| {
                         AppError::SecretStore("Azure secret exists but has no value".into())
                     })?;
                     let bytes = hex::decode(&hex_val).map_err(|e| {
-                        AppError::SecretStore(format!("failed to decode hex secret from Azure: {e}"))
+                        AppError::SecretStore(format!(
+                            "failed to decode hex secret from Azure: {e}"
+                        ))
                     })?;
                     debug!(secret_name = %self.secret_name, "secret loaded from Azure Key Vault");
                     Ok(Some(bytes))
@@ -58,16 +61,17 @@ impl super::SecretStore for AzureSecretStore {
                         debug!(secret_name = %self.secret_name, "secret not found in Azure Key Vault");
                         Ok(None)
                     } else {
-                        Err(AppError::SecretStore(format!(
-                            "Azure Key Vault error: {e}"
-                        )))
+                        Err(AppError::SecretStore(format!("Azure Key Vault error: {e}")))
                     }
                 }
             }
         })
     }
 
-    fn set(&self, secret: &[u8]) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
+    fn set(
+        &self,
+        secret: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
         let hex_val = hex::encode(secret);
         Box::pin(async move {
             let client = self.client()?;
@@ -77,14 +81,15 @@ impl super::SecretStore for AzureSecretStore {
                 value: Some(hex_val),
                 ..Default::default()
             };
-            let body = params.try_into()
-                .map_err(|e| {
-                    AppError::SecretStore(format!("Azure request error: {e}"))
-                })?;
+            let body = params
+                .try_into()
+                .map_err(|e| AppError::SecretStore(format!("Azure request error: {e}")))?;
             client
                 .set_secret(&self.secret_name, body, None)
                 .await
-                .map_err(|e| AppError::SecretStore(format!("failed to store secret in Azure Key Vault: {e}")))?;
+                .map_err(|e| {
+                    AppError::SecretStore(format!("failed to store secret in Azure Key Vault: {e}"))
+                })?;
 
             debug!(secret_name = %self.secret_name, "secret stored in Azure Key Vault");
             Ok(())

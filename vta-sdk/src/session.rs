@@ -69,13 +69,21 @@ pub struct TokenResult {
 pub struct SessionStore {
     #[cfg(feature = "keyring")]
     service_name: String,
-    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
+    #[cfg(all(
+        feature = "config-session",
+        not(feature = "keyring"),
+        not(feature = "azure-secrets")
+    ))]
     sessions_dir: PathBuf,
     #[cfg(all(feature = "azure-secrets", not(feature = "keyring")))]
     azure_vault_url: String,
     #[cfg(all(feature = "azure-secrets", not(feature = "keyring")))]
     azure_secret_prefix: String,
-    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
+    #[cfg(not(any(
+        feature = "keyring",
+        feature = "config-session",
+        feature = "azure-secrets"
+    )))]
     sessions_dir: PathBuf,
 }
 
@@ -92,14 +100,21 @@ impl SessionStore {
         Self {
             #[cfg(feature = "keyring")]
             service_name: service_name.to_string(),
-            #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
+            #[cfg(all(
+                feature = "config-session",
+                not(feature = "keyring"),
+                not(feature = "azure-secrets")
+            ))]
             sessions_dir,
             #[cfg(all(feature = "azure-secrets", not(feature = "keyring")))]
-            azure_vault_url: std::env::var("AZURE_KEYVAULT_URL")
-                .unwrap_or_default(),
+            azure_vault_url: std::env::var("AZURE_KEYVAULT_URL").unwrap_or_default(),
             #[cfg(all(feature = "azure-secrets", not(feature = "keyring")))]
             azure_secret_prefix: service_name.to_string(),
-            #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
+            #[cfg(not(any(
+                feature = "keyring",
+                feature = "config-session",
+                feature = "azure-secrets"
+            )))]
             sessions_dir,
         }
     }
@@ -138,12 +153,20 @@ impl SessionStore {
         }
     }
 
-    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
+    #[cfg(all(
+        feature = "config-session",
+        not(feature = "keyring"),
+        not(feature = "azure-secrets")
+    ))]
     fn sessions_path(&self) -> PathBuf {
         self.sessions_dir.join("sessions.json")
     }
 
-    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
+    #[cfg(all(
+        feature = "config-session",
+        not(feature = "keyring"),
+        not(feature = "azure-secrets")
+    ))]
     fn load_sessions_map(&self) -> std::collections::HashMap<String, Session> {
         let path = self.sessions_path();
         let data = match std::fs::read_to_string(&path) {
@@ -153,7 +176,11 @@ impl SessionStore {
         serde_json::from_str(&data).unwrap_or_default()
     }
 
-    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
+    #[cfg(all(
+        feature = "config-session",
+        not(feature = "keyring"),
+        not(feature = "azure-secrets")
+    ))]
     fn save_sessions_map(
         &self,
         map: &std::collections::HashMap<String, Session>,
@@ -164,19 +191,31 @@ impl SessionStore {
         Ok(())
     }
 
-    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
+    #[cfg(all(
+        feature = "config-session",
+        not(feature = "keyring"),
+        not(feature = "azure-secrets")
+    ))]
     fn load(&self, key: &str) -> Option<Session> {
         self.load_sessions_map().get(key).cloned()
     }
 
-    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
+    #[cfg(all(
+        feature = "config-session",
+        not(feature = "keyring"),
+        not(feature = "azure-secrets")
+    ))]
     fn save(&self, key: &str, session: &Session) -> Result<(), Box<dyn std::error::Error>> {
         let mut map = self.load_sessions_map();
         map.insert(key.to_string(), session.clone());
         self.save_sessions_map(&map)
     }
 
-    #[cfg(all(feature = "config-session", not(feature = "keyring"), not(feature = "azure-secrets")))]
+    #[cfg(all(
+        feature = "config-session",
+        not(feature = "keyring"),
+        not(feature = "azure-secrets")
+    ))]
     fn clear(&self, key: &str) {
         let mut map = self.load_sessions_map();
         map.remove(key);
@@ -199,9 +238,8 @@ impl SessionStore {
         let client = SecretClient::new(&self.azure_vault_url, credential, None).ok()?;
         let secret_name = self.azure_secret_name(key);
 
-        let result = tokio::runtime::Handle::current().block_on(async {
-            client.get_secret(&secret_name, None).await
-        });
+        let result = tokio::runtime::Handle::current()
+            .block_on(async { client.get_secret(&secret_name, None).await });
 
         match result {
             Ok(response) => {
@@ -231,7 +269,8 @@ impl SessionStore {
         };
 
         tokio::runtime::Handle::current().block_on(async {
-            let body = params.try_into()
+            let body = params
+                .try_into()
                 .map_err(|e| format!("Azure request error: {e}"))?;
             client
                 .set_secret(&secret_name, body, None)
@@ -247,23 +286,34 @@ impl SessionStore {
         use azure_identity::DeveloperToolsCredential;
         use azure_security_keyvault_secrets::SecretClient;
 
-        let Ok(credential) = DeveloperToolsCredential::new(None) else { return };
-        let Ok(client) = SecretClient::new(&self.azure_vault_url, credential, None) else { return };
+        let Ok(credential) = DeveloperToolsCredential::new(None) else {
+            return;
+        };
+        let Ok(client) = SecretClient::new(&self.azure_vault_url, credential, None) else {
+            return;
+        };
         let secret_name = self.azure_secret_name(key);
 
-        let _ = tokio::runtime::Handle::current().block_on(async {
-            client.delete_secret(&secret_name, None).await
-        });
+        let _ = tokio::runtime::Handle::current()
+            .block_on(async { client.delete_secret(&secret_name, None).await });
     }
 
     // ── Plaintext fallback backend ──────────────────────────────────
 
-    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
+    #[cfg(not(any(
+        feature = "keyring",
+        feature = "config-session",
+        feature = "azure-secrets"
+    )))]
     fn sessions_path(&self) -> PathBuf {
         self.sessions_dir.join("sessions.json")
     }
 
-    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
+    #[cfg(not(any(
+        feature = "keyring",
+        feature = "config-session",
+        feature = "azure-secrets"
+    )))]
     fn load_sessions_map(&self) -> std::collections::HashMap<String, Session> {
         let path = self.sessions_path();
         let data = match std::fs::read_to_string(&path) {
@@ -273,7 +323,11 @@ impl SessionStore {
         serde_json::from_str(&data).unwrap_or_default()
     }
 
-    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
+    #[cfg(not(any(
+        feature = "keyring",
+        feature = "config-session",
+        feature = "azure-secrets"
+    )))]
     fn save_sessions_map(
         &self,
         map: &std::collections::HashMap<String, Session>,
@@ -284,13 +338,21 @@ impl SessionStore {
         Ok(())
     }
 
-    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
+    #[cfg(not(any(
+        feature = "keyring",
+        feature = "config-session",
+        feature = "azure-secrets"
+    )))]
     fn load(&self, key: &str) -> Option<Session> {
         eprintln!("WARNING: No secure session store — using plaintext file storage");
         self.load_sessions_map().get(key).cloned()
     }
 
-    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
+    #[cfg(not(any(
+        feature = "keyring",
+        feature = "config-session",
+        feature = "azure-secrets"
+    )))]
     fn save(&self, key: &str, session: &Session) -> Result<(), Box<dyn std::error::Error>> {
         eprintln!("WARNING: No secure session store — using plaintext file storage");
         if let Some(parent) = self.sessions_dir.parent() {
@@ -302,7 +364,11 @@ impl SessionStore {
         self.save_sessions_map(&map)
     }
 
-    #[cfg(not(any(feature = "keyring", feature = "config-session", feature = "azure-secrets")))]
+    #[cfg(not(any(
+        feature = "keyring",
+        feature = "config-session",
+        feature = "azure-secrets"
+    )))]
     fn clear(&self, key: &str) {
         let mut map = self.load_sessions_map();
         map.remove(key);
@@ -448,8 +514,7 @@ impl SessionStore {
         );
 
         // Check cached token
-        if let (Some(token), Some(expires_at)) =
-            (&session.access_token, session.access_expires_at)
+        if let (Some(token), Some(expires_at)) = (&session.access_token, session.access_expires_at)
             && now_epoch() + 30 < expires_at
         {
             debug!(expires_in = expires_at - now_epoch(), "using cached token");
@@ -541,9 +606,7 @@ pub async fn challenge_response(
 ) -> Result<TokenResult, Box<dyn std::error::Error>> {
     debug!(
         base_url,
-        client_did,
-        vta_did,
-        "starting challenge-response auth"
+        client_did, vta_did, "starting challenge-response auth"
     );
     let http = reqwest::Client::new();
 
@@ -565,10 +628,13 @@ pub async fn challenge_response(
         return Err(format!("challenge request failed ({status}): {body}").into());
     }
 
-    let challenge_text = challenge_resp.text().await
+    let challenge_text = challenge_resp
+        .text()
+        .await
         .map_err(|e| format!("failed to read challenge response from VTA: {e}"))?;
-    let challenge: ChallengeResponse = serde_json::from_str(&challenge_text)
-        .map_err(|e| format!("unexpected response from VTA at {challenge_url} (is this a VTA server?): {e}"))?;
+    let challenge: ChallengeResponse = serde_json::from_str(&challenge_text).map_err(|e| {
+        format!("unexpected response from VTA at {challenge_url} (is this a VTA server?): {e}")
+    })?;
     debug!(
         session_id = %challenge.session_id,
         challenge = %challenge.data.challenge,
@@ -650,10 +716,13 @@ pub async fn challenge_response(
         return Err(format!("authentication failed ({status}): {body}").into());
     }
 
-    let auth_text = auth_resp.text().await
+    let auth_text = auth_resp
+        .text()
+        .await
         .map_err(|e| format!("failed to read auth response from VTA: {e}"))?;
-    let auth_data: AuthenticateResponse = serde_json::from_str(&auth_text)
-        .map_err(|e| format!("unexpected response from VTA at {auth_url} (is this a VTA server?): {e}"))?;
+    let auth_data: AuthenticateResponse = serde_json::from_str(&auth_text).map_err(|e| {
+        format!("unexpected response from VTA at {auth_url} (is this a VTA server?): {e}")
+    })?;
     debug!(
         expires_at = auth_data.data.access_expires_at,
         "authentication successful"
@@ -828,7 +897,14 @@ pub async fn send_trust_ping(
 
     let start = Instant::now();
     TrustPing::default()
-        .send_ping(&atm, &profile, target_did.unwrap_or(mediator_did), true, true, true)
+        .send_ping(
+            &atm,
+            &profile,
+            target_did.unwrap_or(mediator_did),
+            true,
+            true,
+            true,
+        )
         .await?;
     let elapsed = start.elapsed().as_millis();
 

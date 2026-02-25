@@ -40,8 +40,7 @@ pub async fn run(
     let acl_ks = store.keyspace("acl")?;
 
     // Initialize auth infrastructure
-    let (did_resolver, secrets_resolver, jwt_keys) =
-        init_auth(&config, &*secret_store).await;
+    let (did_resolver, secrets_resolver, jwt_keys) = init_auth(&config, &*secret_store).await;
 
     // Bind TCP listener on the main thread for early port validation
     let addr = format!("{}:{}", config.server.host, config.server.port);

@@ -149,8 +149,7 @@ pub async fn derive_entity_keys(
                 .map_err(|e| format!("Invalid derivation path: {e}"))?,
         )
         .map_err(|e| format!("Key derivation failed: {e}"))?;
-    let signing_priv =
-        multibase::encode(Base::Base58Btc, signing_derived.signing_key.as_bytes());
+    let signing_priv = multibase::encode(Base::Base58Btc, signing_derived.signing_key.as_bytes());
     let signing_secret =
         Secret::generate_ed25519(None, Some(signing_derived.signing_key.as_bytes()));
     let signing_pub = signing_secret
@@ -165,8 +164,7 @@ pub async fn derive_entity_keys(
                 .map_err(|e| format!("Invalid derivation path: {e}"))?,
         )
         .map_err(|e| format!("Key derivation failed: {e}"))?;
-    let ka_priv =
-        multibase::encode(Base::Base58Btc, ka_derived.signing_key.as_bytes());
+    let ka_priv = multibase::encode(Base::Base58Btc, ka_derived.signing_key.as_bytes());
     let ka_secret = Secret::generate_ed25519(None, Some(ka_derived.signing_key.as_bytes()));
     let ka_secret = ka_secret
         .to_x25519()

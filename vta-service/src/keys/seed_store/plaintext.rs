@@ -55,7 +55,9 @@ impl super::SeedStore for PlaintextSeedStore {
             );
             if let Some(parent) = self.path.parent() {
                 std::fs::create_dir_all(parent).map_err(|e| {
-                    AppError::SeedStore(format!("failed to create directory for plaintext seed: {e}"))
+                    AppError::SeedStore(format!(
+                        "failed to create directory for plaintext seed: {e}"
+                    ))
                 })?;
             }
             std::fs::write(&self.path, hex_seed).map_err(|e| {

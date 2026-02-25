@@ -222,8 +222,7 @@ async fn main() {
             init_tracing(&config);
 
             let store = store::Store::open(&config.store).expect("failed to open store");
-            let secret_store =
-                create_secret_store(&config).expect("failed to create secret store");
+            let secret_store = create_secret_store(&config).expect("failed to create secret store");
 
             if let Err(e) = server::run(config, store, secret_store).await {
                 tracing::error!("server error: {e}");

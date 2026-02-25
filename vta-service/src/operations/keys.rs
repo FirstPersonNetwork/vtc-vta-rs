@@ -93,9 +93,7 @@ pub async fn create_key(
     };
 
     let now = Utc::now();
-    let key_id = params
-        .key_id
-        .unwrap_or_else(|| derivation_path.clone());
+    let key_id = params.key_id.unwrap_or_else(|| derivation_path.clone());
     let public_key = secret.get_public_keymultibase()?;
 
     let record = KeyRecord {

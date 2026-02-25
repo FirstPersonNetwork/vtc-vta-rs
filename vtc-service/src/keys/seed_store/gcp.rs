@@ -79,7 +79,10 @@ impl super::SecretStore for GcpSecretStore {
         })
     }
 
-    fn set(&self, secret: &[u8]) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
+    fn set(
+        &self,
+        secret: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
         let hex_val = hex::encode(secret);
         Box::pin(async move {
             let client = self.client().await?;

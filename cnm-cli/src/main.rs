@@ -3,8 +3,8 @@ mod config;
 mod setup;
 
 use clap::{Parser, Subcommand};
-use vta_sdk::client::VtaClient;
 use config::{community_keyring_key, resolve_community};
+use vta_sdk::client::VtaClient;
 
 use vta_cli_common::commands::{acl, config as config_cmd, contexts, credentials, keys};
 use vta_cli_common::render::{CYAN, DIM, GREEN, RED, RESET, YELLOW, print_section};
@@ -397,56 +397,56 @@ async fn main() {
 
     // Resolve community URL and keyring key for commands that need a VTA connection.
     // Setup and Community commands handle their own URL resolution.
-    let (url, keyring_key): (String, String) = if requires_auth(&cli.command)
-        || matches!(cli.command, Commands::Auth { .. })
-    {
-        // Auth-required and Auth commands always need a community
-        match resolve_community(cli.community.as_deref(), &cnm_config) {
-            Ok((slug, community)) => {
-                let url = cli.url.unwrap_or_else(|| community.url.clone());
-                let key = community_keyring_key(&slug);
-                (url, key)
+    let (url, keyring_key): (String, String) =
+        if requires_auth(&cli.command) || matches!(cli.command, Commands::Auth { .. }) {
+            // Auth-required and Auth commands always need a community
+            match resolve_community(cli.community.as_deref(), &cnm_config) {
+                Ok((slug, community)) => {
+                    let url = cli.url.unwrap_or_else(|| community.url.clone());
+                    let key = community_keyring_key(&slug);
+                    (url, key)
+                }
+                Err(e) => {
+                    eprintln!("Error: {e}");
+                    std::process::exit(1);
+                }
             }
-            Err(e) => {
-                eprintln!("Error: {e}");
-                std::process::exit(1);
+        } else if matches!(cli.command, Commands::Health) {
+            // Health: use community if available, otherwise require --url
+            match resolve_community(cli.community.as_deref(), &cnm_config) {
+                Ok((slug, community)) => {
+                    let url = cli.url.unwrap_or_else(|| community.url.clone());
+                    let key = community_keyring_key(&slug);
+                    (url, key)
+                }
+                Err(_) => {
+                    let url = match cli.url {
+                        Some(url) => url,
+                        None => {
+                            eprintln!("Error: no community configured and no --url provided.\n");
+                            eprintln!(
+                                "Either configure a community with `cnm setup`, or provide a URL:"
+                            );
+                            eprintln!("  cnm health --url http://localhost:8100");
+                            std::process::exit(1);
+                        }
+                    };
+                    (url, String::new())
+                }
             }
-        }
-    } else if matches!(cli.command, Commands::Health) {
-        // Health: use community if available, otherwise require --url
-        match resolve_community(cli.community.as_deref(), &cnm_config) {
-            Ok((slug, community)) => {
-                let url = cli.url.unwrap_or_else(|| community.url.clone());
-                let key = community_keyring_key(&slug);
-                (url, key)
-            }
-            Err(_) => {
-                let url = match cli.url {
-                    Some(url) => url,
-                    None => {
-                        eprintln!("Error: no community configured and no --url provided.\n");
-                        eprintln!("Either configure a community with `cnm setup`, or provide a URL:");
-                        eprintln!("  cnm health --url http://localhost:8100");
-                        std::process::exit(1);
-                    }
-                };
-                (url, String::new())
-            }
-        }
-    } else {
-        // Setup/Community commands don't need a pre-resolved URL
-        let url = cli
-            .url
-            .unwrap_or_else(|| "http://localhost:8100".to_string());
-        (url, String::new())
-    };
+        } else {
+            // Setup/Community commands don't need a pre-resolved URL
+            let url = cli
+                .url
+                .unwrap_or_else(|| "http://localhost:8100".to_string());
+            (url, String::new())
+        };
 
     // Build client: DIDComm-preferred for authenticated commands, REST for others
     let client = if requires_auth(&cli.command) {
         // Bootstrap session from personal VTA if needed
         if auth::loaded_session(&keyring_key).is_none() {
-            if let Ok((slug, community)) =
-                resolve_community(cli.community.as_deref(), &cnm_config)
+            if let Ok((slug, community)) = resolve_community(cli.community.as_deref(), &cnm_config)
                 && community.context_id.is_some()
                 && let Some(ref personal) = cnm_config.personal_vta
             {
@@ -529,7 +529,9 @@ async fn main() {
                 name,
                 description,
                 admin_label,
-            } => contexts::cmd_context_bootstrap(&client, &id, &name, description, admin_label).await,
+            } => {
+                contexts::cmd_context_bootstrap(&client, &id, &name, description, admin_label).await
+            }
         },
         Commands::Acl { command } => match command {
             AclCommands::List { context } => acl::cmd_acl_list(&client, context.as_deref()).await,
@@ -573,7 +575,9 @@ async fn main() {
                 )
                 .await
             }
-            KeyCommands::Get { key_id, secret } => keys::cmd_key_get(&client, &key_id, secret).await,
+            KeyCommands::Get { key_id, secret } => {
+                keys::cmd_key_get(&client, &key_id, secret).await
+            }
             KeyCommands::Revoke { key_id } => keys::cmd_key_revoke(&client, &key_id).await,
             KeyCommands::Rename { key_id, new_key_id } => {
                 keys::cmd_key_rename(&client, &key_id, &new_key_id).await
@@ -588,9 +592,7 @@ async fn main() {
                 keys::cmd_key_secrets(&client, key_ids, context).await
             }
             KeyCommands::Seeds => keys::cmd_seeds_list(&client).await,
-            KeyCommands::RotateSeed { mnemonic } => {
-                keys::cmd_seeds_rotate(&client, mnemonic).await
-            }
+            KeyCommands::RotateSeed { mnemonic } => keys::cmd_seeds_rotate(&client, mnemonic).await,
         },
     };
 
@@ -982,8 +984,6 @@ async fn print_did_resolution(
     }
     mediator_did
 }
-
-
 
 #[cfg(test)]
 mod tests {

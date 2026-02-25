@@ -14,10 +14,7 @@ fn store() -> SessionStore {
 }
 
 /// Import a base64-encoded credential and authenticate.
-pub async fn login(
-    credential_b64: &str,
-    base_url: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn login(credential_b64: &str, base_url: &str) -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(all(feature = "config-session", not(feature = "keyring")))]
     eprintln!(
         "Warning: sessions are stored unprotected on disk (~/.config/pnm/sessions.json).\n         \
@@ -83,9 +80,7 @@ pub fn status() {
 }
 
 /// Ensure we have a valid access token. Returns the token string.
-pub async fn ensure_authenticated(
-    base_url: &str,
-) -> Result<String, Box<dyn std::error::Error>> {
+pub async fn ensure_authenticated(base_url: &str) -> Result<String, Box<dyn std::error::Error>> {
     store().ensure_authenticated(base_url, SESSION_KEY).await
 }
 

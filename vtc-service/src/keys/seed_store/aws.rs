@@ -71,16 +71,19 @@ impl super::SecretStore for AwsSecretStore {
                         Ok(None)
                     } else {
                         Err(format_aws_error(
-                        "failed to read secret from AWS Secrets Manager",
-                        service_error,
-                    ))
+                            "failed to read secret from AWS Secrets Manager",
+                            service_error,
+                        ))
                     }
                 }
             }
         })
     }
 
-    fn set(&self, secret: &[u8]) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
+    fn set(
+        &self,
+        secret: &[u8],
+    ) -> Pin<Box<dyn Future<Output = Result<(), AppError>> + Send + '_>> {
         let hex_val = hex::encode(secret);
         Box::pin(async move {
             let client = self.client().await?;

@@ -9,9 +9,7 @@ use crate::config::{PnmConfig, save_config};
 /// Configure PNM with a VTA credential. The VTA service URL is resolved from the
 /// VTA DID in the credential bundle.
 /// If no credential is provided on the CLI, the user is prompted to paste one interactively.
-pub async fn run_setup(
-    credential: Option<&str>,
-) -> Result<(), Box<dyn std::error::Error>> {
+pub async fn run_setup(credential: Option<&str>) -> Result<(), Box<dyn std::error::Error>> {
     let credential = match credential {
         Some(cred) => cred.to_string(),
         None => {

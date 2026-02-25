@@ -10,10 +10,7 @@ fn ctx_key(id: &str) -> String {
 }
 
 /// Retrieve a context by ID.
-pub async fn get_context(
-    ks: &KeyspaceHandle,
-    id: &str,
-) -> Result<Option<ContextRecord>, AppError> {
+pub async fn get_context(ks: &KeyspaceHandle, id: &str) -> Result<Option<ContextRecord>, AppError> {
     ks.get(ctx_key(id)).await
 }
 
@@ -43,9 +40,7 @@ pub async fn list_contexts(ks: &KeyspaceHandle) -> Result<Vec<ContextRecord>, Ap
 /// The counter is stored in the contexts keyspace under `ctx_counter`.
 /// Returns the next available index and the corresponding BIP-32 base path
 /// `m/26'/2'/N'`.
-pub async fn allocate_context_index(
-    ks: &KeyspaceHandle,
-) -> Result<(u32, String), AppError> {
+pub async fn allocate_context_index(ks: &KeyspaceHandle) -> Result<(u32, String), AppError> {
     let counter_key = "ctx_counter";
     let current: u32 = match ks.get_raw(counter_key).await? {
         Some(bytes) => {

@@ -74,9 +74,7 @@ pub async fn run_keys_secrets(
         let mut ids = Vec::new();
         for (_key, value) in raw {
             let record: KeyRecord = serde_json::from_slice(&value)?;
-            if record.status == KeyStatus::Active
-                && record.context_id.as_deref() == Some(ctx)
-            {
+            if record.status == KeyStatus::Active && record.context_id.as_deref() == Some(ctx) {
                 ids.push(record.key_id);
             }
         }
@@ -202,8 +200,7 @@ pub async fn run_rotate_seed(
         return Ok(());
     }
 
-    let new_id =
-        keys::seeds::rotate_seed(&keys_ks, &*seed_store, mnemonic.as_deref()).await?;
+    let new_id = keys::seeds::rotate_seed(&keys_ks, &*seed_store, mnemonic.as_deref()).await?;
 
     store.persist().await?;
 
@@ -229,6 +226,9 @@ fn print_key_record(record: &KeyRecord) {
     if let Some(sid) = record.seed_id {
         eprintln!("  Seed ID:     {sid}");
     }
-    eprintln!("  Created:     {}", record.created_at.format("%Y-%m-%d %H:%M:%S UTC"));
+    eprintln!(
+        "  Created:     {}",
+        record.created_at.format("%Y-%m-%d %H:%M:%S UTC")
+    );
     eprintln!();
 }

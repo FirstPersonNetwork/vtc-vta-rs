@@ -48,8 +48,15 @@ pub async fn run_create_did_key(args: CreateDidKeyArgs) -> Result<(), Box<dyn st
     let label = args.label.as_deref().unwrap_or("did:key");
 
     // Derive and store the did:key
-    let (did, private_key_multibase) =
-        keys::derive_and_store_did_key(&seed, &ctx.base_path, &ctx.id, label, &keys_ks, Some(active_seed_id)).await?;
+    let (did, private_key_multibase) = keys::derive_and_store_did_key(
+        &seed,
+        &ctx.base_path,
+        &ctx.id,
+        label,
+        &keys_ks,
+        Some(active_seed_id),
+    )
+    .await?;
 
     // Optionally create ACL entry
     if args.admin {

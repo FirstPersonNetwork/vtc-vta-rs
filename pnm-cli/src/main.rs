@@ -107,6 +107,52 @@ enum WebvhCommands {
         /// Server identifier to remove
         id: String,
     },
+    /// Create a WebVH DID
+    CreateDid {
+        /// Application context ID
+        #[arg(long)]
+        context: String,
+        /// WebVH server ID
+        #[arg(long)]
+        server: String,
+        /// Optional path on the WebVH server
+        #[arg(long)]
+        path: Option<String>,
+        /// Human-readable label
+        #[arg(long)]
+        label: Option<String>,
+        /// Make the DID portable (default: true)
+        #[arg(long, default_value = "true")]
+        portable: bool,
+        /// Add a mediator service endpoint
+        #[arg(long)]
+        mediator_service: bool,
+        /// Additional service endpoints (JSON array)
+        #[arg(long)]
+        services: Option<String>,
+        /// Number of pre-rotation keys to generate
+        #[arg(long, default_value = "0")]
+        pre_rotation: u32,
+    },
+    /// List WebVH DIDs
+    ListDids {
+        /// Filter by context ID
+        #[arg(long)]
+        context: Option<String>,
+        /// Filter by server ID
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Get details of a WebVH DID
+    GetDid {
+        /// The DID to look up
+        did: String,
+    },
+    /// Delete a WebVH DID
+    DeleteDid {
+        /// The DID to delete
+        did: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -512,6 +558,40 @@ async fn main() {
             }
             WebvhCommands::RemoveServer { id } => {
                 webvh::cmd_webvh_server_remove(&client, &id).await
+            }
+            WebvhCommands::CreateDid {
+                context,
+                server,
+                path,
+                label,
+                portable,
+                mediator_service,
+                services,
+                pre_rotation,
+            } => match services.map(|s| serde_json::from_str::<Vec<serde_json::Value>>(&s)).transpose() {
+                Err(e) => Err(format!("invalid --services JSON: {e}").into()),
+                Ok(additional_services) => {
+                    let req = vta_sdk::client::CreateDidWebvhRequest {
+                        context_id: context,
+                        server_id: server,
+                        path,
+                        label,
+                        portable,
+                        add_mediator_service: mediator_service,
+                        additional_services,
+                        pre_rotation_count: pre_rotation,
+                    };
+                    webvh::cmd_webvh_did_create(&client, req).await
+                }
+            }
+            WebvhCommands::ListDids { context, server } => {
+                webvh::cmd_webvh_did_list(&client, context.as_deref(), server.as_deref()).await
+            }
+            WebvhCommands::GetDid { did } => {
+                webvh::cmd_webvh_did_get(&client, &did).await
+            }
+            WebvhCommands::DeleteDid { did } => {
+                webvh::cmd_webvh_did_delete(&client, &did).await
             }
         },
         Commands::Keys { command } => match command {

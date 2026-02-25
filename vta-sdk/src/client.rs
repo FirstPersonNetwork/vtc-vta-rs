@@ -221,6 +221,23 @@ pub struct UpdateWebvhServerRequest {
     pub label: Option<String>,
 }
 
+// ── WebVH DID types ─────────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct CreateDidWebvhRequest {
+    pub context_id: String,
+    pub server_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    pub portable: bool,
+    pub add_mediator_service: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub additional_services: Option<Vec<serde_json::Value>>,
+    pub pre_rotation_count: u32,
+}
+
 // ── Credential types ────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -626,6 +643,82 @@ impl VtaClient {
             "{}/webvh/servers/{}",
             self.base_url,
             encode_path_segment(id)
+        ));
+        let resp = self.with_auth(req).send().await?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let body = resp
+                .json::<ErrorResponse>()
+                .await
+                .map(|e| e.error)
+                .unwrap_or_else(|_| "unknown error".to_string());
+            Err(format!("{status}: {body}").into())
+        }
+    }
+
+    // ── WebVH DID methods ──────────────────────────────────────────
+
+    /// POST /webvh/dids
+    pub async fn create_did_webvh(
+        &self,
+        req: CreateDidWebvhRequest,
+    ) -> Result<
+        crate::protocols::did_management::create::CreateDidWebvhResultBody,
+        Box<dyn std::error::Error>,
+    > {
+        let r = self
+            .client
+            .post(format!("{}/webvh/dids", self.base_url))
+            .json(&req);
+        let resp = self.with_auth(r).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// GET /webvh/dids
+    pub async fn list_dids_webvh(
+        &self,
+        context_id: Option<&str>,
+        server_id: Option<&str>,
+    ) -> Result<
+        crate::protocols::did_management::list::ListDidsWebvhResultBody,
+        Box<dyn std::error::Error>,
+    > {
+        let mut url = format!("{}/webvh/dids", self.base_url);
+        let mut sep = '?';
+        if let Some(ctx) = context_id {
+            url.push_str(&format!("{sep}context_id={ctx}"));
+            sep = '&';
+        }
+        if let Some(srv) = server_id {
+            url.push_str(&format!("{sep}server_id={srv}"));
+        }
+        let req = self.client.get(url);
+        let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// GET /webvh/dids/{did}
+    pub async fn get_did_webvh(
+        &self,
+        did: &str,
+    ) -> Result<crate::webvh::WebvhDidRecord, Box<dyn std::error::Error>> {
+        let req = self.client.get(format!(
+            "{}/webvh/dids/{}",
+            self.base_url,
+            encode_path_segment(did)
+        ));
+        let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// DELETE /webvh/dids/{did}
+    pub async fn delete_did_webvh(&self, did: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let req = self.client.delete(format!(
+            "{}/webvh/dids/{}",
+            self.base_url,
+            encode_path_segment(did)
         ));
         let resp = self.with_auth(req).send().await?;
         if resp.status().is_success() {

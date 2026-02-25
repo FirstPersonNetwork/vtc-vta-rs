@@ -159,6 +159,7 @@ pub async fn run_create_did(
         &auth,
         params,
         &did_resolver,
+        &None,
         "cli",
     )
     .await?;
@@ -236,6 +237,7 @@ pub async fn run_delete_did(
         &auth,
         &did,
         &did_resolver,
+        &None,
         "cli",
     )
     .await?;

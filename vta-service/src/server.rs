@@ -111,6 +111,7 @@ pub async fn run(
             seed_store: seed_store.clone(),
             config: Arc::new(RwLock::new(config.clone())),
             did_resolver: did_resolver.clone(),
+            secrets_resolver: secrets_resolver.clone(),
         })
     } else {
         None

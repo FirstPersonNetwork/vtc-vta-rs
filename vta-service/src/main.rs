@@ -25,6 +25,8 @@ mod webvh_client;
 #[cfg(feature = "webvh")]
 mod webvh_cli;
 #[cfg(feature = "webvh")]
+mod webvh_didcomm;
+#[cfg(feature = "webvh")]
 mod webvh_store;
 
 use std::path::PathBuf;

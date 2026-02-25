@@ -140,6 +140,7 @@ pub async fn create_did_handler(
         &auth.0,
         params,
         did_resolver,
+        &state.secrets_resolver,
         "rest",
     )
     .await?;
@@ -189,6 +190,7 @@ pub async fn delete_did_handler(
         &auth.0,
         &did,
         did_resolver,
+        &state.secrets_resolver,
         "rest",
     )
     .await?;

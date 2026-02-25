@@ -10,6 +10,7 @@ use serde_json::json;
 use tracing::info;
 use url::Url;
 
+use affinidi_tdk::secrets_resolver::ThreadedSecretsResolver;
 use affinidi_tdk::secrets_resolver::secrets::Secret;
 
 use vta_sdk::protocols::did_management::{
@@ -32,6 +33,7 @@ use crate::keys::{self, KeyType as SdkKeyType, PreRotationKeyData};
 use crate::keys::paths::allocate_path;
 use crate::store::KeyspaceHandle;
 use crate::webvh_client::WebvhClient;
+use crate::webvh_didcomm::WebvhDIDCommClient;
 use crate::webvh_store;
 
 use ed25519_dalek_bip32::{DerivationPath, ExtendedSigningKey};
@@ -57,6 +59,7 @@ pub async fn create_did_webvh(
     auth: &AuthClaims,
     params: CreateDidWebvhParams,
     did_resolver: &DIDCacheClient,
+    secrets_resolver: &Option<Arc<ThreadedSecretsResolver>>,
     channel: &str,
 ) -> Result<CreateDidWebvhResultBody, AppError> {
     auth.require_admin()?;
@@ -100,15 +103,24 @@ pub async fn create_did_webvh(
     .await
     .map_err(|e| AppError::Internal(format!("{e}")))?;
 
-    // Resolve server DID to discover hosting URL
-    let server_url = resolve_server_url(did_resolver, &server.did).await?;
-    let mut client = WebvhClient::new(&server_url);
-    if let Some(ref token) = server.access_token {
-        client.set_access_token(token.clone());
-    }
+    // Resolve server endpoint type (REST or DIDComm)
+    let endpoint = resolve_server_endpoint(did_resolver, &server.did).await?;
 
     // Request URI from server
-    let uri_response = client.request_uri(params.path.as_deref()).await?;
+    let uri_response = match &endpoint {
+        ServerEndpoint::Rest { url } => {
+            let mut client = WebvhClient::new(url);
+            if let Some(ref token) = server.access_token {
+                client.set_access_token(token.clone());
+            }
+            client.request_uri(params.path.as_deref()).await?
+        }
+        ServerEndpoint::DIDComm { server_did } => {
+            make_didcomm_client(secrets_resolver, config, server_did)?
+                .request_uri(params.path.as_deref())
+                .await?
+        }
+    };
     let mnemonic = uri_response.mnemonic;
 
     // Parse the did_url into a WebVHURL
@@ -185,7 +197,20 @@ pub async fn create_did_webvh(
         .map_err(|e| AppError::Internal(format!("failed to serialize DID log: {e}")))?;
 
     // Publish to webvh-server
-    client.publish_did(&mnemonic, &log_content).await?;
+    match &endpoint {
+        ServerEndpoint::Rest { url } => {
+            let mut client = WebvhClient::new(url);
+            if let Some(ref token) = server.access_token {
+                client.set_access_token(token.clone());
+            }
+            client.publish_did(&mnemonic, &log_content).await?;
+        }
+        ServerEndpoint::DIDComm { server_did } => {
+            make_didcomm_client(secrets_resolver, config, server_did)?
+                .publish_did(&mnemonic, &log_content)
+                .await?;
+        }
+    }
 
     // Save key records
     keys::save_entity_key_records(
@@ -296,10 +321,11 @@ pub async fn delete_did_webvh(
     webvh_ks: &KeyspaceHandle,
     _keys_ks: &KeyspaceHandle,
     _seed_store: &dyn SeedStore,
-    _config: &AppConfig,
+    config: &AppConfig,
     auth: &AuthClaims,
     did: &str,
     did_resolver: &DIDCacheClient,
+    secrets_resolver: &Option<Arc<ThreadedSecretsResolver>>,
     channel: &str,
 ) -> Result<DeleteDidWebvhResultBody, AppError> {
     auth.require_admin()?;
@@ -312,15 +338,26 @@ pub async fn delete_did_webvh(
     let server = webvh_store::get_server(webvh_ks, &record.server_id).await?;
 
     if let Some(server) = server {
-        match resolve_server_url(did_resolver, &server.did).await {
-            Ok(server_url) => {
-                let mut client = WebvhClient::new(&server_url);
+        match resolve_server_endpoint(did_resolver, &server.did).await {
+            Ok(ServerEndpoint::Rest { url }) => {
+                let mut client = WebvhClient::new(&url);
                 if let Some(ref token) = server.access_token {
                     client.set_access_token(token.clone());
                 }
-                // Best-effort remote deletion
                 if let Err(e) = client.delete_did(&record.mnemonic).await {
                     tracing::warn!(did = %did, error = %e, "failed to delete DID from webvh-server (continuing local cleanup)");
+                }
+            }
+            Ok(ServerEndpoint::DIDComm { server_did }) => {
+                match make_didcomm_client(secrets_resolver, config, &server_did) {
+                    Ok(dc) => {
+                        if let Err(e) = dc.delete_did(&record.mnemonic).await {
+                            tracing::warn!(did = %did, error = %e, "failed to delete DID from webvh-server via DIDComm (continuing local cleanup)");
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(did = %did, error = %e, "DIDComm not configured for deletion (continuing local cleanup)");
+                    }
                 }
             }
             Err(e) => {
@@ -436,28 +473,79 @@ pub async fn remove_webvh_server(
 // DID resolution helpers
 // ---------------------------------------------------------------------------
 
-/// Resolve a WebVH server DID to its REST hosting URL.
+/// Resolved server communication endpoint.
+pub(crate) enum ServerEndpoint {
+    /// REST API endpoint URL.
+    Rest { url: String },
+    /// DIDComm messaging — messages are sent to the server DID via the mediator.
+    DIDComm { server_did: String },
+}
+
+/// Resolve a WebVH server DID to determine the communication endpoint.
 ///
-/// Looks for a `WebVHHostingService` service endpoint in the resolved DID document.
-async fn resolve_server_url(
+/// Prefers `DIDCommMessaging` and falls back to `WebVHHostingService`.
+async fn resolve_server_endpoint(
     did_resolver: &DIDCacheClient,
     server_did: &str,
-) -> Result<String, AppError> {
+) -> Result<ServerEndpoint, AppError> {
     let resolved = did_resolver.resolve(server_did).await.map_err(|e| {
         AppError::Internal(format!("failed to resolve server DID {server_did}: {e}"))
     })?;
 
+    // Check for DIDCommMessaging first
+    let has_didcomm = resolved.doc.service.iter().any(|svc| {
+        svc.type_.iter().any(|t| t == "DIDCommMessaging")
+    });
+    if has_didcomm {
+        return Ok(ServerEndpoint::DIDComm {
+            server_did: server_did.to_string(),
+        });
+    }
+
+    // Fall back to WebVHHostingService
     for svc in &resolved.doc.service {
         if svc.type_.iter().any(|t| t == "WebVHHostingService")
             && let Some(url) = svc.service_endpoint.get_uri()
         {
-            return Ok(url.trim_matches('"').trim_end_matches('/').to_string());
+            return Ok(ServerEndpoint::Rest {
+                url: url.trim_matches('"').trim_end_matches('/').to_string(),
+            });
         }
     }
 
     Err(AppError::Internal(format!(
-        "server DID {server_did} has no WebVHHostingService endpoint"
+        "server DID {server_did} has no DIDCommMessaging or WebVHHostingService endpoint"
     )))
+}
+
+/// Create a [`WebvhDIDCommClient`] from the shared secrets resolver and config.
+fn make_didcomm_client<'a>(
+    secrets_resolver: &'a Option<Arc<ThreadedSecretsResolver>>,
+    config: &'a AppConfig,
+    server_did: &'a str,
+) -> Result<WebvhDIDCommClient<'a>, AppError> {
+    let sr = secrets_resolver.as_ref().ok_or_else(|| {
+        AppError::Internal(
+            "DIDComm messaging not configured — cannot communicate with WebVH server".into(),
+        )
+    })?;
+    let vta_did = config.vta_did.as_deref().ok_or_else(|| {
+        AppError::Internal(
+            "VTA DID not configured — cannot communicate with WebVH server via DIDComm".into(),
+        )
+    })?;
+    let mediator_did = config
+        .messaging
+        .as_ref()
+        .ok_or_else(|| {
+            AppError::Internal(
+                "mediator not configured — cannot communicate with WebVH server via DIDComm"
+                    .into(),
+            )
+        })?
+        .mediator_did
+        .as_str();
+    Ok(WebvhDIDCommClient::new(sr, vta_did, server_did, mediator_did))
 }
 
 /// Validate that a DID resolves and has at least one supported WebVH service.

@@ -41,6 +41,7 @@ pub struct DidcommState {
     pub seed_store: Arc<dyn SeedStore>,
     pub config: Arc<RwLock<AppConfig>>,
     pub did_resolver: Option<DIDCacheClient>,
+    pub secrets_resolver: Option<Arc<ThreadedSecretsResolver>>,
 }
 
 /// Initialize the DIDComm connection to the mediator.

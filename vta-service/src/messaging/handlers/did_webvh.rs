@@ -49,6 +49,7 @@ pub async fn handle_create_did_webvh(
         &auth,
         params,
         did_resolver,
+        &state.secrets_resolver,
         "didcomm",
     )
     .await?;
@@ -150,6 +151,7 @@ pub async fn handle_delete_did_webvh(
         &auth,
         &body.did,
         did_resolver,
+        &state.secrets_resolver,
         "didcomm",
     )
     .await?;

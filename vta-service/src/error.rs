@@ -47,6 +47,9 @@ pub enum AppError {
 
     #[error("validation error: {0}")]
     Validation(String),
+
+    #[error("bad gateway: {0}")]
+    BadGateway(String),
 }
 
 impl IntoResponse for AppError {
@@ -66,6 +69,7 @@ impl IntoResponse for AppError {
             AppError::Unauthorized(_) => StatusCode::UNAUTHORIZED,
             AppError::Forbidden(_) => StatusCode::FORBIDDEN,
             AppError::Validation(_) => StatusCode::BAD_REQUEST,
+            AppError::BadGateway(_) => StatusCode::BAD_GATEWAY,
         };
 
         if status.is_server_error() {

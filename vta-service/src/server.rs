@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
@@ -16,6 +16,8 @@ use crate::keys::KeyRecord;
 use crate::keys::derivation::Bip32Extension;
 use crate::keys::seed_store::SeedStore;
 use crate::keys::seeds::load_seed_bytes;
+#[cfg(feature = "didcomm")]
+use crate::didcomm_bridge::DIDCommBridge;
 #[cfg(feature = "didcomm")]
 use crate::messaging;
 #[cfg(feature = "rest")]
@@ -38,6 +40,8 @@ pub struct AppState {
     pub seed_store: Arc<dyn SeedStore>,
     pub did_resolver: Option<DIDCacheClient>,
     pub secrets_resolver: Option<Arc<ThreadedSecretsResolver>>,
+    #[cfg(feature = "didcomm")]
+    pub didcomm_bridge: Arc<OnceLock<DIDCommBridge>>,
     pub jwt_keys: Option<Arc<JwtKeys>>,
 }
 
@@ -99,6 +103,10 @@ pub async fn run(
     let storage_auth_config = config.auth.clone();
     let has_auth = jwt_keys.is_some();
 
+    // Shared DIDComm bridge (set by the DIDComm thread once ATM is ready)
+    #[cfg(feature = "didcomm")]
+    let didcomm_bridge: Arc<OnceLock<DIDCommBridge>> = Arc::new(OnceLock::new());
+
     // Clone handles for DIDComm before REST takes ownership
     #[cfg(feature = "didcomm")]
     let didcomm_state = if config.services.didcomm {
@@ -111,7 +119,7 @@ pub async fn run(
             seed_store: seed_store.clone(),
             config: Arc::new(RwLock::new(config.clone())),
             did_resolver: did_resolver.clone(),
-            secrets_resolver: secrets_resolver.clone(),
+            didcomm_bridge: didcomm_bridge.clone(),
         })
     } else {
         None
@@ -132,6 +140,8 @@ pub async fn run(
             seed_store,
             did_resolver,
             secrets_resolver: secrets_resolver.clone(),
+            #[cfg(feature = "didcomm")]
+            didcomm_bridge: didcomm_bridge.clone(),
             jwt_keys,
         };
         let mut rest_shutdown_rx = shutdown_rx.clone();
@@ -153,6 +163,7 @@ pub async fn run(
         let didcomm_secrets = secrets_resolver;
         let didcomm_vta_did = config.vta_did.clone();
         let mut didcomm_shutdown_rx = shutdown_rx.clone();
+        let didcomm_bridge_lock = didcomm_bridge;
         Some(
             std::thread::Builder::new()
                 .name("vta-didcomm".into())
@@ -162,6 +173,7 @@ pub async fn run(
                         didcomm_vta_did,
                         didcomm_state,
                         &mut didcomm_shutdown_rx,
+                        didcomm_bridge_lock,
                     )
                 })
                 .map_err(|e| {
@@ -333,6 +345,7 @@ fn run_didcomm_thread(
     vta_did: Option<String>,
     state: messaging::DidcommState,
     shutdown_rx: &mut watch::Receiver<bool>,
+    bridge_lock: Arc<OnceLock<DIDCommBridge>>,
 ) {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -368,8 +381,13 @@ fn run_didcomm_thread(
                 }
             };
 
+        // Create and publish bridge for REST handlers
+        let bridge = DIDCommBridge::new(atm, profile);
+        let _ = bridge_lock.set(bridge);
+
         // Run message loop until shutdown
-        messaging::run_didcomm_loop(&atm, &profile, did, &state, shutdown_rx).await;
+        let bridge = bridge_lock.get().unwrap();
+        messaging::run_didcomm_loop(bridge, did, &state, shutdown_rx).await;
 
         // Graceful ATM shutdown
         info!("DIDComm thread shutting down");

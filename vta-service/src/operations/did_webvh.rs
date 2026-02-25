@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use affinidi_did_resolver_cache_sdk::DIDCacheClient;
 use chrono::Utc;
@@ -10,8 +10,9 @@ use serde_json::json;
 use tracing::info;
 use url::Url;
 
-use affinidi_tdk::secrets_resolver::ThreadedSecretsResolver;
 use affinidi_tdk::secrets_resolver::secrets::Secret;
+
+use crate::didcomm_bridge::DIDCommBridge;
 
 use vta_sdk::protocols::did_management::{
     create::CreateDidWebvhResultBody,
@@ -59,7 +60,7 @@ pub async fn create_did_webvh(
     auth: &AuthClaims,
     params: CreateDidWebvhParams,
     did_resolver: &DIDCacheClient,
-    secrets_resolver: &Option<Arc<ThreadedSecretsResolver>>,
+    didcomm_bridge: &Arc<OnceLock<DIDCommBridge>>,
     channel: &str,
 ) -> Result<CreateDidWebvhResultBody, AppError> {
     auth.require_admin()?;
@@ -116,7 +117,7 @@ pub async fn create_did_webvh(
             client.request_uri(params.path.as_deref()).await?
         }
         ServerEndpoint::DIDComm { server_did } => {
-            make_didcomm_client(secrets_resolver, config, server_did)?
+            make_didcomm_client(didcomm_bridge, config, server_did)?
                 .request_uri(params.path.as_deref())
                 .await?
         }
@@ -206,7 +207,7 @@ pub async fn create_did_webvh(
             client.publish_did(&mnemonic, &log_content).await?;
         }
         ServerEndpoint::DIDComm { server_did } => {
-            make_didcomm_client(secrets_resolver, config, server_did)?
+            make_didcomm_client(didcomm_bridge, config, server_did)?
                 .publish_did(&mnemonic, &log_content)
                 .await?;
         }
@@ -325,7 +326,7 @@ pub async fn delete_did_webvh(
     auth: &AuthClaims,
     did: &str,
     did_resolver: &DIDCacheClient,
-    secrets_resolver: &Option<Arc<ThreadedSecretsResolver>>,
+    didcomm_bridge: &Arc<OnceLock<DIDCommBridge>>,
     channel: &str,
 ) -> Result<DeleteDidWebvhResultBody, AppError> {
     auth.require_admin()?;
@@ -349,7 +350,7 @@ pub async fn delete_did_webvh(
                 }
             }
             Ok(ServerEndpoint::DIDComm { server_did }) => {
-                match make_didcomm_client(secrets_resolver, config, &server_did) {
+                match make_didcomm_client(didcomm_bridge, config, &server_did) {
                     Ok(dc) => {
                         if let Err(e) = dc.delete_did(&record.mnemonic).await {
                             tracing::warn!(did = %did, error = %e, "failed to delete DID from webvh-server via DIDComm (continuing local cleanup)");
@@ -518,15 +519,15 @@ async fn resolve_server_endpoint(
     )))
 }
 
-/// Create a [`WebvhDIDCommClient`] from the shared secrets resolver and config.
+/// Create a [`WebvhDIDCommClient`] from the shared DIDComm bridge and config.
 fn make_didcomm_client<'a>(
-    secrets_resolver: &'a Option<Arc<ThreadedSecretsResolver>>,
+    didcomm_bridge: &'a Arc<OnceLock<DIDCommBridge>>,
     config: &'a AppConfig,
     server_did: &'a str,
 ) -> Result<WebvhDIDCommClient<'a>, AppError> {
-    let sr = secrets_resolver.as_ref().ok_or_else(|| {
+    let bridge = didcomm_bridge.get().ok_or_else(|| {
         AppError::Internal(
-            "DIDComm messaging not configured — cannot communicate with WebVH server".into(),
+            "DIDComm not available — mediator connection not established".into(),
         )
     })?;
     let vta_did = config.vta_did.as_deref().ok_or_else(|| {
@@ -534,18 +535,7 @@ fn make_didcomm_client<'a>(
             "VTA DID not configured — cannot communicate with WebVH server via DIDComm".into(),
         )
     })?;
-    let mediator_did = config
-        .messaging
-        .as_ref()
-        .ok_or_else(|| {
-            AppError::Internal(
-                "mediator not configured — cannot communicate with WebVH server via DIDComm"
-                    .into(),
-            )
-        })?
-        .mediator_did
-        .as_str();
-    Ok(WebvhDIDCommClient::new(sr, vta_did, server_did, mediator_did))
+    Ok(WebvhDIDCommClient::new(bridge, vta_did, server_did))
 }
 
 /// Validate that a DID resolves and has at least one supported WebVH service.

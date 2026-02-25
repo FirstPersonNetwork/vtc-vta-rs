@@ -1,5 +1,5 @@
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
 
@@ -7,6 +7,7 @@ use crate::acl::Role;
 use crate::auth::extractor::AuthClaims;
 use crate::config::AppConfig;
 use crate::keys::seed_store::create_seed_store;
+use crate::didcomm_bridge::DIDCommBridge;
 use crate::operations;
 use crate::store::Store;
 
@@ -150,6 +151,7 @@ pub async fn run_create_did(
     };
 
     let did_resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await?;
+    let no_bridge: Arc<OnceLock<DIDCommBridge>> = Arc::new(OnceLock::new());
     let result = operations::did_webvh::create_did_webvh(
         &keys_ks,
         &contexts_ks,
@@ -159,7 +161,7 @@ pub async fn run_create_did(
         &auth,
         params,
         &did_resolver,
-        &None,
+        &no_bridge,
         "cli",
     )
     .await?;
@@ -229,6 +231,7 @@ pub async fn run_delete_did(
 
     let auth = cli_super_admin();
     let did_resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await?;
+    let no_bridge: Arc<OnceLock<DIDCommBridge>> = Arc::new(OnceLock::new());
     operations::did_webvh::delete_did_webvh(
         &webvh_ks,
         &keys_ks,
@@ -237,7 +240,7 @@ pub async fn run_delete_did(
         &auth,
         &did,
         &did_resolver,
-        &None,
+        &no_bridge,
         "cli",
     )
     .await?;

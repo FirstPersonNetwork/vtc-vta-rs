@@ -4,6 +4,7 @@ mod auth;
 mod config;
 mod contexts;
 mod did_key;
+pub(crate) mod didcomm_bridge;
 #[cfg(feature = "setup")]
 mod did_webvh;
 mod error;

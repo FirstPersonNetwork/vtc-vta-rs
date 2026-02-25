@@ -2,7 +2,7 @@ pub mod auth;
 pub mod handlers;
 pub mod response;
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use affinidi_tdk::common::TDKSharedState;
 use affinidi_tdk::didcomm::Message;
@@ -13,7 +13,7 @@ use affinidi_tdk::messaging::protocols::trust_ping::TrustPing;
 use affinidi_tdk::messaging::transports::websockets::WebSocketResponses;
 use affinidi_tdk::secrets_resolver::{SecretsResolver, ThreadedSecretsResolver};
 use tokio::sync::{RwLock, broadcast, watch};
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 use vta_sdk::protocols::{
     acl_management, context_management, credential_management, key_management, seed_management,
@@ -25,11 +25,13 @@ use vta_sdk::protocols::did_management;
 use affinidi_did_resolver_cache_sdk::DIDCacheClient;
 
 use crate::config::AppConfig;
+use crate::didcomm_bridge::DIDCommBridge;
 use crate::keys::seed_store::SeedStore;
 use crate::store::KeyspaceHandle;
 
 const TRUST_PING_TYPE: &str = "https://didcomm.org/trust-ping/2.0/ping";
 const MESSAGE_PICKUP_STATUS_TYPE: &str = "https://didcomm.org/messagepickup/3.0/status";
+const PROBLEM_REPORT_TYPE: &str = "https://didcomm.org/report-problem/2.0/problem-report";
 
 /// Shared state passed to DIDComm message handlers.
 pub struct DidcommState {
@@ -41,7 +43,7 @@ pub struct DidcommState {
     pub seed_store: Arc<dyn SeedStore>,
     pub config: Arc<RwLock<AppConfig>>,
     pub did_resolver: Option<DIDCacheClient>,
-    pub secrets_resolver: Option<Arc<ThreadedSecretsResolver>>,
+    pub didcomm_bridge: Arc<OnceLock<DIDCommBridge>>,
 }
 
 /// Initialize the DIDComm connection to the mediator.
@@ -135,49 +137,59 @@ pub async fn init_didcomm_connection(
 /// Run the DIDComm inbound message loop until shutdown is signaled.
 ///
 /// Receives messages from the ATM inbound channel and dispatches them to
-/// protocol handlers. Exits when `shutdown_rx` fires or the channel closes.
+/// protocol handlers. Messages matching a pending bridge request (by thread ID)
+/// are routed directly to the waiting handler instead.
 pub async fn run_didcomm_loop(
-    atm: &Arc<ATM>,
-    profile: &Arc<ATMProfile>,
+    bridge: &DIDCommBridge,
     vta_did: &str,
     state: &DidcommState,
     shutdown_rx: &mut watch::Receiver<bool>,
 ) {
-    let mut rx: broadcast::Receiver<WebSocketResponses> = match atm.get_inbound_channel() {
-        Some(rx) => rx,
-        None => {
-            warn!("no inbound channel available — messaging disabled");
-            return;
-        }
-    };
+    let mut rx: broadcast::Receiver<WebSocketResponses> =
+        match bridge.atm.get_inbound_channel() {
+            Some(rx) => rx,
+            None => {
+                warn!("no inbound channel available — messaging disabled");
+                return;
+            }
+        };
 
     info!("DIDComm message loop started");
 
     loop {
         tokio::select! {
             result = rx.recv() => {
-                match result {
-                    Ok(WebSocketResponses::MessageReceived(msg, _metadata)) => {
-                        dispatch_message(atm, profile, vta_did, state, &msg).await;
-                    }
+                let msg = match result {
+                    Ok(WebSocketResponses::MessageReceived(msg, _metadata)) => *msg,
                     Ok(WebSocketResponses::PackedMessageReceived(packed)) => {
-                        match atm.unpack(&packed).await {
-                            Ok((msg, _metadata)) => {
-                                dispatch_message(atm, profile, vta_did, state, &msg).await;
-                            }
+                        match bridge.atm.unpack(&packed).await {
+                            Ok((msg, _metadata)) => msg,
                             Err(e) => {
                                 warn!("failed to unpack inbound message: {e}");
+                                continue;
                             }
                         }
                     }
                     Err(broadcast::error::RecvError::Lagged(n)) => {
                         warn!("inbound message channel lagged, missed {n} messages");
+                        continue;
                     }
                     Err(broadcast::error::RecvError::Closed) => {
                         info!("inbound message channel closed — stopping message loop");
                         break;
                     }
+                };
+
+                // Check if this message completes a pending bridge request
+                if bridge.try_complete(&msg) {
+                    debug!(thid = ?msg.thid, "routed message to pending bridge request");
+                    if let Err(e) = bridge.atm.delete_message_background(&bridge.profile, &msg.id).await {
+                        warn!("failed to delete bridged message from mediator: {e}");
+                    }
+                    continue;
                 }
+
+                dispatch_message(&bridge.atm, &bridge.profile, vta_did, state, &msg).await;
             }
             _ = shutdown_rx.changed() => {
                 info!("shutdown signal received — stopping DIDComm message loop");
@@ -310,6 +322,12 @@ async fn dispatch_message(
                 .await
         }
 
+        // Problem reports (standard DIDComm type)
+        PROBLEM_REPORT_TYPE => {
+            handle_problem_report(msg);
+            Ok(())
+        }
+
         other => {
             warn!(msg_type = other, "unknown message type — ignoring");
             Ok(())
@@ -363,4 +381,27 @@ async fn handle_trust_ping(
 
     info!(to = sender_did, "sent trust-pong");
     Ok(())
+}
+
+fn handle_problem_report(msg: &Message) {
+    let code = msg
+        .body
+        .get("code")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let comment = msg
+        .body
+        .get("comment")
+        .and_then(|v| v.as_str())
+        .unwrap_or("no details");
+    let from = msg.from.as_deref().unwrap_or("unknown");
+    let thid = msg.thid.as_deref().unwrap_or("none");
+
+    warn!(
+        from,
+        code,
+        comment,
+        thid,
+        "received problem-report"
+    );
 }

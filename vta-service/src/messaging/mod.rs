@@ -142,7 +142,7 @@ pub async fn init_didcomm_connection(
 pub async fn run_didcomm_loop(
     bridge: &DIDCommBridge,
     vta_did: &str,
-    state: &DidcommState,
+    state: Arc<DidcommState>,
     shutdown_rx: &mut watch::Receiver<bool>,
 ) {
     let mut rx: broadcast::Receiver<WebSocketResponses> =
@@ -189,7 +189,15 @@ pub async fn run_didcomm_loop(
                     continue;
                 }
 
-                dispatch_message(&bridge.atm, &bridge.profile, vta_did, state, &msg).await;
+                // Spawn handler as a separate task so the loop can continue
+                // receiving messages (needed for bridge responses).
+                let atm = Arc::clone(&bridge.atm);
+                let profile = Arc::clone(&bridge.profile);
+                let vta_did = vta_did.to_string();
+                let state = Arc::clone(&state);
+                tokio::spawn(async move {
+                    dispatch_message(&atm, &profile, &vta_did, &*state, &msg).await;
+                });
             }
             _ = shutdown_rx.changed() => {
                 info!("shutdown signal received — stopping DIDComm message loop");

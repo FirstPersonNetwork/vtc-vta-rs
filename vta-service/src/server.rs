@@ -393,7 +393,8 @@ fn run_didcomm_thread(
 
         // Run message loop until shutdown
         let bridge = bridge_lock.get().unwrap();
-        messaging::run_didcomm_loop(bridge, did, &state, shutdown_rx).await;
+        let state = Arc::new(state);
+        messaging::run_didcomm_loop(bridge, did, state, shutdown_rx).await;
 
         // Graceful ATM shutdown
         info!("DIDComm thread shutting down");

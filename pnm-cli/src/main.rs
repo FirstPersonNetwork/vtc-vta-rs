@@ -438,34 +438,38 @@ async fn main() {
         }
     };
 
+    // Save the CLI URL override (before it's consumed)
+    let url_override = cli.url.clone();
+
     // Resolve URL: CLI flag > config > error (not needed for setup)
     let url = cli
         .url
         .or(pnm_config.url.clone())
         .unwrap_or_else(|| {
             if !matches!(cli.command, Commands::Setup { .. }) {
-                eprintln!("Error: no VTA URL configured and no --url provided.\n");
-                eprintln!("Run setup first, or provide a URL:");
-                eprintln!("  pnm setup --credential <CREDENTIAL>");
-                eprintln!("  pnm health --url http://localhost:8100");
-                std::process::exit(1);
+                // For auth-required commands, auth::connect resolves the URL from
+                // the session store — so only error when we actually need a URL.
+                if !requires_auth(&cli.command) {
+                    eprintln!("Error: no VTA URL configured and no --url provided.\n");
+                    eprintln!("Run setup first, or provide a URL:");
+                    eprintln!("  pnm setup --credential <CREDENTIAL>");
+                    eprintln!("  pnm health --url http://localhost:8100");
+                    std::process::exit(1);
+                }
             }
-            // Setup command extracts URL from credential bundle
             String::new()
         });
-
-    let mut client = VtaClient::new(&url);
-
-    // Transparent authentication for protected commands
-    if requires_auth(&cli.command) {
-        match auth::ensure_authenticated(client.base_url()).await {
-            Ok(token) => client.set_token(token),
+    let client = if requires_auth(&cli.command) {
+        match auth::connect(url_override.as_deref()).await {
+            Ok(c) => c,
             Err(e) => {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
         }
-    }
+    } else {
+        VtaClient::new(&url)
+    };
 
     let result = match cli.command {
         Commands::Setup { credential } => {
@@ -632,6 +636,8 @@ async fn main() {
             }
         },
     };
+
+    client.shutdown().await;
 
     if let Err(e) = result {
         eprintln!("Error: {e}");

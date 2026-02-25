@@ -392,6 +392,9 @@ async fn main() {
         );
     }
 
+    // Save the URL override before it's consumed by URL resolution
+    let url_override = cli.url.clone();
+
     // Resolve community URL and keyring key for commands that need a VTA connection.
     // Setup and Community commands handle their own URL resolution.
     let (url, keyring_key): (String, String) = if requires_auth(&cli.command)
@@ -438,10 +441,8 @@ async fn main() {
         (url, String::new())
     };
 
-    let mut client = VtaClient::new(&url);
-
-    // Transparent authentication for protected commands
-    if requires_auth(&cli.command) {
+    // Build client: DIDComm-preferred for authenticated commands, REST for others
+    let client = if requires_auth(&cli.command) {
         // Bootstrap session from personal VTA if needed
         if auth::loaded_session(&keyring_key).is_none() {
             if let Ok((slug, community)) =
@@ -463,14 +464,16 @@ async fn main() {
             }
         }
 
-        match auth::ensure_authenticated(client.base_url(), &keyring_key).await {
-            Ok(token) => client.set_token(token),
+        match auth::connect(url_override.as_deref(), &keyring_key).await {
+            Ok(c) => c,
             Err(e) => {
                 eprintln!("Error: {e}");
                 std::process::exit(1);
             }
         }
-    }
+    } else {
+        VtaClient::new(&url)
+    };
 
     let result = match cli.command {
         Commands::Setup => setup::run_setup_wizard().await,
@@ -590,6 +593,8 @@ async fn main() {
             }
         },
     };
+
+    client.shutdown().await;
 
     if let Err(e) = result {
         eprintln!("Error: {e}");

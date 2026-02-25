@@ -7,5 +7,7 @@ pub mod did_secrets;
 pub mod keys;
 pub mod protocols;
 #[cfg(feature = "session")]
+pub mod didcomm_session;
+#[cfg(feature = "session")]
 pub mod session;
 pub mod webvh;

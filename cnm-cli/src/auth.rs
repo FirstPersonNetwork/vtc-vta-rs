@@ -101,3 +101,14 @@ pub async fn ensure_authenticated(
 ) -> Result<String, Box<dyn std::error::Error>> {
     store().ensure_authenticated(base_url, keyring_key).await
 }
+
+/// Connect to the VTA using the preferred transport (DIDComm or REST).
+///
+/// If `url_override` is provided, always uses REST.
+/// Otherwise resolves the VTA DID and prefers DIDComm when available.
+pub async fn connect(
+    url_override: Option<&str>,
+    keyring_key: &str,
+) -> Result<vta_sdk::client::VtaClient, Box<dyn std::error::Error>> {
+    store().connect(keyring_key, url_override).await
+}

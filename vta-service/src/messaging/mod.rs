@@ -22,6 +22,8 @@ use vta_sdk::protocols::{
 #[cfg(feature = "webvh")]
 use vta_sdk::protocols::did_management;
 
+use affinidi_did_resolver_cache_sdk::DIDCacheClient;
+
 use crate::config::AppConfig;
 use crate::keys::seed_store::SeedStore;
 use crate::store::KeyspaceHandle;
@@ -38,6 +40,7 @@ pub struct DidcommState {
     pub webvh_ks: KeyspaceHandle,
     pub seed_store: Arc<dyn SeedStore>,
     pub config: Arc<RwLock<AppConfig>>,
+    pub did_resolver: Option<DIDCacheClient>,
 }
 
 /// Initialize the DIDComm connection to the mediator.
@@ -294,6 +297,11 @@ async fn dispatch_message(
         #[cfg(feature = "webvh")]
         did_management::LIST_WEBVH_SERVERS => {
             handlers::did_webvh::handle_list_webvh_servers(state, atm, profile, vta_did, msg).await
+        }
+        #[cfg(feature = "webvh")]
+        did_management::UPDATE_WEBVH_SERVER => {
+            handlers::did_webvh::handle_update_webvh_server(state, atm, profile, vta_did, msg)
+                .await
         }
         #[cfg(feature = "webvh")]
         did_management::REMOVE_WEBVH_SERVER => {

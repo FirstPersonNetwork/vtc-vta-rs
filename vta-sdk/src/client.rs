@@ -205,6 +205,22 @@ pub struct UpdateAclRequest {
     pub allowed_contexts: Option<Vec<String>>,
 }
 
+// ── WebVH server types ──────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+pub struct AddWebvhServerRequest {
+    pub id: String,
+    pub did: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct UpdateWebvhServerRequest {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
 // ── Credential types ────────────────────────────────────────────────
 
 #[derive(Debug, Serialize)]
@@ -555,6 +571,74 @@ impl VtaClient {
             .json(&req);
         let resp = self.with_auth(r).send().await?;
         Self::handle_response(resp).await
+    }
+
+    // ── WebVH server methods ──────────────────────────────────────────
+
+    /// POST /webvh/servers
+    pub async fn add_webvh_server(
+        &self,
+        req: AddWebvhServerRequest,
+    ) -> Result<crate::webvh::WebvhServerRecord, Box<dyn std::error::Error>> {
+        let r = self
+            .client
+            .post(format!("{}/webvh/servers", self.base_url))
+            .json(&req);
+        let resp = self.with_auth(r).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// GET /webvh/servers
+    pub async fn list_webvh_servers(
+        &self,
+    ) -> Result<
+        crate::protocols::did_management::servers::ListWebvhServersResultBody,
+        Box<dyn std::error::Error>,
+    > {
+        let req = self
+            .client
+            .get(format!("{}/webvh/servers", self.base_url));
+        let resp = self.with_auth(req).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// PATCH /webvh/servers/{id}
+    pub async fn update_webvh_server(
+        &self,
+        id: &str,
+        req: UpdateWebvhServerRequest,
+    ) -> Result<crate::webvh::WebvhServerRecord, Box<dyn std::error::Error>> {
+        let r = self
+            .client
+            .patch(format!(
+                "{}/webvh/servers/{}",
+                self.base_url,
+                encode_path_segment(id)
+            ))
+            .json(&req);
+        let resp = self.with_auth(r).send().await?;
+        Self::handle_response(resp).await
+    }
+
+    /// DELETE /webvh/servers/{id}
+    pub async fn remove_webvh_server(&self, id: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let req = self.client.delete(format!(
+            "{}/webvh/servers/{}",
+            self.base_url,
+            encode_path_segment(id)
+        ));
+        let resp = self.with_auth(req).send().await?;
+        if resp.status().is_success() {
+            Ok(())
+        } else {
+            let status = resp.status();
+            let body = resp
+                .json::<ErrorResponse>()
+                .await
+                .map(|e| e.error)
+                .unwrap_or_else(|_| "unknown error".to_string());
+            Err(format!("{status}: {body}").into())
+        }
     }
 
     /// DELETE /contexts/{id}

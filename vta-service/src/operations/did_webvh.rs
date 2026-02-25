@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use affinidi_did_resolver_cache_sdk::DIDCacheClient;
 use chrono::Utc;
 use didwebvh_rs::DIDWebVHState;
 use didwebvh_rs::log_entry::LogEntryMethods;
@@ -15,7 +16,10 @@ use vta_sdk::protocols::did_management::{
     create::CreateDidWebvhResultBody,
     delete::DeleteDidWebvhResultBody,
     list::ListDidsWebvhResultBody,
-    servers::{AddWebvhServerResultBody, ListWebvhServersResultBody, RemoveWebvhServerResultBody},
+    servers::{
+        AddWebvhServerResultBody, ListWebvhServersResultBody, RemoveWebvhServerResultBody,
+        UpdateWebvhServerResultBody,
+    },
 };
 use vta_sdk::webvh::{WebvhDidRecord, WebvhServerRecord};
 
@@ -52,6 +56,7 @@ pub async fn create_did_webvh(
     config: &AppConfig,
     auth: &AuthClaims,
     params: CreateDidWebvhParams,
+    did_resolver: &DIDCacheClient,
     channel: &str,
 ) -> Result<CreateDidWebvhResultBody, AppError> {
     auth.require_admin()?;
@@ -95,8 +100,9 @@ pub async fn create_did_webvh(
     .await
     .map_err(|e| AppError::Internal(format!("{e}")))?;
 
-    // Authenticate to webvh-server
-    let mut client = WebvhClient::new(&server.server_url);
+    // Resolve server DID to discover hosting URL
+    let server_url = resolve_server_url(did_resolver, &server.did).await?;
+    let mut client = WebvhClient::new(&server_url);
     if let Some(ref token) = server.access_token {
         client.set_access_token(token.clone());
     }
@@ -293,6 +299,7 @@ pub async fn delete_did_webvh(
     _config: &AppConfig,
     auth: &AuthClaims,
     did: &str,
+    did_resolver: &DIDCacheClient,
     channel: &str,
 ) -> Result<DeleteDidWebvhResultBody, AppError> {
     auth.require_admin()?;
@@ -305,13 +312,20 @@ pub async fn delete_did_webvh(
     let server = webvh_store::get_server(webvh_ks, &record.server_id).await?;
 
     if let Some(server) = server {
-        let mut client = WebvhClient::new(&server.server_url);
-        if let Some(ref token) = server.access_token {
-            client.set_access_token(token.clone());
-        }
-        // Best-effort remote deletion
-        if let Err(e) = client.delete_did(&record.mnemonic).await {
-            tracing::warn!(did = %did, error = %e, "failed to delete DID from webvh-server (continuing local cleanup)");
+        match resolve_server_url(did_resolver, &server.did).await {
+            Ok(server_url) => {
+                let mut client = WebvhClient::new(&server_url);
+                if let Some(ref token) = server.access_token {
+                    client.set_access_token(token.clone());
+                }
+                // Best-effort remote deletion
+                if let Err(e) = client.delete_did(&record.mnemonic).await {
+                    tracing::warn!(did = %did, error = %e, "failed to delete DID from webvh-server (continuing local cleanup)");
+                }
+            }
+            Err(e) => {
+                tracing::warn!(did = %did, error = %e, "failed to resolve server DID (continuing local cleanup)");
+            }
         }
     }
 
@@ -329,8 +343,9 @@ pub async fn add_webvh_server(
     webvh_ks: &KeyspaceHandle,
     auth: &AuthClaims,
     id: &str,
-    server_url: &str,
+    server_did: &str,
     label: Option<String>,
+    did_resolver: &DIDCacheClient,
     channel: &str,
 ) -> Result<AddWebvhServerResultBody, AppError> {
     auth.require_super_admin()?;
@@ -341,10 +356,13 @@ pub async fn add_webvh_server(
         )));
     }
 
+    // Validate the DID resolves and has a supported WebVH service
+    validate_server_did(did_resolver, server_did).await?;
+
     let now = Utc::now();
     let record = WebvhServerRecord {
         id: id.to_string(),
-        server_url: server_url.trim_end_matches('/').to_string(),
+        did: server_did.to_string(),
         label,
         access_token: None,
         access_expires_at: None,
@@ -354,7 +372,7 @@ pub async fn add_webvh_server(
     };
     webvh_store::store_server(webvh_ks, &record).await?;
 
-    info!(channel, id = %id, url = %server_url, "webvh server added");
+    info!(channel, id = %id, did = %server_did, "webvh server added");
     Ok(record)
 }
 
@@ -367,6 +385,30 @@ pub async fn list_webvh_servers(
     let servers = webvh_store::list_servers(webvh_ks).await?;
     info!(channel, caller = %auth.did, count = servers.len(), "webvh servers listed");
     Ok(ListWebvhServersResultBody { servers })
+}
+
+pub async fn update_webvh_server(
+    webvh_ks: &KeyspaceHandle,
+    auth: &AuthClaims,
+    id: &str,
+    label: Option<String>,
+    channel: &str,
+) -> Result<UpdateWebvhServerResultBody, AppError> {
+    auth.require_super_admin()?;
+
+    let mut record = webvh_store::get_server(webvh_ks, id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("webvh server not found: {id}")))?;
+
+    if let Some(lbl) = label {
+        record.label = if lbl.is_empty() { None } else { Some(lbl) };
+    }
+    record.updated_at = Utc::now();
+
+    webvh_store::store_server(webvh_ks, &record).await?;
+
+    info!(channel, id = %id, "webvh server updated");
+    Ok(record)
 }
 
 pub async fn remove_webvh_server(
@@ -388,6 +430,60 @@ pub async fn remove_webvh_server(
         id: id.to_string(),
         removed: true,
     })
+}
+
+// ---------------------------------------------------------------------------
+// DID resolution helpers
+// ---------------------------------------------------------------------------
+
+/// Resolve a WebVH server DID to its REST hosting URL.
+///
+/// Looks for a `WebVHHostingService` service endpoint in the resolved DID document.
+async fn resolve_server_url(
+    did_resolver: &DIDCacheClient,
+    server_did: &str,
+) -> Result<String, AppError> {
+    let resolved = did_resolver.resolve(server_did).await.map_err(|e| {
+        AppError::Internal(format!("failed to resolve server DID {server_did}: {e}"))
+    })?;
+
+    for svc in &resolved.doc.service {
+        if svc.type_.iter().any(|t| t == "WebVHHostingService")
+            && let Some(url) = svc.service_endpoint.get_uri()
+        {
+            return Ok(url.trim_matches('"').trim_end_matches('/').to_string());
+        }
+    }
+
+    Err(AppError::Internal(format!(
+        "server DID {server_did} has no WebVHHostingService endpoint"
+    )))
+}
+
+/// Validate that a DID resolves and has at least one supported WebVH service.
+///
+/// Checks for either `DIDCommMessaging` or `WebVHHostingService`.
+async fn validate_server_did(
+    did_resolver: &DIDCacheClient,
+    server_did: &str,
+) -> Result<(), AppError> {
+    let resolved = did_resolver.resolve(server_did).await.map_err(|e| {
+        AppError::Validation(format!("failed to resolve server DID {server_did}: {e}"))
+    })?;
+
+    let has_supported_service = resolved.doc.service.iter().any(|svc| {
+        svc.type_
+            .iter()
+            .any(|t| t == "WebVHHostingService" || t == "DIDCommMessaging")
+    });
+
+    if !has_supported_service {
+        return Err(AppError::Validation(format!(
+            "server DID {server_did} has no WebVHHostingService or DIDCommMessaging service endpoint"
+        )));
+    }
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

@@ -5,7 +5,7 @@ use crate::webvh::WebvhServerRecord;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AddWebvhServerBody {
     pub id: String,
-    pub server_url: String,
+    pub did: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
 }
@@ -19,6 +19,15 @@ pub struct ListWebvhServersBody {}
 pub struct ListWebvhServersResultBody {
     pub servers: Vec<WebvhServerRecord>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateWebvhServerBody {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+}
+
+pub type UpdateWebvhServerResultBody = WebvhServerRecord;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RemoveWebvhServerBody {

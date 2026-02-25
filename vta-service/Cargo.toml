@@ -15,7 +15,7 @@ default = ["setup", "keyring", "rest", "didcomm"]
 rest = []
 didcomm = []
 webvh = ["dep:didwebvh-rs", "dep:url", "dep:reqwest"]
-setup = ["webvh", "dep:dialoguer"]
+setup = ["webvh", "dep:dialoguer", "dep:tempfile"]
 keyring = ["dep:keyring"]
 config-seed = []
 aws-secrets = ["dep:aws-sdk-secretsmanager", "dep:aws-config"]
@@ -72,6 +72,4 @@ x25519-dalek = { workspace = true }
 multibase = { workspace = true }
 url = { workspace = true, optional = true }
 reqwest = { workspace = true, optional = true }
-
-[dev-dependencies]
-tempfile = "3"
+tempfile = { version = "3", optional = true }

@@ -151,15 +151,23 @@ enum WebvhCommands {
         /// Server identifier
         #[arg(long)]
         id: String,
-        /// Server URL (e.g. https://webvh.example.com)
+        /// Server DID (must resolve to a DID document with a WebVHHostingService endpoint)
         #[arg(long)]
-        url: String,
+        did: String,
         /// Human-readable label
         #[arg(long)]
         label: Option<String>,
     },
     /// List configured WebVH servers
     ListServers,
+    /// Update a WebVH server
+    UpdateServer {
+        /// Server identifier to update
+        id: String,
+        /// New label (empty string to clear)
+        #[arg(long)]
+        label: Option<String>,
+    },
     /// Remove a WebVH server
     RemoveServer {
         /// Server identifier to remove
@@ -377,11 +385,14 @@ async fn main() {
         #[cfg(feature = "webvh")]
         Some(Commands::Webvh { command }) => {
             let result = match command {
-                WebvhCommands::AddServer { id, url, label } => {
-                    webvh_cli::run_add_server(cli.config, id, url, label).await
+                WebvhCommands::AddServer { id, did, label } => {
+                    webvh_cli::run_add_server(cli.config, id, did, label).await
                 }
                 WebvhCommands::ListServers => {
                     webvh_cli::run_list_servers(cli.config).await
+                }
+                WebvhCommands::UpdateServer { id, label } => {
+                    webvh_cli::run_update_server(cli.config, id, label).await
                 }
                 WebvhCommands::RemoveServer { id } => {
                     webvh_cli::run_remove_server(cli.config, id).await

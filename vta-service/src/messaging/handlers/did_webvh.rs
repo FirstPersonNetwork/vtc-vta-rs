@@ -37,6 +37,9 @@ pub async fn handle_create_did_webvh(
         pre_rotation_count: body.pre_rotation_count.unwrap_or(0),
     };
 
+    let did_resolver = state.did_resolver.as_ref().ok_or_else(|| {
+        Box::<dyn std::error::Error + Send + Sync>::from("DID resolver not available")
+    })?;
     let result = operations::did_webvh::create_did_webvh(
         &state.keys_ks,
         &state.contexts_ks,
@@ -45,6 +48,7 @@ pub async fn handle_create_did_webvh(
         &config,
         &auth,
         params,
+        did_resolver,
         "didcomm",
     )
     .await?;
@@ -135,6 +139,9 @@ pub async fn handle_delete_did_webvh(
         serde_json::from_value(msg.body.clone())?;
 
     let config = state.config.read().await;
+    let did_resolver = state.did_resolver.as_ref().ok_or_else(|| {
+        Box::<dyn std::error::Error + Send + Sync>::from("DID resolver not available")
+    })?;
     let result = operations::did_webvh::delete_did_webvh(
         &state.webvh_ks,
         &state.keys_ks,
@@ -142,6 +149,7 @@ pub async fn handle_delete_did_webvh(
         &config,
         &auth,
         &body.did,
+        did_resolver,
         "didcomm",
     )
     .await?;
@@ -170,12 +178,16 @@ pub async fn handle_add_webvh_server(
     let body: vta_sdk::protocols::did_management::servers::AddWebvhServerBody =
         serde_json::from_value(msg.body.clone())?;
 
+    let did_resolver = state.did_resolver.as_ref().ok_or_else(|| {
+        Box::<dyn std::error::Error + Send + Sync>::from("DID resolver not available")
+    })?;
     let result = operations::did_webvh::add_webvh_server(
         &state.webvh_ks,
         &auth,
         &body.id,
-        &body.server_url,
+        &body.did,
         body.label,
+        did_resolver,
         "didcomm",
     )
     .await?;
@@ -210,6 +222,39 @@ pub async fn handle_list_webvh_servers(
         vta_did,
         &auth.did,
         did_management::LIST_WEBVH_SERVERS_RESULT,
+        Some(&msg.id),
+        &result,
+    )
+    .await
+}
+
+pub async fn handle_update_webvh_server(
+    state: &DidcommState,
+    atm: &ATM,
+    profile: &Arc<ATMProfile>,
+    vta_did: &str,
+    msg: &Message,
+) -> HandlerResult {
+    let auth = auth_from_message(msg, &state.acl_ks).await?;
+
+    let body: vta_sdk::protocols::did_management::servers::UpdateWebvhServerBody =
+        serde_json::from_value(msg.body.clone())?;
+
+    let result = operations::did_webvh::update_webvh_server(
+        &state.webvh_ks,
+        &auth,
+        &body.id,
+        body.label,
+        "didcomm",
+    )
+    .await?;
+
+    send_response(
+        atm,
+        profile,
+        vta_did,
+        &auth.did,
+        did_management::UPDATE_WEBVH_SERVER_RESULT,
         Some(&msg.id),
         &result,
     )

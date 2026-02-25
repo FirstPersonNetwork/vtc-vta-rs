@@ -86,7 +86,6 @@ pub async fn run_create_did_webvh(
     if let Some(ref msg) = config.messaging {
         let service_options = &[
             "DIDComm endpoint (references mediator DID for routing)",
-            "Mediator service endpoints (#didcomm HTTPS/WSS, #auth)",
             "No service endpoints",
         ];
         let service_choice = Select::new()
@@ -109,34 +108,6 @@ pub async fn run_create_did_webvh(
                     }
                 ]);
             }
-            1 => {
-                // Mediator-style: #didcomm (HTTPS + WSS) and #auth
-                let url = &msg.mediator_url;
-                let wss_url = url
-                    .replace("https://", "wss://")
-                    .replace("http://", "ws://");
-                did_document["service"] = json!([
-                    {
-                        "id": format!("{did_id}#didcomm"),
-                        "type": "DIDCommMessaging",
-                        "serviceEndpoint": [
-                            {
-                                "accept": ["didcomm/v2"],
-                                "uri": url
-                            },
-                            {
-                                "accept": ["didcomm/v2"],
-                                "uri": format!("{wss_url}/ws")
-                            }
-                        ]
-                    },
-                    {
-                        "id": format!("{did_id}#auth"),
-                        "type": "Authentication",
-                        "serviceEndpoint": format!("{url}/authenticate")
-                    }
-                ]);
-            }
             _ => {} // No service endpoints
         }
     }
@@ -147,6 +118,15 @@ pub async fn run_create_did_webvh(
         serde_json::to_string_pretty(&did_document)?
     );
     eprintln!();
+
+    // Offer to edit in $EDITOR
+    if Confirm::new()
+        .with_prompt("Edit DID document in your editor?")
+        .default(false)
+        .interact()?
+    {
+        did_document = edit_did_document(did_document)?;
+    }
 
     // Portability
     let portable = Confirm::new()
@@ -267,4 +247,52 @@ pub async fn run_create_did_webvh(
     }
 
     Ok(())
+}
+
+fn edit_did_document(
+    doc: serde_json::Value,
+) -> Result<serde_json::Value, Box<dyn std::error::Error>> {
+    use std::io::Write;
+    use std::process::Command;
+
+    let json = serde_json::to_string_pretty(&doc)?;
+
+    // Write to a named temp file with .json extension for editor syntax highlighting
+    let mut tmp = tempfile::Builder::new().suffix(".json").tempfile()?;
+    tmp.write_all(json.as_bytes())?;
+    tmp.flush()?;
+    let path = tmp.path().to_path_buf();
+
+    // Resolve editor: $VISUAL > $EDITOR > fallback
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".to_string());
+
+    // Open editor and wait
+    let status = Command::new(&editor)
+        .arg(&path)
+        .status()
+        .map_err(|e| format!("failed to launch editor '{editor}': {e}"))?;
+
+    if !status.success() {
+        return Err(format!("editor exited with {status}").into());
+    }
+
+    // Read back and parse
+    let edited = std::fs::read_to_string(&path)?;
+    let new_doc: serde_json::Value =
+        serde_json::from_str(&edited).map_err(|e| format!("invalid JSON from editor: {e}"))?;
+
+    // Basic validation: must be an object with "id" field
+    if !new_doc.is_object() || !new_doc.get("id").is_some_and(|v| v.is_string()) {
+        return Err("DID document must be a JSON object with an \"id\" field".into());
+    }
+
+    // Show the updated document
+    eprintln!(
+        "\x1b[2mUpdated DID Document:\n{}\x1b[0m",
+        serde_json::to_string_pretty(&new_doc)?
+    );
+
+    Ok(new_doc)
 }

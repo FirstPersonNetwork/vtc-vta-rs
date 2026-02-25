@@ -6,7 +6,7 @@ use serde::Deserialize;
 use vta_sdk::protocols::did_management::{
     create::CreateDidWebvhResultBody,
     list::ListDidsWebvhResultBody,
-    servers::{AddWebvhServerResultBody, ListWebvhServersResultBody},
+    servers::{AddWebvhServerResultBody, ListWebvhServersResultBody, UpdateWebvhServerResultBody},
 };
 use vta_sdk::webvh::WebvhDidRecord;
 
@@ -18,7 +18,7 @@ use crate::server::AppState;
 #[derive(Debug, Deserialize)]
 pub struct AddServerRequest {
     pub id: String,
-    pub server_url: String,
+    pub did: String,
     pub label: Option<String>,
 }
 
@@ -54,12 +54,16 @@ pub async fn add_server_handler(
     State(state): State<AppState>,
     Json(req): Json<AddServerRequest>,
 ) -> Result<(StatusCode, Json<AddWebvhServerResultBody>), AppError> {
+    let did_resolver = state.did_resolver.as_ref().ok_or_else(|| {
+        AppError::Internal("DID resolver not available".into())
+    })?;
     let result = operations::did_webvh::add_webvh_server(
         &state.webvh_ks,
         &auth.0,
         &req.id,
-        &req.server_url,
+        &req.did,
         req.label,
+        did_resolver,
         "rest",
     )
     .await?;
@@ -72,6 +76,28 @@ pub async fn list_servers_handler(
 ) -> Result<Json<ListWebvhServersResultBody>, AppError> {
     let result =
         operations::did_webvh::list_webvh_servers(&state.webvh_ks, &auth, "rest").await?;
+    Ok(Json(result))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct UpdateServerRequest {
+    pub label: Option<String>,
+}
+
+pub async fn update_server_handler(
+    auth: SuperAdminAuth,
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(req): Json<UpdateServerRequest>,
+) -> Result<Json<UpdateWebvhServerResultBody>, AppError> {
+    let result = operations::did_webvh::update_webvh_server(
+        &state.webvh_ks,
+        &auth.0,
+        &id,
+        req.label,
+        "rest",
+    )
+    .await?;
     Ok(Json(result))
 }
 
@@ -102,6 +128,9 @@ pub async fn create_did_handler(
         additional_services: req.additional_services,
         pre_rotation_count: req.pre_rotation_count,
     };
+    let did_resolver = state.did_resolver.as_ref().ok_or_else(|| {
+        AppError::Internal("DID resolver not available".into())
+    })?;
     let result = operations::did_webvh::create_did_webvh(
         &state.keys_ks,
         &state.contexts_ks,
@@ -110,6 +139,7 @@ pub async fn create_did_handler(
         &config,
         &auth.0,
         params,
+        did_resolver,
         "rest",
     )
     .await?;
@@ -148,6 +178,9 @@ pub async fn delete_did_handler(
     Path(did): Path<String>,
 ) -> Result<StatusCode, AppError> {
     let config = state.config.read().await;
+    let did_resolver = state.did_resolver.as_ref().ok_or_else(|| {
+        AppError::Internal("DID resolver not available".into())
+    })?;
     operations::did_webvh::delete_did_webvh(
         &state.webvh_ks,
         &state.keys_ks,
@@ -155,6 +188,7 @@ pub async fn delete_did_handler(
         &config,
         &auth.0,
         &did,
+        did_resolver,
         "rest",
     )
     .await?;

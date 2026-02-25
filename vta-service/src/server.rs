@@ -110,6 +110,7 @@ pub async fn run(
             webvh_ks: webvh_ks.clone(),
             seed_store: seed_store.clone(),
             config: Arc::new(RwLock::new(config.clone())),
+            did_resolver: did_resolver.clone(),
         })
     } else {
         None

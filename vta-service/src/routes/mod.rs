@@ -71,7 +71,8 @@ pub fn router() -> Router<AppState> {
         )
         .route(
             "/webvh/servers/{id}",
-            delete(did_webvh::remove_server_handler),
+            axum::routing::patch(did_webvh::update_server_handler)
+                .delete(did_webvh::remove_server_handler),
         )
         .route(
             "/webvh/dids",

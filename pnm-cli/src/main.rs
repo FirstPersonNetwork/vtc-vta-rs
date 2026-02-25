@@ -5,7 +5,7 @@ mod setup;
 use clap::{Parser, Subcommand};
 use vta_sdk::client::VtaClient;
 
-use vta_cli_common::commands::{acl, config as config_cmd, contexts, credentials, keys};
+use vta_cli_common::commands::{acl, config as config_cmd, contexts, credentials, keys, webvh};
 use vta_cli_common::render::{CYAN, DIM, GREEN, RED, RESET};
 
 #[derive(Parser)]
@@ -69,6 +69,43 @@ enum Commands {
     AuthCredential {
         #[command(subcommand)]
         command: AuthCredentialCommands,
+    },
+
+    /// WebVH server management
+    Webvh {
+        #[command(subcommand)]
+        command: WebvhCommands,
+    },
+}
+
+#[derive(Subcommand)]
+enum WebvhCommands {
+    /// Add a WebVH server
+    AddServer {
+        /// Server identifier
+        #[arg(long)]
+        id: String,
+        /// Server DID (must resolve to a DID document with a WebVHHostingService endpoint)
+        #[arg(long)]
+        did: String,
+        /// Human-readable label
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// List configured WebVH servers
+    ListServers,
+    /// Update a WebVH server
+    UpdateServer {
+        /// Server identifier to update
+        id: String,
+        /// New label (empty string to clear)
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Remove a WebVH server
+    RemoveServer {
+        /// Server identifier to remove
+        id: String,
     },
 }
 
@@ -464,6 +501,18 @@ async fn main() {
                 label,
                 contexts,
             } => credentials::cmd_auth_credential_create(&client, role, label, contexts).await,
+        },
+        Commands::Webvh { command } => match command {
+            WebvhCommands::AddServer { id, did, label } => {
+                webvh::cmd_webvh_server_add(&client, id, did, label).await
+            }
+            WebvhCommands::ListServers => webvh::cmd_webvh_server_list(&client).await,
+            WebvhCommands::UpdateServer { id, label } => {
+                webvh::cmd_webvh_server_update(&client, &id, label).await
+            }
+            WebvhCommands::RemoveServer { id } => {
+                webvh::cmd_webvh_server_remove(&client, &id).await
+            }
         },
         Commands::Keys { command } => match command {
             KeyCommands::Create {

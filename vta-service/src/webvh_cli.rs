@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use affinidi_did_resolver_cache_sdk::{DIDCacheClient, config::DIDCacheConfigBuilder};
+
 use crate::acl::Role;
 use crate::auth::extractor::AuthClaims;
 use crate::config::AppConfig;
@@ -20,21 +22,22 @@ fn cli_super_admin() -> AuthClaims {
 pub async fn run_add_server(
     config_path: Option<PathBuf>,
     id: String,
-    url: String,
+    did: String,
     label: Option<String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let config = AppConfig::load(config_path)?;
     let store = Store::open(&config.store)?;
     let webvh_ks = store.keyspace("webvh")?;
+    let did_resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await?;
 
     let auth = cli_super_admin();
     let result =
-        operations::did_webvh::add_webvh_server(&webvh_ks, &auth, &id, &url, label, "cli").await?;
+        operations::did_webvh::add_webvh_server(&webvh_ks, &auth, &id, &did, label, &did_resolver, "cli").await?;
     store.persist().await?;
 
     eprintln!("WebVH server added:");
     eprintln!("  ID:  {}", result.id);
-    eprintln!("  URL: {}", result.server_url);
+    eprintln!("  DID: {}", result.did);
     if let Some(label) = &result.label {
         eprintln!("  Label: {label}");
     }
@@ -59,12 +62,36 @@ pub async fn run_list_servers(
     eprintln!("{} WebVH server(s):\n", result.servers.len());
     for server in &result.servers {
         eprintln!("  ID:      {}", server.id);
-        eprintln!("  URL:     {}", server.server_url);
+        eprintln!("  DID:     {}", server.did);
         if let Some(label) = &server.label {
             eprintln!("  Label:   {label}");
         }
         eprintln!("  Created: {}", server.created_at.format("%Y-%m-%d %H:%M:%S UTC"));
         eprintln!();
+    }
+    Ok(())
+}
+
+pub async fn run_update_server(
+    config_path: Option<PathBuf>,
+    id: String,
+    label: Option<String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config = AppConfig::load(config_path)?;
+    let store = Store::open(&config.store)?;
+    let webvh_ks = store.keyspace("webvh")?;
+
+    let auth = cli_super_admin();
+    let result =
+        operations::did_webvh::update_webvh_server(&webvh_ks, &auth, &id, label, "cli")
+            .await?;
+    store.persist().await?;
+
+    eprintln!("WebVH server updated:");
+    eprintln!("  ID:  {}", result.id);
+    eprintln!("  DID: {}", result.did);
+    if let Some(label) = &result.label {
+        eprintln!("  Label: {label}");
     }
     Ok(())
 }
@@ -122,6 +149,7 @@ pub async fn run_create_did(
         pre_rotation_count: pre_rotation.unwrap_or(0),
     };
 
+    let did_resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await?;
     let result = operations::did_webvh::create_did_webvh(
         &keys_ks,
         &contexts_ks,
@@ -130,6 +158,7 @@ pub async fn run_create_did(
         &config,
         &auth,
         params,
+        &did_resolver,
         "cli",
     )
     .await?;
@@ -198,6 +227,7 @@ pub async fn run_delete_did(
         Arc::from(create_seed_store(&config)?);
 
     let auth = cli_super_admin();
+    let did_resolver = DIDCacheClient::new(DIDCacheConfigBuilder::default().build()).await?;
     operations::did_webvh::delete_did_webvh(
         &webvh_ks,
         &keys_ks,
@@ -205,6 +235,7 @@ pub async fn run_delete_did(
         &config,
         &auth,
         &did,
+        &did_resolver,
         "cli",
     )
     .await?;

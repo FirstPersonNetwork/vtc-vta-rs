@@ -36,6 +36,11 @@ pub const LIST_WEBVH_SERVERS: &str =
 pub const LIST_WEBVH_SERVERS_RESULT: &str =
     "https://firstperson.network/protocols/did-management/1.0/list-webvh-servers-result";
 
+pub const UPDATE_WEBVH_SERVER: &str =
+    "https://firstperson.network/protocols/did-management/1.0/update-webvh-server";
+pub const UPDATE_WEBVH_SERVER_RESULT: &str =
+    "https://firstperson.network/protocols/did-management/1.0/update-webvh-server-result";
+
 pub const REMOVE_WEBVH_SERVER: &str =
     "https://firstperson.network/protocols/did-management/1.0/remove-webvh-server";
 pub const REMOVE_WEBVH_SERVER_RESULT: &str =

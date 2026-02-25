@@ -20,6 +20,12 @@ mod server;
 mod setup;
 mod status;
 mod store;
+#[cfg(feature = "webvh")]
+mod webvh_client;
+#[cfg(feature = "webvh")]
+mod webvh_cli;
+#[cfg(feature = "webvh")]
+mod webvh_store;
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -100,6 +106,12 @@ enum Commands {
         #[command(subcommand)]
         command: KeyCliCommands,
     },
+    /// Manage WebVH servers and DIDs (offline, no server required)
+    #[cfg(feature = "webvh")]
+    Webvh {
+        #[command(subcommand)]
+        command: WebvhCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -128,6 +140,71 @@ enum KeyCliCommands {
         /// BIP-39 mnemonic for the new seed (generates random if omitted)
         #[arg(long)]
         mnemonic: Option<String>,
+    },
+}
+
+#[cfg(feature = "webvh")]
+#[derive(Subcommand)]
+enum WebvhCommands {
+    /// Add a WebVH server
+    AddServer {
+        /// Server identifier
+        #[arg(long)]
+        id: String,
+        /// Server URL (e.g. https://webvh.example.com)
+        #[arg(long)]
+        url: String,
+        /// Human-readable label
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// List configured WebVH servers
+    ListServers,
+    /// Remove a WebVH server
+    RemoveServer {
+        /// Server identifier to remove
+        id: String,
+    },
+    /// Create a did:webvh DID and publish to a WebVH server
+    CreateDid {
+        /// Target context ID
+        #[arg(long)]
+        context: String,
+        /// WebVH server ID
+        #[arg(long)]
+        server: String,
+        /// Optional path on the server (server allocates if omitted)
+        #[arg(long)]
+        path: Option<String>,
+        /// Human-readable label for the DID and key records
+        #[arg(long)]
+        label: Option<String>,
+        /// Make the DID portable (default: true)
+        #[arg(long, default_value_t = true)]
+        portable: bool,
+        /// Add mediator DIDComm service endpoint
+        #[arg(long)]
+        mediator_service: bool,
+        /// Additional services as JSON array
+        #[arg(long)]
+        services: Option<String>,
+        /// Number of pre-rotation keys to generate
+        #[arg(long)]
+        pre_rotation: Option<u32>,
+    },
+    /// List WebVH DIDs
+    ListDids {
+        /// Filter by context ID
+        #[arg(long)]
+        context: Option<String>,
+        /// Filter by server ID
+        #[arg(long)]
+        server: Option<String>,
+    },
+    /// Delete a WebVH DID
+    DeleteDid {
+        /// The DID to delete
+        did: String,
     },
 }
 
@@ -290,6 +367,53 @@ async fn main() {
                 } => acl_cli::run_acl_update(cli.config, did, role, label, contexts).await,
                 AclCommands::Delete { did, yes } => {
                     acl_cli::run_acl_delete(cli.config, did, yes).await
+                }
+            };
+            if let Err(e) = result {
+                eprintln!("Error: {e}");
+                std::process::exit(1);
+            }
+        }
+        #[cfg(feature = "webvh")]
+        Some(Commands::Webvh { command }) => {
+            let result = match command {
+                WebvhCommands::AddServer { id, url, label } => {
+                    webvh_cli::run_add_server(cli.config, id, url, label).await
+                }
+                WebvhCommands::ListServers => {
+                    webvh_cli::run_list_servers(cli.config).await
+                }
+                WebvhCommands::RemoveServer { id } => {
+                    webvh_cli::run_remove_server(cli.config, id).await
+                }
+                WebvhCommands::CreateDid {
+                    context,
+                    server,
+                    path,
+                    label,
+                    portable,
+                    mediator_service,
+                    services,
+                    pre_rotation,
+                } => {
+                    webvh_cli::run_create_did(
+                        cli.config,
+                        context,
+                        server,
+                        path,
+                        label,
+                        portable,
+                        mediator_service,
+                        services,
+                        pre_rotation,
+                    )
+                    .await
+                }
+                WebvhCommands::ListDids { context, server } => {
+                    webvh_cli::run_list_dids(cli.config, context, server).await
+                }
+                WebvhCommands::DeleteDid { did } => {
+                    webvh_cli::run_delete_did(cli.config, did).await
                 }
             };
             if let Err(e) = result {

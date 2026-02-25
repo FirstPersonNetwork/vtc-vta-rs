@@ -15,6 +15,7 @@ use crate::contexts::{self, get_context, store_context};
 use crate::keys::seed_store::create_seed_store;
 use crate::keys::seeds::{get_active_seed_id, load_seed_bytes};
 use crate::keys::{self, KeyType as SdkKeyType};
+use crate::operations::did_webvh as ops;
 use crate::setup;
 use crate::store::Store;
 
@@ -77,38 +78,11 @@ pub async fn run_create_did_webvh(
     ]
     .concat();
 
-    // Build DID document
-    let mut did_document = json!({
-        "@context": [
-            "https://www.w3.org/ns/did/v1",
-            "https://www.w3.org/ns/cid/v1"
-        ],
-        "id": &did_id,
-        "verificationMethod": [
-            {
-                "id": format!("{did_id}#key-0"),
-                "type": "Multikey",
-                "controller": &did_id,
-                "publicKeyMultibase": &derived.signing_pub
-            }
-        ],
-        "authentication": [format!("{did_id}#key-0")],
-        "assertionMethod": [format!("{did_id}#key-0")]
-    });
+    // Build base DID document using shared helper (without services)
+    let mut did_document =
+        ops::build_did_document(&did_id, &derived, &config, false, &None);
 
-    // Add X25519 key agreement method
-    did_document["verificationMethod"]
-        .as_array_mut()
-        .unwrap()
-        .push(json!({
-            "id": format!("{did_id}#key-1"),
-            "type": "Multikey",
-            "controller": &did_id,
-            "publicKeyMultibase": &derived.ka_pub
-        }));
-    did_document["keyAgreement"] = json!([format!("{did_id}#key-1")]);
-
-    // Optionally add service endpoints
+    // Interactive service endpoint selection
     if let Some(ref msg) = config.messaging {
         let service_options = &[
             "DIDComm endpoint (references mediator DID for routing)",

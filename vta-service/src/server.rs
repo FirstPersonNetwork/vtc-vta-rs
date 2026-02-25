@@ -32,6 +32,8 @@ pub struct AppState {
     pub sessions_ks: KeyspaceHandle,
     pub acl_ks: KeyspaceHandle,
     pub contexts_ks: KeyspaceHandle,
+    #[cfg(feature = "webvh")]
+    pub webvh_ks: KeyspaceHandle,
     pub config: Arc<RwLock<AppConfig>>,
     pub seed_store: Arc<dyn SeedStore>,
     pub did_resolver: Option<DIDCacheClient>,
@@ -61,6 +63,8 @@ pub async fn run(
     let sessions_ks = store.keyspace("sessions")?;
     let acl_ks = store.keyspace("acl")?;
     let contexts_ks = store.keyspace("contexts")?;
+    #[cfg(feature = "webvh")]
+    let webvh_ks = store.keyspace("webvh")?;
 
     // Initialize auth infrastructure
     let (did_resolver, secrets_resolver, jwt_keys) =
@@ -102,6 +106,8 @@ pub async fn run(
             keys_ks: keys_ks.clone(),
             acl_ks: acl_ks.clone(),
             contexts_ks: contexts_ks.clone(),
+            #[cfg(feature = "webvh")]
+            webvh_ks: webvh_ks.clone(),
             seed_store: seed_store.clone(),
             config: Arc::new(RwLock::new(config.clone())),
         })
@@ -118,6 +124,8 @@ pub async fn run(
             sessions_ks,
             acl_ks,
             contexts_ks,
+            #[cfg(feature = "webvh")]
+            webvh_ks,
             config: Arc::new(RwLock::new(config.clone())),
             seed_store,
             did_resolver,

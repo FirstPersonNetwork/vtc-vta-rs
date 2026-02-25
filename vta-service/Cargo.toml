@@ -14,7 +14,8 @@ repository.workspace = true
 default = ["setup", "keyring", "rest", "didcomm"]
 rest = []
 didcomm = []
-setup = ["dep:dialoguer", "dep:didwebvh-rs", "dep:url"]
+webvh = ["dep:didwebvh-rs", "dep:url", "dep:reqwest"]
+setup = ["webvh", "dep:dialoguer"]
 keyring = ["dep:keyring"]
 config-seed = []
 aws-secrets = ["dep:aws-sdk-secretsmanager", "dep:aws-config"]
@@ -70,6 +71,7 @@ sha2 = { workspace = true }
 x25519-dalek = { workspace = true }
 multibase = { workspace = true }
 url = { workspace = true, optional = true }
+reqwest = { workspace = true, optional = true }
 
 [dev-dependencies]
 tempfile = "3"

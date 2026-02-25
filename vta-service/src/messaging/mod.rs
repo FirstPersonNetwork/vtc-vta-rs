@@ -19,6 +19,8 @@ use vta_sdk::protocols::{
     acl_management, context_management, credential_management, key_management, seed_management,
     vta_management,
 };
+#[cfg(feature = "webvh")]
+use vta_sdk::protocols::did_management;
 
 use crate::config::AppConfig;
 use crate::keys::seed_store::SeedStore;
@@ -32,6 +34,8 @@ pub struct DidcommState {
     pub keys_ks: KeyspaceHandle,
     pub acl_ks: KeyspaceHandle,
     pub contexts_ks: KeyspaceHandle,
+    #[cfg(feature = "webvh")]
+    pub webvh_ks: KeyspaceHandle,
     pub seed_store: Arc<dyn SeedStore>,
     pub config: Arc<RwLock<AppConfig>>,
 }
@@ -263,6 +267,37 @@ async fn dispatch_message(
         // Credential management
         credential_management::GENERATE_CREDENTIALS => {
             handlers::credentials::handle_generate_credentials(state, atm, profile, vta_did, msg)
+                .await
+        }
+
+        // DID management (webvh)
+        #[cfg(feature = "webvh")]
+        did_management::CREATE_DID_WEBVH => {
+            handlers::did_webvh::handle_create_did_webvh(state, atm, profile, vta_did, msg).await
+        }
+        #[cfg(feature = "webvh")]
+        did_management::GET_DID_WEBVH => {
+            handlers::did_webvh::handle_get_did_webvh(state, atm, profile, vta_did, msg).await
+        }
+        #[cfg(feature = "webvh")]
+        did_management::LIST_DIDS_WEBVH => {
+            handlers::did_webvh::handle_list_dids_webvh(state, atm, profile, vta_did, msg).await
+        }
+        #[cfg(feature = "webvh")]
+        did_management::DELETE_DID_WEBVH => {
+            handlers::did_webvh::handle_delete_did_webvh(state, atm, profile, vta_did, msg).await
+        }
+        #[cfg(feature = "webvh")]
+        did_management::ADD_WEBVH_SERVER => {
+            handlers::did_webvh::handle_add_webvh_server(state, atm, profile, vta_did, msg).await
+        }
+        #[cfg(feature = "webvh")]
+        did_management::LIST_WEBVH_SERVERS => {
+            handlers::did_webvh::handle_list_webvh_servers(state, atm, profile, vta_did, msg).await
+        }
+        #[cfg(feature = "webvh")]
+        did_management::REMOVE_WEBVH_SERVER => {
+            handlers::did_webvh::handle_remove_webvh_server(state, atm, profile, vta_did, msg)
                 .await
         }
 

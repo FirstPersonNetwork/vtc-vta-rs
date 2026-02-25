@@ -2,6 +2,8 @@ mod acl;
 mod auth;
 mod config;
 mod contexts;
+#[cfg(feature = "webvh")]
+mod did_webvh;
 mod health;
 pub mod keys;
 
@@ -11,7 +13,7 @@ use axum::routing::{delete, get, post};
 use crate::server::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new()
+    let router = Router::new()
         .route("/health", get(health::health))
         // Auth routes (flattened to avoid nest + root-route matching issues in Axum 0.8)
         .route("/auth/challenge", post(auth::challenge))
@@ -58,5 +60,27 @@ pub fn router() -> Router<AppState> {
             get(acl::get_acl)
                 .patch(acl::update_acl)
                 .delete(acl::delete_acl),
+        );
+
+    // WebVH routes (feature-gated)
+    #[cfg(feature = "webvh")]
+    let router = router
+        .route(
+            "/webvh/servers",
+            get(did_webvh::list_servers_handler).post(did_webvh::add_server_handler),
         )
+        .route(
+            "/webvh/servers/{id}",
+            delete(did_webvh::remove_server_handler),
+        )
+        .route(
+            "/webvh/dids",
+            get(did_webvh::list_dids_handler).post(did_webvh::create_did_handler),
+        )
+        .route(
+            "/webvh/dids/{did}",
+            get(did_webvh::get_did_handler).delete(did_webvh::delete_did_handler),
+        );
+
+    router
 }

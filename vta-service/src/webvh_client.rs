@@ -1,4 +1,5 @@
 use serde::Deserialize;
+use tracing::{debug, info};
 
 use crate::error::AppError;
 
@@ -44,6 +45,7 @@ impl WebvhClient {
         path: Option<&str>,
     ) -> Result<RequestUriResponse, AppError> {
         let url = format!("{}/api/dids", self.server_url);
+        info!(method = "POST", %url, "webvh: sending via rest");
         let mut req = self.http.post(&url);
         if let Some(auth) = self.auth_header() {
             req = req.header("Authorization", auth);
@@ -67,6 +69,7 @@ impl WebvhClient {
                 "webvh-server POST /api/dids failed ({status}): {text}"
             )));
         }
+        debug!(method = "POST", status = 200, "webvh: received via rest");
         resp.json()
             .await
             .map_err(|e| AppError::Internal(format!("webvh-server response parse error: {e}")))
@@ -79,6 +82,7 @@ impl WebvhClient {
         log_content: &str,
     ) -> Result<(), AppError> {
         let url = format!("{}/api/dids/{mnemonic}", self.server_url);
+        info!(method = "PUT", %url, "webvh: sending via rest");
         let mut req = self.http.put(&url);
         if let Some(auth) = self.auth_header() {
             req = req.header("Authorization", auth);
@@ -99,12 +103,14 @@ impl WebvhClient {
                 "webvh-server PUT /api/dids/{mnemonic} failed ({status}): {text}"
             )));
         }
+        debug!(method = "PUT", status = 200, "webvh: received via rest");
         Ok(())
     }
 
     /// DELETE /api/dids/{mnemonic}.
     pub async fn delete_did(&self, mnemonic: &str) -> Result<(), AppError> {
         let url = format!("{}/api/dids/{mnemonic}", self.server_url);
+        info!(method = "DELETE", %url, "webvh: sending via rest");
         let mut req = self.http.delete(&url);
         if let Some(auth) = self.auth_header() {
             req = req.header("Authorization", auth);
@@ -123,6 +129,7 @@ impl WebvhClient {
                 "webvh-server DELETE /api/dids/{mnemonic} failed ({status}): {text}"
             )));
         }
+        debug!(method = "DELETE", status = 200, "webvh: received via rest");
         Ok(())
     }
 

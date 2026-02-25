@@ -25,7 +25,8 @@ use crate::routes;
 use crate::store::{KeyspaceHandle, Store};
 use tokio::sync::{RwLock, watch};
 #[cfg(feature = "rest")]
-use tower_http::trace::TraceLayer;
+use tower_http::trace::{DefaultMakeSpan, DefaultOnRequest, DefaultOnResponse, TraceLayer};
+use tracing::Level;
 use tracing::{debug, error, info, warn};
 
 #[derive(Clone)]
@@ -323,7 +324,12 @@ fn run_rest_thread(
 
         let app = routes::router()
             .with_state(state)
-            .layer(TraceLayer::new_for_http());
+            .layer(
+                TraceLayer::new_for_http()
+                    .make_span_with(DefaultMakeSpan::new().level(Level::INFO))
+                    .on_request(DefaultOnRequest::new().level(Level::INFO))
+                    .on_response(DefaultOnResponse::new().level(Level::INFO)),
+            );
 
         let shutdown_rx = shutdown_rx.clone();
         axum::serve(listener, app)

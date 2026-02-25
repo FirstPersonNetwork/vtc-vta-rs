@@ -498,6 +498,7 @@ async fn resolve_server_endpoint(
         svc.type_.iter().any(|t| t == "DIDCommMessaging")
     });
     if has_didcomm {
+        info!(server_did, transport = "didcomm", "resolved webvh server endpoint");
         return Ok(ServerEndpoint::DIDComm {
             server_did: server_did.to_string(),
         });
@@ -508,9 +509,9 @@ async fn resolve_server_endpoint(
         if svc.type_.iter().any(|t| t == "WebVHHostingService")
             && let Some(url) = svc.service_endpoint.get_uri()
         {
-            return Ok(ServerEndpoint::Rest {
-                url: url.trim_matches('"').trim_end_matches('/').to_string(),
-            });
+            let url = url.trim_matches('"').trim_end_matches('/').to_string();
+            info!(server_did, transport = "rest", %url, "resolved webvh server endpoint");
+            return Ok(ServerEndpoint::Rest { url });
         }
     }
 

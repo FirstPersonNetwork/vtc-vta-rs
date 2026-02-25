@@ -206,6 +206,16 @@ async fn dispatch_message(
     state: &DidcommState,
     msg: &Message,
 ) {
+    if msg.type_ != TRUST_PING_TYPE && msg.type_ != MESSAGE_PICKUP_STATUS_TYPE {
+        info!(
+            channel = "didcomm",
+            msg_type = %msg.type_,
+            from = msg.from.as_deref().unwrap_or("unknown"),
+            msg_id = %msg.id,
+            "inbound request"
+        );
+    }
+
     let result = match msg.type_.as_str() {
         TRUST_PING_TYPE => handle_trust_ping(atm, profile, vta_did, msg).await,
         MESSAGE_PICKUP_STATUS_TYPE => Ok(()),

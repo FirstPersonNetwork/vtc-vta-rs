@@ -6,7 +6,7 @@ use affinidi_tdk::didcomm::Message;
 use affinidi_tdk::messaging::ATM;
 use affinidi_tdk::messaging::profiles::ATMProfile;
 use tokio::sync::oneshot;
-use tracing::debug;
+use tracing::info;
 
 use crate::error::AppError;
 
@@ -96,7 +96,7 @@ impl DIDCommBridge {
                 AppError::Internal(format!("failed to send message: {e}"))
             })?;
 
-        debug!(msg_type, msg_id, server_did, "sent DIDComm message via bridge");
+        info!(msg_type, msg_id, server_did, "sending via didcomm bridge");
 
         // Wait for response with timeout
         let response = tokio::time::timeout(Duration::from_secs(timeout_secs), rx)
@@ -134,7 +134,7 @@ impl DIDCommBridge {
             )));
         }
 
-        debug!(response_type = %response.type_, "received DIDComm response via bridge");
+        info!(response_type = %response.type_, "received via didcomm bridge");
         Ok(response)
     }
 }

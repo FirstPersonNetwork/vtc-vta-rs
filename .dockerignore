@@ -1,0 +1,12 @@
+/target
+/.vscode
+data/
+**.jsonl
+**/config.toml
+.DS_Store
+
+.git
+.github
+*.md
+Dockerfile
+.dockerignore
